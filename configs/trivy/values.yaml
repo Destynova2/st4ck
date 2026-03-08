@@ -1,0 +1,20 @@
+# Trivy Operator — vulnerability scanning + SBOM
+# Scans workloads, images, and configs
+
+operator:
+  replicaCount: 1
+
+trivy:
+  ignoreUnfixed: true
+
+# node-collector incompatible with Talos (read-only filesystem, no systemd)
+# Trivy still scans images, configs, and RBAC without it
+operator:
+  clusterComplianceEnabled: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi

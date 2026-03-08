@@ -1,0 +1,20 @@
+# Mount tracefs and debugfs for eBPF tools (Tetragon)
+# These filesystems are needed for kprobe/tracepoint attachment
+machine:
+  files: []
+  kubelet:
+    extraMounts:
+      - destination: /sys/kernel/debug
+        type: debugfs
+        source: debugfs
+        options:
+          - nosuid
+          - nodev
+          - noexec
+      - destination: /sys/kernel/tracing
+        type: tracefs
+        source: tracefs
+        options:
+          - nosuid
+          - nodev
+          - noexec

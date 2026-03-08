@@ -1,0 +1,36 @@
+# Ory Hydra — OAuth2 / OIDC server
+# Dev mode: SQLite in-memory, no external DB
+
+hydra:
+  dev: true
+
+  config:
+    dsn: "memory"
+
+    serve:
+      public:
+        cors:
+          enabled: true
+      admin:
+        host: 0.0.0.0
+
+    urls:
+      self:
+        issuer: http://hydra:4444/
+      consent: http://127.0.0.1:4455/consent
+      login: http://127.0.0.1:4455/login
+      logout: http://127.0.0.1:4455/logout
+
+    secrets:
+      system:
+        - CHANGE_ME_generate_with_openssl_rand_hex_32
+
+    oidc:
+      subject_identifiers:
+        supported_types:
+          - public
+
+  automigration:
+    enabled: true
+
+replicaCount: 1

@@ -1,0 +1,69 @@
+# Grafana — dashboards & visualization
+
+persistence:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
+
+# Sidecar for auto-loading dashboards from ConfigMaps
+sidecar:
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    searchNamespace: ALL
+
+# Pre-configured datasources
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://victoria-metrics-single-server.monitoring.svc:8428
+        access: proxy
+        isDefault: true
+      - name: Loki
+        type: loki
+        url: http://loki-gateway.monitoring.svc:3100
+        access: proxy
+      - name: Alertmanager
+        type: alertmanager
+        url: http://alertmanager.monitoring.svc:9093
+        access: proxy
+        jsonData:
+          implementation: prometheus
+
+# Dashboard providers
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: kubernetes
+        orgId: 1
+        folder: Kubernetes
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/kubernetes
+
+# Dashboards from grafana.com (Cilium dashboards come from Cilium chart itself)
+dashboards:
+  kubernetes:
+    k8s-global:
+      gnetId: 15757
+      revision: 37
+      datasource: Prometheus
+    k8s-nodes:
+      gnetId: 15759
+      revision: 29
+      datasource: Prometheus
+    k8s-pods:
+      gnetId: 15760
+      revision: 28
+      datasource: Prometheus

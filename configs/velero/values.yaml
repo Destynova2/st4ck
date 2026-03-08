@@ -1,0 +1,37 @@
+# Velero — backup & disaster recovery
+# Backend: Garage S3 (in-cluster)
+
+initContainers:
+  - name: velero-plugin-for-aws
+    image: velero/velero-plugin-for-aws:v1.14.0
+    volumeMounts:
+      - mountPath: /target
+        name: plugins
+
+configuration:
+  backupStorageLocation:
+    - name: default
+      provider: aws
+      bucket: "${velero_bucket}"
+      config:
+        region: garage
+        s3ForcePathStyle: "true"
+        s3Url: "${s3_url}"
+
+  volumeSnapshotLocation: []
+
+credentials:
+  useSecret: true
+  existingSecret: velero-s3-credentials
+
+# bitnamilegacy/kubectl has no K8s 1.35 tag — skip CRD upgrade job
+upgradeCRDs: false
+
+deployNodeAgent: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 256Mi

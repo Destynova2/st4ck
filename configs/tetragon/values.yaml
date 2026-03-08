@@ -1,0 +1,21 @@
+# Tetragon — eBPF runtime security observability
+# From Cilium/Isovalent, complements Hubble with security events
+
+tetragon:
+  enableProcessCred: true
+  enableProcessNs: true
+
+  exportAllowList: ""
+  exportDenyList: ""
+
+# Required for Talos Linux v1.12.0+ (tracefs not mounted by default)
+extraHostPathMounts:
+  - name: sys-kernel-tracing
+    mountPath: /sys/kernel/tracing
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi

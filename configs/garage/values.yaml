@@ -1,0 +1,30 @@
+# Garage — Lightweight S3-compatible distributed storage
+# Written in Rust, minimal footprint (~100 MB RAM per node)
+
+garage:
+  replicationFactor: 3
+  dbEngine: lmdb
+  s3:
+    api:
+      region: garage
+      rootDomain: ".s3.garage.local"
+  # metadataDir and dataDir are set via PVC below
+
+replicaCount: 3
+
+persistence:
+  meta:
+    enabled: true
+    storageClass: local-path
+    size: 1Gi
+  data:
+    enabled: true
+    storageClass: local-path
+    size: 20Gi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi

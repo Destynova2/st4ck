@@ -1,0 +1,14 @@
+# VictoriaMetrics Single — metrics storage (PromQL-compatible)
+
+server:
+  persistentVolume:
+    enabled: false
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+  retentionPeriod: 30d

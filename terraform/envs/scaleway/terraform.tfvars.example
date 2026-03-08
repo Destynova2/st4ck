@@ -1,0 +1,23 @@
+# Copy to terraform.tfvars and adjust
+# project_id is injected automatically by the Makefile from the IAM stage
+
+zone               = "fr-par-1"
+region             = "fr-par"
+cluster_name       = "talos"
+talos_version      = "v1.12.4"
+kubernetes_version = "1.35.0"
+
+controlplane_count = 3
+worker_count       = 3
+
+cp_instance_type     = "DEV1-M"
+worker_instance_type = "DEV1-L"
+
+# Mandatory 2nd disk for EPHEMERAL
+ephemeral_disk_size = 25 # GiB
+
+# DNS — api.talos.example.com → LB IP
+dns_zone      = "example.com"
+dns_subdomain = "api.talos"
+
+# Image is auto-discovered from "image/" stage (make scaleway-image-apply)

@@ -1,0 +1,22 @@
+# Pomerium — Zero-trust access proxy
+# Minimal config for POC
+
+authenticate:
+  idp:
+    provider: oidc
+    providerUrl: http://hydra.identity.svc:4444/
+    clientID: pomerium
+    clientSecret: CHANGE_ME
+
+proxy:
+  replicaCount: 1
+
+authorize:
+  replicaCount: 1
+
+config:
+  sharedSecret: ""
+  cookieSecret: ""
+
+ingress:
+  enabled: false

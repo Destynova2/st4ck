@@ -1,0 +1,38 @@
+# Ory Kratos — Identity management
+# Dev mode: SQLite in-memory, no external DB
+
+kratos:
+  development: true
+
+  config:
+    dsn: "memory"
+
+    serve:
+      public:
+        base_url: http://127.0.0.1:4433/
+        cors:
+          enabled: true
+      admin:
+        base_url: http://kratos:4434/
+
+    selfservice:
+      default_browser_return_url: http://127.0.0.1:4455/
+      flows:
+        login:
+          ui_url: http://127.0.0.1:4455/login
+        registration:
+          ui_url: http://127.0.0.1:4455/registration
+          enabled: true
+        settings:
+          ui_url: http://127.0.0.1:4455/settings
+
+    identity:
+      default_schema_id: default
+      schemas:
+        - id: default
+          url: base64://ewogICIkaWQiOiAiaHR0cHM6Ly9zY2hlbWFzLm9yeS5zaC9wcmVzZXRzL2tyYXRvcy9pZGVudGl0eS5lbWFpbC1wYXNzd29yZC9pZGVudGl0eS5zY2hlbWEuanNvbiIsCiAgIiRzY2hlbWEiOiAiaHR0cDovL2pzb24tc2NoZW1hLm9yZy9kcmFmdC0wNy9zY2hlbWEjIiwKICAidGl0bGUiOiAiUGVyc29uIiwKICAidHlwZSI6ICJvYmplY3QiLAogICJwcm9wZXJ0aWVzIjogewogICAgInRyYWl0cyI6IHsKICAgICAgInR5cGUiOiAib2JqZWN0IiwKICAgICAgInByb3BlcnRpZXMiOiB7CiAgICAgICAgImVtYWlsIjogewogICAgICAgICAgInR5cGUiOiAic3RyaW5nIiwKICAgICAgICAgICJmb3JtYXQiOiAiZW1haWwiLAogICAgICAgICAgInRpdGxlIjogIkUtTWFpbCIsCiAgICAgICAgICAib3J5LnNoL2tyYXRvcyI6IHsKICAgICAgICAgICAgImNyZWRlbnRpYWxzIjogewogICAgICAgICAgICAgICJwYXNzd29yZCI6IHsKICAgICAgICAgICAgICAgICJpZGVudGlmaWVyIjogdHJ1ZQogICAgICAgICAgICAgIH0KICAgICAgICAgICAgfSwKICAgICAgICAgICAgInZlcmlmaWNhdGlvbiI6IHsKICAgICAgICAgICAgICAidmlhIjogImVtYWlsIgogICAgICAgICAgICB9LAogICAgICAgICAgICAicmVjb3ZlcnkiOiB7CiAgICAgICAgICAgICAgInZpYSI6ICJlbWFpbCIKICAgICAgICAgICAgfQogICAgICAgICAgfQogICAgICAgIH0KICAgICAgfSwKICAgICAgInJlcXVpcmVkIjogWyJlbWFpbCJdLAogICAgICAiYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZQogICAgfQogIH0KfQ==
+
+  automigration:
+    enabled: true
+
+replicaCount: 1

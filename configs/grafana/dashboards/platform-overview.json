@@ -1,0 +1,210 @@
+{
+  "annotations": { "list": [] },
+  "description": "Plateforme Souveraine — Vue d'ensemble pour direction",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "Cluster Health",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "sum(kube_node_status_condition{condition=\"Ready\",status=\"true\"})", "legendFormat": "" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 4 }, { "color": "green", "value": 6 }] },
+          "unit": "none",
+          "displayName": "Nodes Ready"
+        }
+      }
+    },
+    {
+      "title": "Pods Running",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "sum(kube_pod_status_phase{phase=\"Running\"})", "legendFormat": "" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "unit": "none",
+          "displayName": "Pods Running"
+        }
+      }
+    },
+    {
+      "title": "Namespaces",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "count(kube_namespace_created)", "legendFormat": "" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "steps": [{ "color": "blue", "value": null }] },
+          "unit": "none",
+          "displayName": "Namespaces"
+        }
+      }
+    },
+    {
+      "title": "Velero Backup",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "velero_backup_storage_location_available{name=\"default\"}", "legendFormat": "" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{ "type": "value", "options": { "1": { "text": "Available", "color": "green" }, "0": { "text": "Unavailable", "color": "red" } } }],
+          "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "unit": "none",
+          "displayName": "Backup Storage"
+        }
+      }
+    },
+    {
+      "title": "Cluster CPU Usage",
+      "type": "gauge",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m]))", "legendFormat": "" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.7 }, { "color": "red", "value": 0.9 }] },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "displayName": "CPU"
+        }
+      }
+    },
+    {
+      "title": "Cluster Memory Usage",
+      "type": "gauge",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "1 - sum(node_memory_MemAvailable_bytes) / sum(node_memory_MemTotal_bytes)", "legendFormat": "" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.7 }, { "color": "red", "value": 0.9 }] },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "displayName": "RAM"
+        }
+      }
+    },
+    {
+      "title": "Platform Components",
+      "type": "table",
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "kube_deployment_status_replicas_available", "legendFormat": "{{ namespace }}/{{ deployment }}", "format": "table", "instant": true }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "container": true, "endpoint": true, "instance": true, "job": true, "pod": true, "service": true }, "renameByName": { "namespace": "Namespace", "deployment": "Component", "Value": "Replicas" } } },
+        { "id": "sortBy", "options": { "sort": [{ "field": "Namespace" }] } }
+      ],
+      "fieldConfig": {
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Replicas" }, "properties": [{ "id": "custom.cellOptions", "value": { "type": "color-background" } }, { "id": "thresholds", "value": { "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } }] }
+        ]
+      }
+    },
+    {
+      "title": "Security Posture",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum(trivy_image_vulnerabilities{severity=\"Critical\"}) or vector(0)", "legendFormat": "Critical" },
+        { "expr": "sum(trivy_image_vulnerabilities{severity=\"High\"}) or vector(0)", "legendFormat": "High" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 10 }] },
+          "unit": "none"
+        }
+      },
+      "options": { "graphMode": "none", "textMode": "value_and_name" }
+    },
+    {
+      "title": "Kyverno Policy Violations",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum(kyverno_policy_results_total{rule_result=\"fail\"}) or vector(0)", "legendFormat": "Violations" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 }] },
+          "unit": "none",
+          "displayName": "Policy Violations"
+        }
+      }
+    },
+    {
+      "title": "Network — Cilium",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum(cilium_endpoint_state{endpoint_state=\"ready\"})", "legendFormat": "Endpoints Ready" },
+        { "expr": "sum(rate(cilium_drop_count_total[5m]))", "legendFormat": "Drops/s" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none" } },
+      "options": { "graphMode": "none", "textMode": "value_and_name" }
+    },
+    {
+      "title": "Garage S3 — Storage",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum(kube_statefulset_status_replicas_ready{statefulset=\"garage\"})", "legendFormat": "Nodes Ready" },
+        { "expr": "sum(kube_persistentvolumeclaim_resource_requests_storage_bytes{namespace=\"garage\"}) / 1024 / 1024 / 1024", "legendFormat": "Storage (GB)" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none" } },
+      "options": { "graphMode": "none", "textMode": "value_and_name" }
+    },
+    {
+      "title": "Pod Status by Namespace",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [{ "expr": "sum by (namespace) (kube_pod_status_phase{phase=\"Running\"})", "legendFormat": "{{ namespace }}" }],
+      "fieldConfig": { "defaults": { "unit": "none" } }
+    },
+    {
+      "title": "Cluster Resource Trends (24h)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m]))", "legendFormat": "CPU %" },
+        { "expr": "1 - sum(node_memory_MemAvailable_bytes) / sum(node_memory_MemTotal_bytes)", "legendFormat": "Memory %" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } },
+      "options": { "tooltip": { "mode": "multi" } }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["platform", "overview", "c-level"],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "Prometheus" }
+      }
+    ]
+  },
+  "time": { "from": "now-24h", "to": "now" },
+  "title": "Platform Overview",
+  "uid": "platform-overview"
+}

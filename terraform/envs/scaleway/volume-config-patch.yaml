@@ -1,0 +1,10 @@
+# Scaleway: EPHEMERAL partition must be on the 2nd disk (/dev/vdb)
+# The boot disk is only ~4.5 GiB and cannot hold EPHEMERAL.
+apiVersion: v1alpha1
+kind: VolumeConfig
+name: EPHEMERAL
+provisioning:
+  diskSelector:
+    match: disk.dev_path == '/dev/vdb'
+  minSize: 2GB
+  maxSize: 40GB

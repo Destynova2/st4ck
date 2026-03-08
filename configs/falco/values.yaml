@@ -1,0 +1,21 @@
+# Falco — runtime threat detection
+# eBPF driver (no kernel module needed on Talos)
+
+driver:
+  kind: ebpf
+
+falco:
+  grpc:
+    enabled: true
+  grpc_output:
+    enabled: true
+
+falcosidekick:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 512Mi

@@ -1,0 +1,40 @@
+# Talos secrets - NEVER commit
+**/talosconfig
+**/secrets.yaml
+**/*.secret
+**/*.key
+**/*.pem
+
+# Generated machine configs (contain secrets)
+_out/
+*.kubeconfig
+
+# Terraform tfvars (may contain secrets)
+**/terraform.tfvars
+**/secret.tfvars
+
+# Terraform state
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.backup
+**/*.tfstate.*.backup
+**/.terraform.lock.hcl
+
+# Build artifacts
+image-cache.oci
+*.ova
+*.iso
+*.raw
+*.qcow2
+*.zst
+
+# Image lists (may be regenerated)
+images.txt
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

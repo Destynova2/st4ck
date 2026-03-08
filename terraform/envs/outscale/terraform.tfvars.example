@@ -1,0 +1,18 @@
+# Copy to terraform.tfvars and adjust
+
+region             = "eu-west-2"
+cluster_name       = "talos"
+talos_version      = "v1.12.4"
+kubernetes_version = "1.35.0"
+
+vpc_cidr     = "10.0.0.0/16"
+subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+
+controlplane_count = 3
+worker_count       = 3
+
+cp_instance_type     = "tinav5.c2r4p1" # 2 vCPU, 4 GiB
+worker_instance_type = "tinav5.c4r8p1" # 4 vCPU, 8 GiB
+
+# Must be imported beforehand (see docs)
+talos_omi_id = "ami-XXXXXXXX"

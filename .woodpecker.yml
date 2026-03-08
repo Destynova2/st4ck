@@ -1,0 +1,149 @@
+when:
+  - event: [push, pull_request]
+    branch: main
+
+variables:
+  - &tofu_image ghcr.io/opentofu/opentofu:1.9
+  - &kubectl_image bitnami/kubectl:1.35
+  - &cluster_creds
+    SCW_ACCESS_KEY:
+      from_secret: scw_cluster_access_key
+    SCW_SECRET_KEY:
+      from_secret: scw_cluster_secret_key
+  - &cluster_secrets [scw_project_id, scw_cluster_access_key, scw_cluster_secret_key]
+  - &deploy_only
+    when:
+      - event: push
+        branch: main
+
+# Helper: extract k8s credentials from cluster outputs, then init+apply a stack.
+# Each deploy step cd's into the cluster env first to read outputs.
+  - &deploy_stack_commands |
+    apk add --no-cache kubectl >/dev/null 2>&1 || true
+    cd terraform/envs/scaleway && tofu init -input=false >/dev/null
+    export K8S_HOST=$(tofu output -raw kubernetes_host)
+    export K8S_CERT=$(tofu output -raw kubernetes_client_certificate)
+    export K8S_KEY=$(tofu output -raw kubernetes_client_key)
+    export K8S_CA=$(tofu output -raw kubernetes_ca_certificate)
+    cd ../../../terraform/stacks/${STACK}
+    tofu init -input=false
+    tofu apply -auto-approve \
+      -var="kubernetes_host=$${K8S_HOST}" \
+      -var="kubernetes_client_certificate=$${K8S_CERT}" \
+      -var="kubernetes_client_key=$${K8S_KEY}" \
+      -var="kubernetes_ca_certificate=$${K8S_CA}"
+
+steps:
+  # ─── Validate (PR + push) ─────────────────────────────────────────
+  - name: validate
+    image: *tofu_image
+    commands:
+      - |
+        for dir in \
+          terraform/envs/scaleway/image \
+          terraform/envs/scaleway \
+          terraform/envs/scaleway/ci \
+          terraform/stacks/k8s-addons \
+          terraform/stacks/k8s-secrets \
+          terraform/stacks/k8s-security \
+          terraform/stacks/k8s-storage; do
+          echo "--- validating $dir"
+          cd "$dir" && tofu init -backend=false -input=false >/dev/null && tofu validate && cd /woodpecker/src
+        done
+
+  # ─── Build image (push only) ──────────────────────────────────────
+  - name: build-image
+    image: *tofu_image
+    environment:
+      SCW_ACCESS_KEY:
+        from_secret: scw_image_access_key
+      SCW_SECRET_KEY:
+        from_secret: scw_image_secret_key
+    commands:
+      - cd terraform/envs/scaleway/image
+      - tofu init -input=false
+      - tofu apply -auto-approve
+        -var="project_id=$${SCW_PROJECT_ID}"
+        -var="scw_access_key=$${SCW_ACCESS_KEY}"
+        -var="scw_secret_key=$${SCW_SECRET_KEY}"
+    secrets: [scw_project_id, scw_image_access_key, scw_image_secret_key]
+    <<: *deploy_only
+
+  # ─── Deploy cluster ───────────────────────────────────────────────
+  - name: deploy-cluster
+    image: *tofu_image
+    environment: *cluster_creds
+    commands:
+      - cd terraform/envs/scaleway
+      - tofu init -input=false
+      - tofu apply -auto-approve
+        -var="project_id=$${SCW_PROJECT_ID}"
+    secrets: *cluster_secrets
+    depends_on: [build-image]
+    <<: *deploy_only
+
+  # ─── Wait for API server ──────────────────────────────────────────
+  - name: wait-api
+    image: *tofu_image
+    environment: *cluster_creds
+    commands:
+      - apk add --no-cache kubectl >/dev/null 2>&1 || true
+      - cd terraform/envs/scaleway && tofu init -input=false >/dev/null
+      - |
+        echo "Waiting for API server..."
+        for i in $(seq 1 30); do
+          tofu output -raw kubeconfig | kubectl --kubeconfig /dev/stdin get nodes >/dev/null 2>&1 && break
+          echo "  attempt $i/30..." && sleep 10
+        done
+        echo "API server ready."
+    secrets: *cluster_secrets
+    depends_on: [deploy-cluster]
+    <<: *deploy_only
+
+  # ─── Stage 4: Cilium + monitoring (must be first) ─────────────────
+  - name: deploy-addons
+    image: *tofu_image
+    environment:
+      <<: *cluster_creds
+      STACK: k8s-addons
+    commands:
+      - *deploy_stack_commands
+    secrets: *cluster_secrets
+    depends_on: [wait-api]
+    <<: *deploy_only
+
+  # ─── Stage 5: PKI + secrets + identity ────────────────────────────
+  - name: deploy-secrets
+    image: *tofu_image
+    environment:
+      <<: *cluster_creds
+      STACK: k8s-secrets
+    commands:
+      - *deploy_stack_commands
+    secrets: *cluster_secrets
+    depends_on: [deploy-addons]
+    <<: *deploy_only
+
+  # ─── Stage 6: Security (Tetragon + Kyverno + Trivy) ──────────────
+  - name: deploy-security
+    image: *tofu_image
+    environment:
+      <<: *cluster_creds
+      STACK: k8s-security
+    commands:
+      - *deploy_stack_commands
+    secrets: *cluster_secrets
+    depends_on: [deploy-addons]
+    <<: *deploy_only
+
+  # ─── Stage 7: Storage (Garage + Velero) ───────────────────────────
+  - name: deploy-storage
+    image: *tofu_image
+    environment:
+      <<: *cluster_creds
+      STACK: k8s-storage
+    commands:
+      - *deploy_stack_commands
+    secrets: *cluster_secrets
+    depends_on: [deploy-addons]
+    <<: *deploy_only

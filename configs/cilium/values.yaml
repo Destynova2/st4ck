@@ -1,0 +1,67 @@
+# Cilium Helm values for Talos Linux
+# Used to template manifests: helm template cilium cilium/cilium -f values.yaml
+ipam:
+  mode: kubernetes
+
+kubeProxyReplacement: true
+
+securityContext:
+  capabilities:
+    ciliumAgent:
+      - CHOWN
+      - KILL
+      - NET_ADMIN
+      - NET_RAW
+      - IPC_LOCK
+      - SYS_ADMIN
+      - SYS_RESOURCE
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    cleanCiliumState:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - SYS_RESOURCE
+
+cgroup:
+  autoMount:
+    enabled: false
+  hostRoot: /sys/fs/cgroup
+
+k8sServiceHost: localhost
+k8sServicePort: 7445
+
+hubble:
+  enabled: true
+  metrics:
+    enabled:
+      - dns
+      - drop
+      - tcp
+      - flow
+      - icmp
+      - httpV2:exemplars=true;labelsContext=source_ip,source_namespace,source_workload,destination_ip,destination_namespace,destination_workload,traffic_direction
+    serviceMonitor:
+      enabled: false
+    dashboards:
+      enabled: true
+      namespace: monitoring
+      label: grafana_dashboard
+  relay:
+    enabled: true
+    prometheus:
+      enabled: true
+  ui:
+    enabled: false
+
+prometheus:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+
+operator:
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: false

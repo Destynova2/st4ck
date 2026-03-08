@@ -1,0 +1,30 @@
+# Copy to terraform.tfvars and adjust as needed
+
+cluster_name       = "talos-local"
+talos_version      = "v1.12.4"
+kubernetes_version = "1.35.0"
+
+# Network
+network_cidr = "10.5.0.0/24"
+network_name = "talos"
+
+# Node counts
+controlplane_count = 3
+worker_count       = 1
+
+# Control plane sizing
+cp_vcpu      = 2
+cp_memory    = 4096      # MiB
+cp_disk_size = 21474836480 # 20 GiB
+
+# Worker sizing
+worker_vcpu      = 4
+worker_memory    = 8192      # MiB
+worker_disk_size = 53687091200 # 50 GiB
+
+# Libvirt
+libvirt_uri  = "qemu:///system"
+libvirt_pool = "default"
+
+# Leave empty to auto-download from Image Factory
+talos_image_url = ""

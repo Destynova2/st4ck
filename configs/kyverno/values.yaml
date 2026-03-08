@@ -1,0 +1,23 @@
+# Kyverno — Kubernetes policy engine
+# Validates, mutates, and generates resources
+
+replicaCount: 1
+
+admissionController:
+  replicas: 1
+
+backgroundController:
+  replicas: 1
+
+cleanupController:
+  replicas: 1
+
+reportsController:
+  replicas: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 384Mi

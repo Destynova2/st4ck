@@ -1,0 +1,16 @@
+# Headlamp — lightweight Kubernetes UI
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+
+clusterRoleBinding:
+  create: true
+
+config:
+  baseURL: ""

@@ -1,0 +1,5 @@
+# Imager schematic: include VMware Tools guest agent
+customization:
+  systemExtensions:
+    officialExtensions:
+      - siderolabs/vmtoolsd-guest-agent
