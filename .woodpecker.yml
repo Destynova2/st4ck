@@ -136,14 +136,28 @@ steps:
     depends_on: [deploy-addons]
     <<: *deploy_only
 
-  # ─── Stage 7: Storage (Garage + Velero) ───────────────────────────
+  # ─── Stage 7: Storage (Garage + Velero + Harbor) ──────────────────
   - name: deploy-storage
     image: *tofu_image
-    environment:
-      <<: *cluster_creds
-      STACK: k8s-storage
+    environment: *cluster_creds
     commands:
-      - *deploy_stack_commands
+      - |
+        apk add --no-cache kubectl >/dev/null 2>&1 || true
+        cd terraform/envs/scaleway && tofu init -input=false >/dev/null
+        export K8S_HOST=$(tofu output -raw kubernetes_host)
+        export K8S_CERT=$(tofu output -raw kubernetes_client_certificate)
+        export K8S_KEY=$(tofu output -raw kubernetes_client_key)
+        export K8S_CA=$(tofu output -raw kubernetes_ca_certificate)
+        cd ../../../terraform/stacks/k8s-secrets && tofu init -input=false >/dev/null
+        export HARBOR_PW=$(tofu output -raw harbor_admin_password)
+        cd ../k8s-storage
+        tofu init -input=false
+        tofu apply -auto-approve \
+          -var="kubernetes_host=$${K8S_HOST}" \
+          -var="kubernetes_client_certificate=$${K8S_CERT}" \
+          -var="kubernetes_client_key=$${K8S_KEY}" \
+          -var="kubernetes_ca_certificate=$${K8S_CA}" \
+          -var="harbor_admin_password=$${HARBOR_PW}"
     secrets: *cluster_secrets
-    depends_on: [deploy-addons]
+    depends_on: [deploy-secrets]
     <<: *deploy_only

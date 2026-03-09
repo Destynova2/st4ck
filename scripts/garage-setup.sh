@@ -61,7 +61,7 @@ else
 fi
 
 # ─── Buckets ─────────────────────────────────────────────────────────
-for BUCKET in velero-backups; do
+for BUCKET in velero-backups harbor-registry; do
   if $GR bucket info "$BUCKET" >/dev/null 2>&1; then
     echo "Bucket '$BUCKET' already exists."
   else
@@ -111,15 +111,14 @@ ensure_key() {
     return 0
   fi
 
-  # Delete existing key if any (to recreate with known secret)
-  if $GR key info "$KEY_NAME" >/dev/null 2>&1; then
+  # Delete ALL existing keys with this name (handles duplicates)
+  while $GR key info "$KEY_NAME" >/dev/null 2>&1; do
     echo "Deleting stale key '$KEY_NAME'..."
     local OLD_KEY_ID
     OLD_KEY_ID=$($GR key info "$KEY_NAME" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep "Key ID:" | awk '{print $NF}')
-    # Revoke bucket permissions first
-    $GR bucket deny --read --write --owner "$BUCKET" --key "$KEY_NAME" 2>&1 | grep -v INFO || true
+    $GR bucket deny --read --write --owner "$BUCKET" --key "$OLD_KEY_ID" 2>&1 | grep -v INFO || true
     garage_api DELETE "key?id=$OLD_KEY_ID" || true
-  fi
+  done
 
   # Create new key via admin API (returns the secret)
   echo "Creating key '$KEY_NAME'..."
@@ -156,5 +155,59 @@ EOF
 }
 
 ensure_key "velero-key" "velero-backups" "storage" "velero-s3-credentials"
+
+# Harbor needs plain access_key/secret_key fields (not INI format)
+ensure_key_plain() {
+  local KEY_NAME="$1"
+  local BUCKET="$2"
+  local SECRET_NS="$3"
+  local SECRET_NAME="$4"
+  local ACCESS_KEY SECRET_KEY
+
+  local EXISTING_ACCESS
+  EXISTING_ACCESS=$($KC get secret "$SECRET_NAME" -n "$SECRET_NS" -o jsonpath='{.data.access_key}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+
+  if [ -n "$EXISTING_ACCESS" ] && $GR key info "$EXISTING_ACCESS" >/dev/null 2>&1; then
+    echo "Key '$KEY_NAME' ($EXISTING_ACCESS) already exists and K8s secret is valid."
+    return 0
+  fi
+
+  if $GR key info "$KEY_NAME" >/dev/null 2>&1; then
+    echo "Deleting stale key '$KEY_NAME'..."
+    local OLD_KEY_ID
+    OLD_KEY_ID=$($GR key info "$KEY_NAME" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep "Key ID:" | awk '{print $NF}')
+    $GR bucket deny --read --write --owner "$BUCKET" --key "$KEY_NAME" 2>&1 | grep -v INFO || true
+    garage_api DELETE "key?id=$OLD_KEY_ID" || true
+  fi
+
+  echo "Creating key '$KEY_NAME'..."
+  local CREATE_JSON
+  CREATE_JSON=$(garage_api POST "key" "{\"name\":\"$KEY_NAME\"}")
+  ACCESS_KEY=$(echo "$CREATE_JSON" | tr -d '\n\r ' | sed -n 's/.*"accessKeyId":"\([^"]*\)".*/\1/p')
+  SECRET_KEY=$(echo "$CREATE_JSON" | tr -d '\n\r ' | sed -n 's/.*"secretAccessKey":"\([^"]*\)".*/\1/p')
+
+  if [ -z "$ACCESS_KEY" ] || [ -z "$SECRET_KEY" ]; then
+    echo "ERROR: Failed to create key '$KEY_NAME'" >&2
+    exit 1
+  fi
+
+  $GR bucket allow --read --write --owner "$BUCKET" --key "$KEY_NAME" 2>&1 | grep -v INFO || true
+
+  $KC apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: $SECRET_NAME
+  namespace: $SECRET_NS
+type: Opaque
+stringData:
+  access_key: "${ACCESS_KEY}"
+  secret_key: "${SECRET_KEY}"
+EOF
+
+  echo "  Key created: $ACCESS_KEY"
+}
+
+ensure_key_plain "harbor-key" "harbor-registry" "storage" "harbor-s3-credentials"
 
 echo "Garage setup complete."

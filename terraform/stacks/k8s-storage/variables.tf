@@ -44,3 +44,15 @@ variable "s3_url" {
   type        = string
   default     = "http://garage-s3.garage.svc.cluster.local:3900"
 }
+
+variable "harbor_version" {
+  description = "Harbor Helm chart version"
+  type        = string
+  default     = "1.16.2"
+}
+
+variable "harbor_admin_password" {
+  description = "Harbor admin password"
+  type        = string
+  sensitive   = true
+}

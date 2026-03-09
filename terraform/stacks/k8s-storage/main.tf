@@ -200,3 +200,43 @@ resource "helm_release" "velero" {
 
   depends_on = [kubernetes_namespace.storage, terraform_data.garage_setup]
 }
+
+# ─── Harbor (container registry with Garage S3 backend) ──────────────
+
+data "kubernetes_secret" "harbor_s3" {
+  depends_on = [terraform_data.garage_setup]
+
+  metadata {
+    name      = "harbor-s3-credentials"
+    namespace = "storage"
+  }
+}
+
+resource "helm_release" "harbor" {
+  name             = "harbor"
+  repository       = "https://helm.goharbor.io"
+  chart            = "harbor"
+  version          = var.harbor_version
+  namespace        = "storage"
+  create_namespace = false
+  timeout          = 600
+
+  values = [file("${path.module}/../../../configs/harbor/values.yaml")]
+
+  set_sensitive {
+    name  = "persistence.imageChartStorage.s3.accesskey"
+    value = data.kubernetes_secret.harbor_s3.data["access_key"]
+  }
+
+  set_sensitive {
+    name  = "persistence.imageChartStorage.s3.secretkey"
+    value = data.kubernetes_secret.harbor_s3.data["secret_key"]
+  }
+
+  set_sensitive {
+    name  = "harborAdminPassword"
+    value = var.harbor_admin_password
+  }
+
+  depends_on = [kubernetes_namespace.storage, terraform_data.garage_setup]
+}

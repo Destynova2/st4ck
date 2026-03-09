@@ -1,0 +1,33 @@
+# Kyverno ClusterPolicy — verify container image signatures (Cosign)
+# Mode: audit (switch to enforce once Harbor + Cosign signing is operational)
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-image-signatures
+  annotations:
+    policies.kyverno.io/title: Verify Image Signatures
+    policies.kyverno.io/category: Supply Chain Security
+    policies.kyverno.io/description: >-
+      Verify that container images are signed with Cosign.
+      Images from the internal Harbor registry must be signed.
+spec:
+  validationFailureAction: Audit
+  background: false
+  rules:
+    - name: verify-harbor-images
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      verifyImages:
+        - imageReferences:
+            - "harbor.storage.svc.cluster.local/*"
+          mutateDigest: false
+          attestors:
+            - entries:
+                - keys:
+                    secret:
+                      name: cosign-public-key
+                      namespace: security
+                    signatureAlgorithm: sha256

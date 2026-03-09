@@ -39,3 +39,15 @@ output "pomerium_version" {
   description = "Deployed Pomerium version"
   value       = helm_release.pomerium.version
 }
+
+output "oidc_client_secret" {
+  description = "OIDC client secret for kubernetes client (for kubelogin)"
+  value       = random_id.oidc_client_secret.hex
+  sensitive   = true
+}
+
+output "harbor_admin_password" {
+  description = "Harbor admin password"
+  value       = random_id.harbor_admin_password.hex
+  sensitive   = true
+}

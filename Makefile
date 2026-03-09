@@ -242,19 +242,21 @@ TF_K8S_STORAGE := terraform/stacks/k8s-storage
 k8s-storage-init: ## terraform init for k8s-storage
 	$(TF) -chdir=$(TF_K8S_STORAGE) init
 
-k8s-storage-apply: ## Deploy local-path + Garage + Velero
+k8s-storage-apply: ## Deploy local-path + Garage + Velero + Harbor
 	$(TF) -chdir=$(TF_K8S_STORAGE) apply -auto-approve \
 		-var="kubernetes_host=$$($(TF) -chdir=$(TF_SCALEWAY) output -raw kubernetes_host)" \
 		-var="kubernetes_client_certificate=$$($(TF) -chdir=$(TF_SCALEWAY) output -raw kubernetes_client_certificate)" \
 		-var="kubernetes_client_key=$$($(TF) -chdir=$(TF_SCALEWAY) output -raw kubernetes_client_key)" \
-		-var="kubernetes_ca_certificate=$$($(TF) -chdir=$(TF_SCALEWAY) output -raw kubernetes_ca_certificate)"
+		-var="kubernetes_ca_certificate=$$($(TF) -chdir=$(TF_SCALEWAY) output -raw kubernetes_ca_certificate)" \
+		-var="harbor_admin_password=$$($(TF) -chdir=$(TF_K8S_SECRETS) output -raw harbor_admin_password)"
 
-k8s-storage-destroy: ## Destroy local-path + Garage + Velero
+k8s-storage-destroy: ## Destroy local-path + Garage + Velero + Harbor
 	$(TF) -chdir=$(TF_K8S_STORAGE) destroy -auto-approve \
 		-var="kubernetes_host=$$($(TF) -chdir=$(TF_SCALEWAY) output -raw kubernetes_host)" \
 		-var="kubernetes_client_certificate=$$($(TF) -chdir=$(TF_SCALEWAY) output -raw kubernetes_client_certificate)" \
 		-var="kubernetes_client_key=$$($(TF) -chdir=$(TF_SCALEWAY) output -raw kubernetes_client_key)" \
-		-var="kubernetes_ca_certificate=$$($(TF) -chdir=$(TF_SCALEWAY) output -raw kubernetes_ca_certificate)"
+		-var="kubernetes_ca_certificate=$$($(TF) -chdir=$(TF_SCALEWAY) output -raw kubernetes_ca_certificate)" \
+		-var="harbor_admin_password=unused"
 
 # ─── Composite targets (enforce correct ordering) ──────────────────────
 #
@@ -368,10 +370,34 @@ scaleway-headlamp: scaleway-kubeconfig ## Open Headlamp UI (token copied to clip
 		KUBECONFIG=$(KC_FILE) kubectl port-forward -n monitoring svc/headlamp 4466:80 &  \
 		sleep 2 && open http://localhost:4466
 
+scaleway-harbor: scaleway-kubeconfig ## Open Harbor UI (admin password in clipboard)
+	@PASSWORD=$$($(TF) -chdir=$(TF_K8S_SECRETS) output -raw harbor_admin_password) && \
+		echo "$$PASSWORD" | pbcopy && \
+		echo "Harbor admin password copied to clipboard (user: admin)" && \
+		echo "" && \
+		KUBECONFIG=$(KC_FILE) kubectl port-forward -n storage svc/harbor 8080:80 & \
+		sleep 2 && open http://localhost:8080
+
+scaleway-oidc: scaleway-kubeconfig ## Configure apiServer OIDC (Hydra → K8s)
+	@TALOSCONFIG=$$(mktemp) && \
+		$(TF) -chdir=$(TF_SCALEWAY) output -raw talosconfig > "$$TALOSCONFIG" && \
+		ROOT_CA=$$($(TF) -chdir=$(TF_K8S_SECRETS) output -raw root_ca_cert) && \
+		CP_NODES=$$($(TF) -chdir=$(TF_SCALEWAY) output -json controlplane_ips | jq -r 'to_entries[].value' | paste -sd, -) && \
+		ROOT_CA="$$ROOT_CA" TALOSCONFIG="$$TALOSCONFIG" CP_NODES="$$CP_NODES" \
+			bash scripts/setup-oidc.sh && \
+		rm -f "$$TALOSCONFIG"
+
 scaleway-grafana: scaleway-kubeconfig ## Open Grafana UI
 	@echo "Opening Grafana..." && \
 		KUBECONFIG=$(KC_FILE) kubectl port-forward -n monitoring svc/grafana 3000:80 & \
 		sleep 2 && open http://localhost:3000
+
+# ─── Validation ────────────────────────────────────────────────────────────
+
+.PHONY: velero-test
+
+velero-test: scaleway-kubeconfig ## Run Velero backup/restore test
+	KUBECONFIG=$(KC_FILE) bash scripts/velero-test.sh
 
 # ─── Common ────────────────────────────────────────────────────────────────
 

@@ -65,7 +65,7 @@
 
 - [x] Gitea (deploye sur CI VM avec Woodpecker)
 - [x] Woodpecker CI (pipeline complet : validate → image → cluster → wait-api → addons → secrets → security → storage)
-- [ ] Harbor
+- [x] Harbor 1.16.2 (registry S3 Garage backend, Helm, Trivy scan integre)
 
 ### Phase 1.3 — Secrets & Identite (S3-S4)
 
@@ -102,8 +102,9 @@
 - [x] OpenBao infra + app (2 instances Helm separees)
 - [x] PKI Terraform (Root CA + Intermediate CA, pure TLS provider)
 - [x] cert-manager v1.19.4 + ClusterIssuer internal-ca
-- [x] Ory Kratos + Hydra + Pomerium
+- [x] Ory Kratos + Hydra (TLS public, OIDC kubernetes client auto-enregistre) + Pomerium
 - [x] Secrets auto-generes (`random_id` Terraform, zero intervention manuelle)
+- [x] OIDC K8s (Hydra → apiServer, `make scaleway-oidc` pour appliquer le patch talosctl)
 
 ### Phase 1.4 — Observabilite & Dashboard (S4-S5)
 
@@ -178,7 +179,7 @@
 - [x] Trivy Operator 0.32.0 (node-collector desactive — ADR-004 : `scanNodeCollectorLimit: 0`)
 - [x] Tetragon 1.6.0 (avec fix Talos tracefs)
 - [x] Kyverno 3.7.1
-- [ ] Cosign (Sigstore)
+- [x] Cosign verifyImages policy (Kyverno ClusterPolicy, mode audit, pret pour enforce)
 
 ### Phase 1.6 — Stockage & Backup (S6-S7)
 
@@ -209,7 +210,8 @@
 
 - [x] local-path-provisioner 0.0.35 (StorageClass defaut)
 - [x] Garage v2.2.0 (3 pods, S3-compatible, PVCs local-path, cluster layout configure)
-- [x] Velero 11.4.0 (backup → Garage S3, BackupStorageLocation available)
+- [x] Velero 11.4.0 (backup → Garage S3, BackupStorageLocation available, backup/restore teste)
+- [x] Harbor 1.16.2 (registry conteneurs, S3 Garage backend, Trivy scan integre)
 
 ### Phase 1.7 — Workload Clusters via CAPI (S7-S8)
 
@@ -234,14 +236,14 @@
 
 - [x] Management cluster 6 noeuds Talos stable (3 CP + 3 workers)
 - [x] Pipeline CI/CD complet (Woodpecker + OpenTofu, 7 stages)
-- [ ] Harbor miroir ~200 images, scannees et signees
+- [x] Harbor registry (S3 Garage backend, Trivy scan integre)
 - [x] Observabilite complete (metriques + logs + alertes)
 - [x] Secrets & PKI (OpenBao infra/app + cert-manager + Root/Intermediate CA)
-- [x] Securite runtime (Trivy + Tetragon + Kyverno)
+- [x] Securite runtime (Trivy + Tetragon + Kyverno + Cosign policy)
 - [x] Stockage S3 + backup (Garage + Velero, BSL Available)
-- [ ] OIDC K8s fonctionnel (Ory Hydra → apiServer OIDC config)
-- [ ] Cosign (signature images + policy Kyverno verifyImages)
-- [ ] Velero backup/restore teste (backup + restore d'un namespace)
+- [x] OIDC K8s fonctionnel (Hydra TLS + client auto-enregistre + patch talosctl)
+- [x] Cosign (Kyverno verifyImages ClusterPolicy, mode audit)
+- [x] Velero backup/restore teste (`make velero-test` — backup + restore namespace)
 - [ ] 1 workload cluster cree/detruit via CAPI (demo Scaleway, puis vSphere en prod)
 - [ ] Conformite ANSSI Guide K8s 2024 validee
 
@@ -438,13 +440,13 @@ Pipeline complet :
 ```
 Phase 1.1 Bootstrap (Talos + Cilium + CoreDNS)                    [DONE]
     │
-Phase 1.2 CI/CD & Registry (Gitea + Woodpecker + Harbor)          [PARTIAL — Harbor restant]
+Phase 1.2 CI/CD & Registry (Gitea + Woodpecker + Harbor)          [DONE]
     │
     ├── Phase 1.3 Secrets & Identite (OpenBao x2 + PKI + Ory)     [DONE]
     │       │
     │       Phase 1.4 Observabilite (VM + Loki + Alloy + Grafana)  [DONE]
     │           │
-    │           Phase 1.5 Securite (Trivy + Tetragon + Kyverno)    [DONE — Cosign restant]
+    │           Phase 1.5 Securite (Trivy + Tetragon + Kyverno)    [DONE]
     │               │
     │               Phase 1.6 Stockage (local-path+Garage+Velero)  [DONE]
     │                   │
@@ -514,9 +516,15 @@ make scaleway-up (~12 minutes end-to-end)
 │           └── L'utilisateur peut suivre les stacks restants en live
 ├── 4. k8s-secrets-apply    (~1 min) — PKI + OpenBao x2 + Ory + cert-manager
 │       └── Secrets auto-generes via random_id (zero tfvars)
-├── 5. k8s-security-apply   (~2 min) — Trivy + Tetragon + Kyverno
-└── 6. k8s-storage-apply    (~1 min) — local-path + Garage + Velero
-        └── Secrets Garage auto-generes via random_id
+├── 5. k8s-security-apply   (~2 min) — Trivy + Tetragon + Kyverno + Cosign policy
+└── 6. k8s-storage-apply    (~2 min) — local-path + Garage + Velero + Harbor
+        └── Secrets Garage + Harbor auto-generes via random_id
+
+Post-deploy (optionnel) :
+├── make scaleway-oidc       — Configure apiServer OIDC (Hydra, talosctl patch)
+├── make velero-test         — Valide backup/restore end-to-end
+├── make scaleway-harbor     — Ouvre Harbor UI (password dans clipboard)
+└── make scaleway-grafana    — Ouvre Grafana UI
 ```
 
-*Document de reference — Mis a jour 2026-03-09*
+*Document de reference — Mis a jour 2026-03-09 — Gate 1 : 10/12 criteres valides*

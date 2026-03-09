@@ -1,5 +1,6 @@
 # Ory Hydra — OAuth2 / OIDC server
 # Dev mode: SQLite in-memory, no external DB
+# TLS on public endpoint (required for K8s apiServer OIDC)
 
 hydra:
   dev: true
@@ -11,12 +12,17 @@ hydra:
       public:
         cors:
           enabled: true
+        tls:
+          cert:
+            path: /etc/hydra/tls/tls.crt
+          key:
+            path: /etc/hydra/tls/tls.key
       admin:
         host: 0.0.0.0
 
     urls:
       self:
-        issuer: http://hydra:4444/
+        issuer: https://hydra-public.identity.svc:4444/
       consent: http://127.0.0.1:4455/consent
       login: http://127.0.0.1:4455/login
       logout: http://127.0.0.1:4455/logout
@@ -34,3 +40,13 @@ hydra:
     enabled: true
 
 replicaCount: 1
+
+deployment:
+  extraVolumes:
+    - name: hydra-tls
+      secret:
+        secretName: hydra-tls
+  extraVolumeMounts:
+    - name: hydra-tls
+      mountPath: /etc/hydra/tls
+      readOnly: true

@@ -47,6 +47,14 @@ resource "random_id" "pomerium_client_secret" {
   byte_length = 32
 }
 
+resource "random_id" "oidc_client_secret" {
+  byte_length = 32
+}
+
+resource "random_id" "harbor_admin_password" {
+  byte_length = 16
+}
+
 provider "kubernetes" {
   host                   = var.kubernetes_host
   client_certificate     = base64decode(var.kubernetes_client_certificate)
@@ -328,7 +336,133 @@ resource "helm_release" "hydra" {
     system_secret = random_id.hydra_system_secret.hex
   })]
 
-  depends_on = [kubernetes_namespace.identity]
+  depends_on = [kubernetes_namespace.identity, terraform_data.hydra_tls_cert]
+}
+
+# ─── Hydra TLS certificate (for apiServer OIDC) ─────────────────────
+
+resource "terraform_data" "hydra_tls_cert" {
+  depends_on = [terraform_data.cluster_issuer, kubernetes_namespace.identity]
+
+  input = {
+    host = var.kubernetes_host
+    ca   = var.kubernetes_ca_certificate
+    cert = var.kubernetes_client_certificate
+    key  = var.kubernetes_client_key
+  }
+
+  provisioner "local-exec" {
+    command     = <<-EOT
+      set -e
+      CA=$(mktemp) && CERT=$(mktemp) && KEY=$(mktemp)
+      echo "$K8S_CA" | base64 -d > "$CA"
+      echo "$K8S_CERT" | base64 -d > "$CERT"
+      echo "$K8S_KEY" | base64 -d > "$KEY"
+      kubectl --server="$K8S_HOST" --certificate-authority="$CA" --client-certificate="$CERT" --client-key="$KEY" \
+        apply -f - <<'YAML'
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: hydra-tls
+  namespace: identity
+spec:
+  secretName: hydra-tls
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+  dnsNames:
+    - hydra-public
+    - hydra-public.identity
+    - hydra-public.identity.svc
+    - hydra-public.identity.svc.cluster.local
+YAML
+      rm -f "$CA" "$CERT" "$KEY"
+    EOT
+    environment = {
+      K8S_HOST = var.kubernetes_host
+      K8S_CA   = var.kubernetes_ca_certificate
+      K8S_CERT = var.kubernetes_client_certificate
+      K8S_KEY  = var.kubernetes_client_key
+    }
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      set -e
+      CA=$(mktemp) && CERT=$(mktemp) && KEY=$(mktemp)
+      echo "${self.input.ca}" | base64 -d > "$CA"
+      echo "${self.input.cert}" | base64 -d > "$CERT"
+      echo "${self.input.key}" | base64 -d > "$KEY"
+      kubectl --server="${self.input.host}" --certificate-authority="$CA" --client-certificate="$CERT" --client-key="$KEY" \
+        delete certificate hydra-tls -n identity --ignore-not-found --timeout=30s || true
+      kubectl --server="${self.input.host}" --certificate-authority="$CA" --client-certificate="$CERT" --client-key="$KEY" \
+        delete secret hydra-tls -n identity --ignore-not-found || true
+      rm -f "$CA" "$CERT" "$KEY"
+    EOT
+  }
+}
+
+# ─── OIDC client registration (kubernetes → Hydra) ──────────────────
+# Hydra dev mode = in-memory: client must be registered after every deploy.
+
+resource "terraform_data" "hydra_oidc_client" {
+  depends_on = [helm_release.hydra]
+
+  input = {
+    host = var.kubernetes_host
+    ca   = var.kubernetes_ca_certificate
+    cert = var.kubernetes_client_certificate
+    key  = var.kubernetes_client_key
+  }
+
+  triggers_replace = [
+    random_id.oidc_client_secret.hex,
+  ]
+
+  provisioner "local-exec" {
+    command     = <<-EOT
+      set -e
+      CA=$(mktemp) && CERT=$(mktemp) && KEY=$(mktemp)
+      echo "$K8S_CA" | base64 -d > "$CA"
+      echo "$K8S_CERT" | base64 -d > "$CERT"
+      echo "$K8S_KEY" | base64 -d > "$KEY"
+      KC="kubectl --server=$K8S_HOST --certificate-authority=$CA --client-certificate=$CERT --client-key=$KEY"
+
+      echo "Waiting for Hydra admin to be ready..."
+      for i in $(seq 1 30); do
+        $KC get endpoints hydra-admin -n identity -o jsonpath='{.subsets[0].addresses[0].ip}' >/dev/null 2>&1 && break
+        echo "  attempt $i/30..."
+        sleep 5
+      done
+
+      echo "Registering kubernetes OIDC client..."
+      $KC delete pod hydra-api-call -n identity --ignore-not-found >/dev/null 2>&1 || true
+      $KC run hydra-api-call -n identity --rm -i --restart=Never \
+        --image=curlimages/curl:8.12.1 --command -- \
+        curl -sf -X POST http://hydra-admin.identity.svc:4445/admin/clients \
+          -H 'Content-Type: application/json' \
+          -d "{
+            \"client_id\": \"kubernetes\",
+            \"client_secret\": \"$OIDC_CLIENT_SECRET\",
+            \"grant_types\": [\"authorization_code\", \"refresh_token\"],
+            \"response_types\": [\"code\"],
+            \"scope\": \"openid email profile\",
+            \"redirect_uris\": [\"http://localhost:8000\", \"http://localhost:18000\"],
+            \"token_endpoint_auth_method\": \"client_secret_basic\"
+          }" 2>/dev/null || true
+
+      rm -f "$CA" "$CERT" "$KEY"
+      echo "OIDC client 'kubernetes' registered."
+    EOT
+    environment = {
+      K8S_HOST           = var.kubernetes_host
+      K8S_CA             = var.kubernetes_ca_certificate
+      K8S_CERT           = var.kubernetes_client_certificate
+      K8S_KEY            = var.kubernetes_client_key
+      OIDC_CLIENT_SECRET = random_id.oidc_client_secret.hex
+    }
+  }
 }
 
 # ─── Pomerium (zero-trust access proxy) ─────────────────────────────

@@ -1,0 +1,79 @@
+# Harbor — container registry with S3 backend (Garage)
+# Access via port-forward: kubectl port-forward -n storage svc/harbor-core 8080:80
+
+expose:
+  type: clusterIP
+  tls:
+    enabled: false
+
+externalURL: http://localhost:8080
+
+# Admin password set via --set at deploy time
+# harborAdminPassword: auto-generated
+
+persistence:
+  enabled: true
+  resourcePolicy: ""
+  persistentVolumeClaim:
+    database:
+      storageClass: local-path
+      size: 1Gi
+    redis:
+      storageClass: local-path
+      size: 1Gi
+    trivy:
+      storageClass: local-path
+      size: 2Gi
+  imageChartStorage:
+    type: s3
+    s3:
+      region: garage
+      bucket: harbor-registry
+      regionendpoint: http://garage-s3.garage.svc.cluster.local:3900
+      secure: false
+      # accesskey/secretkey injected via set_sensitive from K8s secret
+
+trivy:
+  enabled: true
+
+portal:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+
+core:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+registry:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+database:
+  internal:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+
+redis:
+  internal:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
