@@ -1,6 +1,6 @@
 # Roadmap d'implementation — Plateforme Souveraine Air-Gapped
 
-> AO Brest Defence — CaaS Kubernetes souverain
+> CaaS Kubernetes souverain air-gapped
 > 3 Gates, 9 mois, ~60 composants
 
 ---
