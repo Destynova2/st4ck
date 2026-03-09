@@ -194,7 +194,7 @@ TF_K8S_SECRETS := terraform/stacks/k8s-secrets
 k8s-secrets-init: ## terraform init for k8s-secrets
 	$(TF) -chdir=$(TF_K8S_SECRETS) init
 
-k8s-secrets-apply: ## Deploy PKI + OpenBao (uses Scaleway cluster outputs)
+k8s-secrets-apply: ## Deploy PKI + OpenBao + identity
 	$(TF) -chdir=$(TF_K8S_SECRETS) apply -auto-approve \
 		-var="kubernetes_host=$$($(TF) -chdir=$(TF_SCALEWAY) output -raw kubernetes_host)" \
 		-var="kubernetes_client_certificate=$$($(TF) -chdir=$(TF_SCALEWAY) output -raw kubernetes_client_certificate)" \
@@ -279,11 +279,16 @@ scaleway-wait: ## Wait for K8s API server to be reachable
 	@echo "API server ready."
 
 scaleway-k8s-up: k8s-addons-apply ## Deploy all k8s stacks (Cilium first, then rest sequentially)
-	@echo ""
-	@echo "  Headlamp UI ready. In another terminal:"
-	@echo "    kubectl port-forward -n monitoring svc/headlamp 4466:80"
-	@echo "    open http://localhost:4466"
-	@echo ""
+	@$(KUBECONFIG_CMD) > $(KC_FILE) 2>/dev/null
+	@KUBECONFIG=$(KC_FILE) kubectl create serviceaccount headlamp-admin -n kube-system 2>/dev/null || true
+	@KUBECONFIG=$(KC_FILE) kubectl create clusterrolebinding headlamp-admin-token --clusterrole=cluster-admin --serviceaccount=kube-system:headlamp-admin 2>/dev/null || true
+	@TOKEN=$$(KUBECONFIG=$(KC_FILE) kubectl create token headlamp-admin -n kube-system --duration=48h) && \
+		echo "$$TOKEN" | pbcopy && \
+		echo "" && \
+		echo "  Headlamp: http://localhost:4466 (token in clipboard)" && \
+		echo "" && \
+		KUBECONFIG=$(KC_FILE) kubectl port-forward -n monitoring svc/headlamp 4466:80 >/dev/null 2>&1 &
+	@sleep 2 && open http://localhost:4466
 	$(MAKE) k8s-secrets-apply
 	$(MAKE) k8s-security-apply
 	$(MAKE) k8s-storage-apply

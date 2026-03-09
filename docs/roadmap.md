@@ -90,14 +90,22 @@
     └── SSO tous composants
 ```
 
-**Livrable** : zero secret en clair, authentification centralisee, PKI automatisee.
+**Decision** : Secrets auto-generes via `random_id` Terraform. Voir ADR-005.
+- Plus de `secret.tfvars` manuels — chaque deploy genere des secrets uniques
+- `random_id.*.hex` (64 chars) pour tokens/secrets generiques
+- `random_id.*.b64_std` (base64, 32 raw bytes) pour Pomerium shared/cookie secrets
+- Secrets injectes via `templatefile()` dans les Helm values
+- Stockes dans le state Terraform (chiffre), jamais en clair sur disque
+
+**Livrable** : zero secret en clair, authentification centralisee, PKI automatisee, secrets auto-generes.
 
 - [x] OpenBao infra + app (2 instances Helm separees)
 - [x] PKI Terraform (Root CA + Intermediate CA, pure TLS provider)
 - [x] cert-manager v1.19.4 + ClusterIssuer internal-ca
 - [x] Ory Kratos + Hydra + Pomerium
+- [x] Secrets auto-generes (`random_id` Terraform, zero intervention manuelle)
 
-### Phase 1.4 — Observabilite (S4-S5)
+### Phase 1.4 — Observabilite & Dashboard (S4-S5)
 
 **Depends** : Phase 1.3 (secrets pour credentials)
 
@@ -121,16 +129,23 @@
 
 14. Grafana
     ├── Datasources: VictoriaMetrics, Loki, Alertmanager
-    └── Dashboards: Hubble (natifs Cilium), K8s Global/Nodes/Pods
+    ├── Dashboards: Hubble (natifs Cilium), K8s Global/Nodes/Pods
+    └── Platform Overview dashboard (C-level, auto-refresh 30s)
+
+15. Headlamp
+    ├── UI Kubernetes (kubernetes-sigs)
+    ├── S'ouvre automatiquement apres deploy addons (token auto-copie)
+    └── Permet de suivre le deploiement des stacks restants en live
 ```
 
-**Livrable** : observabilite complete (metriques, logs, alertes, dashboards).
+**Livrable** : observabilite complete (metriques, logs, alertes, dashboards, UI live).
 
 - [x] VictoriaMetrics 0.32.0
 - [x] Loki 6.53.0
 - [x] Alertmanager 1.33.1
 - [x] Alloy 1.6.1
-- [x] Grafana 10.5.15
+- [x] Grafana 10.5.15 + Platform Overview dashboard
+- [x] Headlamp 0.40.0 (auto-open dans `make scaleway-up`)
 
 ### Phase 1.5 — Securite & Scanning (S5-S6)
 
@@ -160,7 +175,7 @@
 
 **Livrable** : supply chain securisee, detection runtime, policies appliquees.
 
-- [x] Trivy Operator 0.32.0
+- [x] Trivy Operator 0.32.0 (node-collector desactive — ADR-004 : `scanNodeCollectorLimit: 0`)
 - [x] Tetragon 1.6.0 (avec fix Talos tracefs)
 - [x] Kyverno 3.7.1
 - [ ] Cosign (Sigstore)
@@ -472,7 +487,8 @@ Phase 1.2 CI/CD & Registry (Gitea + Woodpecker + Harbor)          [PARTIAL — H
 | Policy engine | Pod Security Standards | Kyverno | Plus flexible, CRD-based, admission + mutation |
 | GitOps/CD | FluxCD | Woodpecker + OpenTofu (ADR-002) | Flux = chicken-and-egg avec Cilium, 2 systemes de deploiement. Woodpecker + tofu couvre le CD |
 | Object store S3 | SeaweedFS | Garage (ADR-003) | Garage deja deploye (phase 1.6), pas besoin de 2 object stores |
-| Trivy node-collector | Active (CIS benchmark nodes) | Desactive (ADR-004) | Incompatible Talos : filesystem read-only (mkdir /etc/systemd echoue), pas de systemd, pas de shell, paths non-standard. Inutile car Talos est durci par design (plus strict que CIS). Trivy continue le scan images, configs K8s, RBAC, SBOM |
+| Trivy node-collector | Active (CIS benchmark nodes) | Desactive (ADR-004) | Incompatible Talos : filesystem read-only, pas de systemd/shell. Fix final : `operator.scanNodeCollectorLimit: 0` + `compliance.specs: []` (seul moyen effectif dans chart v0.32). Talos est durci par design (plus strict que CIS). Trivy continue scan images, configs K8s, RBAC, SBOM |
+| Gestion secrets | `secret.tfvars` manuels | `random_id` Terraform (ADR-005) | Zero intervention manuelle. Chaque deploy genere des secrets uniques via `random_id`. `.hex` pour tokens, `.b64_std` pour Pomerium (strict 32 bytes). Injectes via `templatefile()`, stockes dans state Terraform |
 
 ## Risques et mitigations
 
@@ -486,4 +502,21 @@ Phase 1.2 CI/CD & Registry (Gitea + Woodpecker + Harbor)          [PARTIAL — H
 
 ---
 
-*Document de reference — Mis a jour 2026-03-08*
+## Automatisation deploiement
+
+```
+make scaleway-up (~12 minutes end-to-end)
+│
+├── 1. scaleway-apply      (~5 min) — Cluster Talos 3CP + 3W
+├── 2. wait-api             (~1 min) — Attente Kubernetes API ready
+├── 3. k8s-addons-apply     (~2 min) — Cilium, monitoring, Headlamp
+│       └── Headlamp s'ouvre automatiquement (token copie dans clipboard)
+│           └── L'utilisateur peut suivre les stacks restants en live
+├── 4. k8s-secrets-apply    (~1 min) — PKI + OpenBao x2 + Ory + cert-manager
+│       └── Secrets auto-generes via random_id (zero tfvars)
+├── 5. k8s-security-apply   (~2 min) — Trivy + Tetragon + Kyverno
+└── 6. k8s-storage-apply    (~1 min) — local-path + Garage + Velero
+        └── Secrets Garage auto-generes via random_id
+```
+
+*Document de reference — Mis a jour 2026-03-09*

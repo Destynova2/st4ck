@@ -22,7 +22,7 @@ data:
     compression_level = 1
     block_size = 1048576
     rpc_bind_addr = "[::]:3901"
-    rpc_secret = "CHANGE_ME_generate_with_openssl_rand_hex_32"
+    rpc_secret = "${garage_rpc_secret}"
 
     # Peer discovery via Kubernetes API (no DNS needed, works with static binary)
     bootstrap_peers = []
@@ -44,7 +44,7 @@ data:
 
     [admin]
     api_bind_addr = "[::]:3903"
-    admin_token = "CHANGE_ME_generate_with_openssl_rand_hex_32"
+    admin_token = "${garage_admin_token}"
 ---
 apiVersion: v1
 kind: Service

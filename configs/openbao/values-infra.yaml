@@ -4,7 +4,7 @@
 server:
   dev:
     enabled: true
-    devRootToken: "CHANGE_ME"
+    devRootToken: "${root_token}"
 
   standalone:
     enabled: true

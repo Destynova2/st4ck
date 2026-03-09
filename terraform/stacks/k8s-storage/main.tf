@@ -8,7 +8,23 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+# Auto-generated secrets (stored in Terraform state, never on disk)
+# ═══════════════════════════════════════════════════════════════════════
+
+resource "random_id" "garage_rpc_secret" {
+  byte_length = 32
+}
+
+resource "random_id" "garage_admin_token" {
+  byte_length = 32
 }
 
 provider "kubernetes" {
@@ -74,24 +90,31 @@ resource "terraform_data" "garage" {
 
   triggers_replace = [
     filemd5("${path.module}/../../../configs/garage/garage.yaml"),
+    random_id.garage_rpc_secret.hex,
+    random_id.garage_admin_token.hex,
   ]
 
   provisioner "local-exec" {
     command     = <<-EOT
       set -e
-      CA=$(mktemp) && CERT=$(mktemp) && KEY=$(mktemp)
+      CA=$(mktemp) && CERT=$(mktemp) && KEY=$(mktemp) && MANIFEST=$(mktemp)
       echo "$K8S_CA" | base64 -d > "$CA"
       echo "$K8S_CERT" | base64 -d > "$CERT"
       echo "$K8S_KEY" | base64 -d > "$KEY"
+      echo "$GARAGE_MANIFEST" > "$MANIFEST"
       kubectl --server="$K8S_HOST" --certificate-authority="$CA" --client-certificate="$CERT" --client-key="$KEY" \
-        apply -f ${path.module}/../../../configs/garage/garage.yaml
-      rm -f "$CA" "$CERT" "$KEY"
+        apply -f "$MANIFEST"
+      rm -f "$CA" "$CERT" "$KEY" "$MANIFEST"
     EOT
     environment = {
-      K8S_HOST = var.kubernetes_host
-      K8S_CA   = var.kubernetes_ca_certificate
-      K8S_CERT = var.kubernetes_client_certificate
-      K8S_KEY  = var.kubernetes_client_key
+      K8S_HOST         = var.kubernetes_host
+      K8S_CA           = var.kubernetes_ca_certificate
+      K8S_CERT         = var.kubernetes_client_certificate
+      K8S_KEY          = var.kubernetes_client_key
+      GARAGE_MANIFEST  = templatefile("${path.module}/../../../configs/garage/garage.yaml", {
+        garage_rpc_secret  = random_id.garage_rpc_secret.hex
+        garage_admin_token = random_id.garage_admin_token.hex
+      })
     }
   }
 
@@ -136,10 +159,11 @@ resource "terraform_data" "garage_setup" {
   provisioner "local-exec" {
     command     = "bash ${path.module}/../../../scripts/garage-setup.sh"
     environment = {
-      K8S_HOST = var.kubernetes_host
-      K8S_CA   = var.kubernetes_ca_certificate
-      K8S_CERT = var.kubernetes_client_certificate
-      K8S_KEY  = var.kubernetes_client_key
+      K8S_HOST           = var.kubernetes_host
+      K8S_CA             = var.kubernetes_ca_certificate
+      K8S_CERT           = var.kubernetes_client_certificate
+      K8S_KEY            = var.kubernetes_client_key
+      GARAGE_ADMIN_TOKEN = random_id.garage_admin_token.hex
     }
   }
 

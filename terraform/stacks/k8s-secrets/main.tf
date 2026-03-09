@@ -12,7 +12,39 @@ terraform {
       source  = "hashicorp/tls"
       version = "~> 4.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+# Auto-generated secrets (stored in Terraform state, never on disk)
+# ═══════════════════════════════════════════════════════════════════════
+
+resource "random_id" "openbao_infra_root_token" {
+  byte_length = 32
+}
+
+resource "random_id" "openbao_app_root_token" {
+  byte_length = 32
+}
+
+resource "random_id" "hydra_system_secret" {
+  byte_length = 32
+}
+
+resource "random_id" "pomerium_shared_secret" {
+  byte_length = 32
+}
+
+resource "random_id" "pomerium_cookie_secret" {
+  byte_length = 32
+}
+
+resource "random_id" "pomerium_client_secret" {
+  byte_length = 32
 }
 
 provider "kubernetes" {
@@ -143,7 +175,9 @@ resource "helm_release" "openbao_infra" {
   namespace        = "secrets"
   create_namespace = false
 
-  values = [file("${path.module}/../../../configs/openbao/values-infra.yaml")]
+  values = [templatefile("${path.module}/../../../configs/openbao/values-infra.yaml", {
+    root_token = random_id.openbao_infra_root_token.hex
+  })]
 
   depends_on = [kubernetes_namespace.secrets]
 }
@@ -160,7 +194,9 @@ resource "helm_release" "openbao_app" {
   namespace        = "secrets"
   create_namespace = false
 
-  values = [file("${path.module}/../../../configs/openbao/values-app.yaml")]
+  values = [templatefile("${path.module}/../../../configs/openbao/values-app.yaml", {
+    root_token = random_id.openbao_app_root_token.hex
+  })]
 
   depends_on = [kubernetes_namespace.secrets]
 }
@@ -288,7 +324,9 @@ resource "helm_release" "hydra" {
   namespace        = "identity"
   create_namespace = false
 
-  values = [file("${path.module}/../../../configs/hydra/values.yaml")]
+  values = [templatefile("${path.module}/../../../configs/hydra/values.yaml", {
+    system_secret = random_id.hydra_system_secret.hex
+  })]
 
   depends_on = [kubernetes_namespace.identity]
 }
@@ -303,7 +341,11 @@ resource "helm_release" "pomerium" {
   namespace        = "identity"
   create_namespace = false
 
-  values = [file("${path.module}/../../../configs/pomerium/values.yaml")]
+  values = [templatefile("${path.module}/../../../configs/pomerium/values.yaml", {
+    client_secret = random_id.pomerium_client_secret.hex
+    shared_secret = random_id.pomerium_shared_secret.b64_std
+    cookie_secret = random_id.pomerium_cookie_secret.b64_std
+  })]
 
   depends_on = [kubernetes_namespace.identity, helm_release.hydra]
 }

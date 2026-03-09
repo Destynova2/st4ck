@@ -3,14 +3,19 @@
 
 operator:
   replicaCount: 1
+  clusterComplianceEnabled: false
+  # Disable node scanning entirely (Talos: no systemd, read-only fs — ADR-004)
+  scanNodeCollectorLimit: 0
+
+compliance:
+  specs: []
+
+nodeCollector:
+  volumes: []
+  volumeMounts: []
 
 trivy:
   ignoreUnfixed: true
-
-# node-collector incompatible with Talos (read-only filesystem, no systemd)
-# Trivy still scans images, configs, and RBAC without it
-operator:
-  clusterComplianceEnabled: false
 
 resources:
   requests:

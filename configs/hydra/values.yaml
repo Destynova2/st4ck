@@ -23,7 +23,7 @@ hydra:
 
     secrets:
       system:
-        - CHANGE_ME_generate_with_openssl_rand_hex_32
+        - ${system_secret}
 
     oidc:
       subject_identifiers:

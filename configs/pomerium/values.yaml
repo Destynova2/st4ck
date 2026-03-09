@@ -6,7 +6,7 @@ authenticate:
     provider: oidc
     providerUrl: http://hydra.identity.svc:4444/
     clientID: pomerium
-    clientSecret: CHANGE_ME
+    clientSecret: ${client_secret}
 
 proxy:
   replicaCount: 1
@@ -15,8 +15,8 @@ authorize:
   replicaCount: 1
 
 config:
-  sharedSecret: ""
-  cookieSecret: ""
+  sharedSecret: "${shared_secret}"
+  cookieSecret: "${cookie_secret}"
 
 ingress:
   enabled: false
