@@ -3,8 +3,18 @@
 
 replicaCount: 1
 
+# Ignore webhook failures so Kyverno being down doesn't block all deployments
 admissionController:
   replicas: 1
+  container:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        memory: 384Mi
+  webhookConfiguration:
+    failurePolicy: Ignore
 
 backgroundController:
   replicas: 1

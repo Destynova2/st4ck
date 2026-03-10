@@ -39,6 +39,37 @@ resource "helm_release" "cilium" {
   values = [file("${path.module}/../../../configs/cilium/values.yaml")]
 }
 
+# ─── Node Exporter (host-level metrics: CPU, RAM, disk, network) ────────
+
+resource "helm_release" "node_exporter" {
+  name             = "node-exporter"
+  repository       = "https://prometheus-community.github.io/helm-charts"
+  chart            = "prometheus-node-exporter"
+  version          = var.node_exporter_version
+  namespace        = "monitoring"
+  create_namespace = false
+  timeout          = 600
+
+  values = [file("${path.module}/../../../configs/node-exporter/values.yaml")]
+
+  depends_on = [helm_release.cilium, kubernetes_namespace.monitoring]
+}
+
+# ─── kube-state-metrics (kube_* metrics for dashboards) ─────────────────
+
+resource "helm_release" "kube_state_metrics" {
+  name             = "kube-state-metrics"
+  repository       = "https://prometheus-community.github.io/helm-charts"
+  chart            = "kube-state-metrics"
+  version          = var.kube_state_metrics_version
+  namespace        = "monitoring"
+  create_namespace = false
+
+  values = [file("${path.module}/../../../configs/kube-state-metrics/values.yaml")]
+
+  depends_on = [helm_release.cilium, kubernetes_namespace.monitoring]
+}
+
 # ─── Monitoring Namespace ────────────────────────────────────────────────
 
 resource "kubernetes_namespace" "monitoring" {
@@ -74,6 +105,7 @@ resource "helm_release" "loki" {
   version          = var.loki_version
   namespace        = "monitoring"
   create_namespace = false
+  timeout          = 600
 
   values = [file("${path.module}/../../../configs/loki/values.yaml")]
 
@@ -104,6 +136,7 @@ resource "helm_release" "grafana" {
   version          = var.grafana_version
   namespace        = "monitoring"
   create_namespace = false
+  timeout          = 600
 
   values = [file("${path.module}/../../../configs/grafana/values.yaml")]
 
@@ -162,5 +195,54 @@ resource "helm_release" "alloy" {
   depends_on = [
     helm_release.victoriametrics,
     helm_release.loki,
+    helm_release.kube_state_metrics,
   ]
+}
+
+# ─── Alloy extra RBAC (kubelet/cadvisor proxy access) ──────────────────
+
+resource "kubernetes_cluster_role" "alloy_kubelet" {
+  metadata {
+    name = "alloy-kubelet-access"
+  }
+
+  rule {
+    api_groups = [""]
+    resources  = ["nodes/proxy", "nodes/metrics"]
+    verbs      = ["get"]
+  }
+
+  rule {
+    api_groups = [""]
+    resources  = ["nodes", "nodes/stats", "services", "endpoints", "pods"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  rule {
+    api_groups = [""]
+    resources  = ["pods/log"]
+    verbs      = ["get", "list", "watch"]
+  }
+
+  depends_on = [helm_release.alloy]
+}
+
+resource "kubernetes_cluster_role_binding" "alloy_kubelet" {
+  metadata {
+    name = "alloy-kubelet-access"
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.alloy_kubelet.metadata[0].name
+  }
+
+  subject {
+    kind      = "ServiceAccount"
+    name      = "alloy"
+    namespace = "monitoring"
+  }
+
+  depends_on = [helm_release.alloy]
 }

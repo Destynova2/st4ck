@@ -80,6 +80,7 @@ resource "scaleway_iam_policy" "cluster" {
       "LoadBalancersFullAccess",
       "VPCFullAccess",
       "PrivateNetworksFullAccess",
+      "IPAMReadOnly",
       "DomainsDNSFullAccess",
       "ObjectStorageFullAccess",
     ]

@@ -1,0 +1,8 @@
+# Mirror Docker Hub via Google's public mirror to avoid rate limits
+machine:
+  registries:
+    mirrors:
+      docker.io:
+        endpoints:
+          - https://mirror.gcr.io
+          - https://registry-1.docker.io

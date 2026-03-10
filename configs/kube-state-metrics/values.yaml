@@ -1,0 +1,14 @@
+# kube-state-metrics — generates kube_* metrics from Kubernetes API
+# Required for Kubernetes dashboards (pods, deployments, nodes status)
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+
+# Expose all standard metrics
+metricLabelsAllowlist:
+  - pods=[*]
+  - nodes=[*]

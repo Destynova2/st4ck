@@ -267,7 +267,39 @@ k8s-storage-destroy: ## Destroy local-path + Garage + Velero + Harbor
 # Cilium is the CNI — without it, no pods can be scheduled.
 # Destroying Cilium before other stacks leaves pods stuck in ContainerCreating.
 
-.PHONY: scaleway-up scaleway-down scaleway-k8s-up scaleway-k8s-down scaleway-teardown scaleway-nuke
+.PHONY: scaleway-demo scaleway-up scaleway-down scaleway-k8s-up scaleway-k8s-down scaleway-teardown scaleway-nuke
+
+scaleway-demo: ## Full demo: deploy cluster + open Headlamp & Grafana live
+	@echo "═══════════════════════════════════════════════"
+	@echo "  Talos Demo — full deploy with live dashboard"
+	@echo "═══════════════════════════════════════════════"
+	$(MAKE) scaleway-apply
+	$(MAKE) scaleway-wait
+	$(MAKE) k8s-addons-apply
+	@$(KUBECONFIG_CMD) > $(KC_FILE) 2>/dev/null
+	@KUBECONFIG=$(KC_FILE) kubectl create serviceaccount headlamp-admin -n kube-system 2>/dev/null || true
+	@KUBECONFIG=$(KC_FILE) kubectl create clusterrolebinding headlamp-admin-token --clusterrole=cluster-admin --serviceaccount=kube-system:headlamp-admin 2>/dev/null || true
+	@TOKEN=$$(KUBECONFIG=$(KC_FILE) kubectl create token headlamp-admin -n kube-system --duration=48h) && \
+		echo "$$TOKEN" | pbcopy && \
+		echo "" && \
+		echo "  Headlamp: http://localhost:4466 (token in clipboard)" && \
+		echo "" && \
+		KUBECONFIG=$(KC_FILE) kubectl port-forward -n monitoring svc/headlamp 4466:80 >/dev/null 2>&1 &
+	@sleep 2 && open http://localhost:4466
+	@echo "Deploying remaining stacks (watch progress in Headlamp)..."
+	$(MAKE) k8s-secrets-apply
+	$(MAKE) k8s-security-apply
+	$(MAKE) k8s-storage-apply
+	@KUBECONFIG=$(KC_FILE) kubectl port-forward -n monitoring svc/grafana 3000:80 >/dev/null 2>&1 &
+	@GRAFANA_PASS=$$(KUBECONFIG=$(KC_FILE) kubectl get secret grafana -n monitoring -o jsonpath='{.data.admin-password}' | base64 -d) && \
+		echo "$$GRAFANA_PASS" | pbcopy && \
+		echo "" && \
+		echo "═══════════════════════════════════════════════" && \
+		echo "  Demo ready — all stacks deployed" && \
+		echo "  Headlamp: http://localhost:4466" && \
+		echo "  Grafana:  http://localhost:3000 (user: admin, password in clipboard)" && \
+		echo "═══════════════════════════════════════════════"
+	@sleep 2 && open http://localhost:3000
 
 scaleway-up: scaleway-apply scaleway-wait scaleway-k8s-up ## Create cluster + all k8s stacks (correct order)
 
@@ -281,25 +313,24 @@ scaleway-wait: ## Wait for K8s API server to be reachable
 	@echo "API server ready."
 
 scaleway-k8s-up: k8s-addons-apply ## Deploy all k8s stacks (Cilium first, then rest sequentially)
-	@$(KUBECONFIG_CMD) > $(KC_FILE) 2>/dev/null
-	@KUBECONFIG=$(KC_FILE) kubectl create serviceaccount headlamp-admin -n kube-system 2>/dev/null || true
-	@KUBECONFIG=$(KC_FILE) kubectl create clusterrolebinding headlamp-admin-token --clusterrole=cluster-admin --serviceaccount=kube-system:headlamp-admin 2>/dev/null || true
-	@TOKEN=$$(KUBECONFIG=$(KC_FILE) kubectl create token headlamp-admin -n kube-system --duration=48h) && \
-		echo "$$TOKEN" | pbcopy && \
-		echo "" && \
-		echo "  Headlamp: http://localhost:4466 (token in clipboard)" && \
-		echo "" && \
-		KUBECONFIG=$(KC_FILE) kubectl port-forward -n monitoring svc/headlamp 4466:80 >/dev/null 2>&1 &
-	@sleep 2 && open http://localhost:4466
 	$(MAKE) k8s-secrets-apply
 	$(MAKE) k8s-security-apply
 	$(MAKE) k8s-storage-apply
 
 scaleway-k8s-down: ## Destroy all k8s stacks (workloads first, then Cilium)
+	@# Remove Kyverno webhooks first to prevent them blocking other deletions
+	@$(KUBECONFIG_CMD) > $(KC_FILE) 2>/dev/null && \
+		KUBECONFIG=$(KC_FILE) kubectl delete mutatingwebhookconfiguration -l app.kubernetes.io/instance=kyverno --ignore-not-found 2>/dev/null && \
+		KUBECONFIG=$(KC_FILE) kubectl delete validatingwebhookconfiguration -l app.kubernetes.io/instance=kyverno --ignore-not-found 2>/dev/null || true
 	-$(MAKE) k8s-storage-destroy
 	-$(MAKE) k8s-security-destroy
 	-$(MAKE) k8s-secrets-destroy
-	$(MAKE) k8s-addons-destroy
+	-$(MAKE) k8s-addons-destroy
+	@# Clean stale states if cluster was already destroyed
+	@for stack in k8s-addons k8s-secrets k8s-security k8s-storage; do \
+		rm -f terraform/stacks/$$stack/terraform.tfstate.backup; \
+	done
+	@pkill -f 'kubectl port-forward' 2>/dev/null || true
 
 scaleway-down: scaleway-k8s-down scaleway-destroy ## Destroy all k8s stacks + cluster (correct order)
 
@@ -314,6 +345,70 @@ scaleway-nuke: ## DANGEROUS: destroy everything including IAM and image
 	-$(MAKE) scaleway-ci-destroy
 	-$(MAKE) scaleway-image-clean
 	-$(MAKE) scaleway-iam-destroy
+
+# ─── CAPI Workload Clusters ──────────────────────────────────────────────────
+
+.PHONY: capi-init capi-create capi-status capi-kubeconfig capi-delete capi-destroy
+
+CAPI_NS       := capi-workload
+CAPI_CLUSTER  := workload-1
+
+capi-init: scaleway-kubeconfig ## Install CAPI + CAPT + CAPS providers on management cluster
+	@command -v clusterctl >/dev/null 2>&1 || { echo "Installing clusterctl..."; brew install clusterctl; }
+	@echo "Installing CAPI providers on management cluster..."
+	@SCW_ACCESS_KEY=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw cluster_access_key) \
+		SCW_SECRET_KEY=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw cluster_secret_key) \
+		SCW_DEFAULT_PROJECT_ID=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw project_id) \
+		KUBECONFIG=$(KC_FILE) \
+		clusterctl init \
+			--config configs/capi/clusterctl.yaml \
+			--infrastructure scaleway:v0.2.0 \
+			--bootstrap talos:v0.6.11 \
+			--control-plane talos:v0.5.12
+	@echo "CAPI providers installed."
+
+capi-create: scaleway-kubeconfig ## Create a workload cluster via CAPI
+	@echo "Creating workload cluster $(CAPI_CLUSTER)..."
+	@KUBECONFIG=$(KC_FILE) kubectl create namespace $(CAPI_NS) 2>/dev/null || true
+	@# Create Scaleway credentials secret for CAPS
+	@SCW_AK=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw cluster_access_key) && \
+		SCW_SK=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw cluster_secret_key) && \
+		SCW_PID=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw project_id) && \
+		KUBECONFIG=$(KC_FILE) kubectl -n $(CAPI_NS) create secret generic scaleway-credentials \
+			--from-literal=SCW_ACCESS_KEY="$$SCW_AK" \
+			--from-literal=SCW_SECRET_KEY="$$SCW_SK" \
+			--from-literal=SCW_DEFAULT_PROJECT_ID="$$SCW_PID" \
+			--dry-run=client -o yaml | KUBECONFIG=$(KC_FILE) kubectl apply -f -
+	@SCW_PROJECT_ID=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw project_id) \
+		envsubst '$$SCW_PROJECT_ID' < configs/capi/workload-cluster.yaml | \
+		KUBECONFIG=$(KC_FILE) kubectl apply -f -
+	@echo "Workload cluster $(CAPI_CLUSTER) created. Watch progress with: make capi-status"
+
+capi-status: scaleway-kubeconfig ## Show workload cluster status
+	@echo "=== Cluster ==="
+	@KUBECONFIG=$(KC_FILE) kubectl get cluster -n $(CAPI_NS) -o wide 2>/dev/null || echo "No clusters found"
+	@echo ""
+	@echo "=== Machines ==="
+	@KUBECONFIG=$(KC_FILE) kubectl get machines -n $(CAPI_NS) -o wide 2>/dev/null || echo "No machines found"
+	@echo ""
+	@echo "=== ScalewayMachines ==="
+	@KUBECONFIG=$(KC_FILE) kubectl get scalewaymachines -n $(CAPI_NS) -o wide 2>/dev/null || echo "No ScalewayMachines found"
+
+capi-kubeconfig: scaleway-kubeconfig ## Get workload cluster kubeconfig
+	@KUBECONFIG=$(KC_FILE) clusterctl get kubeconfig $(CAPI_CLUSTER) -n $(CAPI_NS) > $(HOME)/.kube/talos-workload-1
+	@echo "Workload kubeconfig written to $(HOME)/.kube/talos-workload-1"
+	@echo "export KUBECONFIG=$(HOME)/.kube/talos-workload-1"
+
+capi-delete: scaleway-kubeconfig ## Delete workload cluster (machines + LB destroyed)
+	@echo "Deleting workload cluster $(CAPI_CLUSTER)..."
+	@KUBECONFIG=$(KC_FILE) kubectl delete cluster $(CAPI_CLUSTER) -n $(CAPI_NS) --timeout=300s
+	@echo "Workload cluster $(CAPI_CLUSTER) deleted."
+
+capi-destroy: scaleway-kubeconfig ## Remove CAPI providers from management cluster
+	@echo "Removing CAPI providers..."
+	@KUBECONFIG=$(KC_FILE) clusterctl delete --all
+	@KUBECONFIG=$(KC_FILE) kubectl delete namespace $(CAPI_NS) --ignore-not-found
+	@echo "CAPI providers removed."
 
 # ─── VMware airgap (scripts, not Terraform) ────────────────────────────────
 

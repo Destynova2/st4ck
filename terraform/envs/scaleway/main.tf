@@ -37,7 +37,8 @@ locals {
     "wrk-${i + 1}" => { ip = "" }
   }
 
-  cilium_patch = file("${path.module}/../../../configs/patches/cilium-cni.yaml")
+  cilium_patch         = file("${path.module}/../../../configs/patches/cilium-cni.yaml")
+  registry_mirror_patch = file("${path.module}/../../../configs/patches/registry-mirror.yaml")
 
   # Scaleway: EPHEMERAL must go to /dev/vdb
   volume_config_patch = file("${path.module}/volume-config-patch.yaml")
@@ -58,6 +59,7 @@ module "talos" {
 
   common_config_patches = [
     local.cilium_patch,
+    local.registry_mirror_patch,
     local.volume_config_patch,
   ]
 }

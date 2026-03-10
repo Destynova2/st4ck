@@ -122,16 +122,36 @@
 
 13. Alloy (DaemonSet)
     ├── Scrape metriques → VictoriaMetrics
-    │   ├── kubelet / cadvisor
+    │   ├── Pods annotes (prometheus.io/scrape=true)
+    │   ├── kubelet / cadvisor (API proxy, bearer token)
+    │   ├── node-exporter (endpoints, 1 par noeud)
+    │   ├── kube-state-metrics (service discovery)
     │   ├── Cilium agent (port 9962)
     │   ├── Hubble (port 9965)
-    │   └── Cilium operator (port 9963)
+    │   ├── Cilium operator (port 9963)
+    │   └── Hubble relay (port 9966)
+    ├── Relabeling global : cluster=talos, instance=node name
     └── Collecte logs → Loki
+        └── File-based (/var/log/pods), pipeline CRI parsing
 
-14. Grafana
-    ├── Datasources: VictoriaMetrics, Loki, Alertmanager
-    ├── Dashboards: Hubble (natifs Cilium), K8s Global/Nodes/Pods
-    └── Platform Overview dashboard (C-level, auto-refresh 30s)
+14. kube-state-metrics
+    └── Metriques kube_* (pods, deployments, resources)
+
+15. node-exporter (DaemonSet)
+    ├── Metriques node_* (CPU, RAM, disk, network)
+    ├── hostNetwork + hostPID (requis Talos)
+    └── Compatible Talos (pas de path.procfs/sysfs/rootfs en extraArgs)
+
+16. Grafana
+    ├── Datasources: VictoriaMetrics (uid:prometheus), Loki (uid:loki), Alertmanager (uid:alertmanager)
+    ├── Dashboards grafana.com: K8s Global/Nodes/Pods, Node Exporter Full, cAdvisor, Loki logs
+    ├── Platform Overview dashboard (ConfigMap sidecar)
+    └── Hubble dashboards (natifs chart Cilium)
+
+17. Headlamp
+    ├── UI Kubernetes (kubernetes-sigs)
+    ├── S'ouvre automatiquement apres deploy addons (token auto-copie)
+    └── Permet de suivre le deploiement des stacks restants en live
 
 15. Headlamp
     ├── UI Kubernetes (kubernetes-sigs)
@@ -139,14 +159,23 @@
     └── Permet de suivre le deploiement des stacks restants en live
 ```
 
+**Decision** : Alloy en DaemonSet unifie collecte metriques + logs. Voir ADR-006.
+- Metriques : scrape annotation-based (pods), API proxy (kubelet/cadvisor), endpoints (node-exporter, kube-state-metrics), direct (Cilium/Hubble)
+- Logs : `loki.source.file` lit `/var/log/pods/*/*/*.log` (hostPath mount). Pipeline `loki.process` extrait namespace/pod/container/stream depuis le chemin fichier et le format CRI
+- Label `cluster=talos` injecte globalement via `prometheus.relabel` avant remote_write (requis par dashboards grafana.com)
+- Label `instance` relabele au nom du noeud K8s pour node-exporter/kubelet/cadvisor (requis par dashboard 15759 qui resout `instance` via `node_uname_info`)
+- RBAC supplementaire : `nodes/proxy`, `nodes/metrics`, `pods/log` (ClusterRole Terraform, en plus du RBAC chart)
+
 **Livrable** : observabilite complete (metriques, logs, alertes, dashboards, UI live).
 
 - [x] VictoriaMetrics 0.32.0
-- [x] Loki 6.53.0
+- [x] Loki 6.53.0 (single-binary, filesystem, gateway nginx)
 - [x] Alertmanager 1.33.1
-- [x] Alloy 1.6.1
-- [x] Grafana 10.5.15 + Platform Overview dashboard
+- [x] Alloy 1.6.1 (DaemonSet, scrape 9 cibles, logs file-based)
+- [x] Grafana 10.5.15 + Platform Overview dashboard + dashboards grafana.com
 - [x] Headlamp 0.40.0 (auto-open dans `make scaleway-up`)
+- [x] kube-state-metrics 5.30.1 (metriques kube_*)
+- [x] node-exporter 4.52.0 (metriques node_*, compatible Talos)
 
 ### Phase 1.5 — Securite & Scanning (S5-S6)
 
@@ -229,7 +258,7 @@
 
 **Livrable** : capacite de creer/detruire des workload clusters a la demande.
 
-- [ ] CAPI + CAPT + CAPS (demo Scaleway)
+- [x] CAPI + CAPT + CAPS (demo Scaleway) — clusterctl init + workload-cluster.yaml
 - [ ] CAPI + CAPT + CAPV (production vSphere — requiert acces API)
 
 ### Gate 1 — Criteres de passage
@@ -244,7 +273,7 @@
 - [x] OIDC K8s fonctionnel (Hydra TLS + client auto-enregistre + patch talosctl)
 - [x] Cosign (Kyverno verifyImages ClusterPolicy, mode audit)
 - [x] Velero backup/restore teste (`make velero-test` — backup + restore namespace)
-- [ ] 1 workload cluster cree/detruit via CAPI (demo Scaleway, puis vSphere en prod)
+- [x] 1 workload cluster cree/detruit via CAPI (demo Scaleway: `make capi-init && make capi-create && make capi-delete`)
 - [ ] Conformite ANSSI Guide K8s 2024 validee
 
 ---
@@ -491,6 +520,8 @@ Phase 1.2 CI/CD & Registry (Gitea + Woodpecker + Harbor)          [DONE]
 | Object store S3 | SeaweedFS | Garage (ADR-003) | Garage deja deploye (phase 1.6), pas besoin de 2 object stores |
 | Trivy node-collector | Active (CIS benchmark nodes) | Desactive (ADR-004) | Incompatible Talos : filesystem read-only, pas de systemd/shell. Fix final : `operator.scanNodeCollectorLimit: 0` + `compliance.specs: []` (seul moyen effectif dans chart v0.32). Talos est durci par design (plus strict que CIS). Trivy continue scan images, configs K8s, RBAC, SBOM |
 | Gestion secrets | `secret.tfvars` manuels | `random_id` Terraform (ADR-005) | Zero intervention manuelle. Chaque deploy genere des secrets uniques via `random_id`. `.hex` pour tokens, `.b64_std` pour Pomerium (strict 32 bytes). Injectes via `templatefile()`, stockes dans state Terraform |
+| Collecte logs | loki.source.kubernetes (API) | loki.source.file (ADR-006) | API-based ne fonctionnait pas (aucun log ingere). File-based lit /var/log/pods directement via hostPath, pipeline CRI parsing extrait labels |
+| Metriques collecteur | Prometheus | Alloy DaemonSet (ADR-006) | Collecteur unifie metriques+logs. Relabeling global cluster=talos + instance=node name pour compatibilite dashboards grafana.com |
 
 ## Risques et mitigations
 
@@ -527,4 +558,4 @@ Post-deploy (optionnel) :
 └── make scaleway-grafana    — Ouvre Grafana UI
 ```
 
-*Document de reference — Mis a jour 2026-03-09 — Gate 1 : 10/12 criteres valides*
+*Document de reference — Mis a jour 2026-03-10 — Gate 1 : 10/12 criteres valides*

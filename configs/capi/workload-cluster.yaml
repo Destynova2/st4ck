@@ -1,0 +1,141 @@
+# CAPI Workload Cluster — Scaleway + Talos
+# Creates a minimal workload cluster for demo/validation
+#
+# Prerequisites:
+#   - Management cluster running with CAPI providers installed
+#   - Scaleway credentials in Secret "scaleway-credentials" (created by Makefile)
+#   - Talos image available in Scaleway (same as management cluster)
+
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: Cluster
+metadata:
+  name: workload-1
+  namespace: capi-workload
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks:
+        - 10.244.0.0/16
+    services:
+      cidrBlocks:
+        - 10.245.0.0/16
+  controlPlaneRef:
+    apiGroup: controlplane.cluster.x-k8s.io
+    kind: TalosControlPlane
+    name: workload-1-cp
+  infrastructureRef:
+    apiGroup: infrastructure.cluster.x-k8s.io
+    kind: ScalewayCluster
+    name: workload-1
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha2
+kind: ScalewayCluster
+metadata:
+  name: workload-1
+  namespace: capi-workload
+spec:
+  region: fr-par
+  projectID: "${SCW_PROJECT_ID}"
+  scalewaySecretName: scaleway-credentials
+  failureDomains:
+    - fr-par-1
+  network:
+    controlPlaneLoadBalancer: {}
+---
+apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+kind: TalosControlPlane
+metadata:
+  name: workload-1-cp
+  namespace: capi-workload
+spec:
+  replicas: 1
+  version: v1.35.0
+  infrastructureTemplate:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1alpha2
+    kind: ScalewayMachineTemplate
+    name: workload-1-cp
+  controlPlaneConfig:
+    controlplane:
+      generateType: controlplane
+      talosVersion: v1.12
+      strategicPatches:
+        - |
+          cluster:
+            network:
+              cni:
+                name: none
+            proxy:
+              disabled: true
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha2
+kind: ScalewayMachineTemplate
+metadata:
+  name: workload-1-cp
+  namespace: capi-workload
+spec:
+  template:
+    spec:
+      commercialType: DEV1-S
+      image:
+        name: talos-v1.12.4
+      rootVolume:
+        size: 20
+        type: local
+---
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineDeployment
+metadata:
+  name: workload-1-workers
+  namespace: capi-workload
+spec:
+  clusterName: workload-1
+  replicas: 1
+  selector:
+    matchLabels: {}
+  template:
+    spec:
+      clusterName: workload-1
+      version: v1.35.0
+      bootstrap:
+        configRef:
+          apiGroup: bootstrap.cluster.x-k8s.io
+          kind: TalosConfigTemplate
+          name: workload-1-workers
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: ScalewayMachineTemplate
+        name: workload-1-workers
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+kind: TalosConfigTemplate
+metadata:
+  name: workload-1-workers
+  namespace: capi-workload
+spec:
+  template:
+    spec:
+      generateType: worker
+      talosVersion: v1.12
+      strategicPatches:
+        - |
+          cluster:
+            network:
+              cni:
+                name: none
+            proxy:
+              disabled: true
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha2
+kind: ScalewayMachineTemplate
+metadata:
+  name: workload-1-workers
+  namespace: capi-workload
+spec:
+  template:
+    spec:
+      commercialType: DEV1-S
+      image:
+        name: talos-v1.12.4
+      rootVolume:
+        size: 20
+        type: local

@@ -221,22 +221,20 @@ resource "helm_release" "harbor" {
   create_namespace = false
   timeout          = 600
 
-  values = [file("${path.module}/../../../configs/harbor/values.yaml")]
-
-  set_sensitive {
-    name  = "persistence.imageChartStorage.s3.accesskey"
-    value = data.kubernetes_secret.harbor_s3.data["access_key"]
-  }
-
-  set_sensitive {
-    name  = "persistence.imageChartStorage.s3.secretkey"
-    value = data.kubernetes_secret.harbor_s3.data["secret_key"]
-  }
-
-  set_sensitive {
-    name  = "harborAdminPassword"
-    value = var.harbor_admin_password
-  }
+  values = [
+    file("${path.module}/../../../configs/harbor/values.yaml"),
+    sensitive(yamlencode({
+      harborAdminPassword = var.harbor_admin_password
+      persistence = {
+        imageChartStorage = {
+          s3 = {
+            accesskey = data.kubernetes_secret.harbor_s3.data["access_key"]
+            secretkey = data.kubernetes_secret.harbor_s3.data["secret_key"]
+          }
+        }
+      }
+    })),
+  ]
 
   depends_on = [kubernetes_namespace.storage, terraform_data.garage_setup]
 }

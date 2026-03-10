@@ -73,13 +73,13 @@ done
 # ─── Admin API (in-cluster curl pod) ─────────────────────────────────
 # Garage v2.2+ redacts secrets in CLI output, so we use the admin API.
 # Uses kubectl run --rm -i --command with a bash array — no shell, no quoting issues.
-GARAGE_API="http://garage.garage.svc:3903/v1"
+GARAGE_API="http://garage.garage.svc:3903/v2"
 
 garage_api() {
   local METHOD="$1"
   local ENDPOINT="$2"
   local DATA="${3:-}"
-  local CURL_ARGS=(-sf -X "$METHOD"
+  local CURL_ARGS=(-s -X "$METHOD"
     -H "Authorization: Bearer $ADMIN_TOKEN"
     -H "Content-Type: application/json")
   [ -n "$DATA" ] && CURL_ARGS+=(-d "$DATA")
@@ -117,13 +117,13 @@ ensure_key() {
     local OLD_KEY_ID
     OLD_KEY_ID=$($GR key info "$KEY_NAME" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep "Key ID:" | awk '{print $NF}')
     $GR bucket deny --read --write --owner "$BUCKET" --key "$OLD_KEY_ID" 2>&1 | grep -v INFO || true
-    garage_api DELETE "key?id=$OLD_KEY_ID" || true
+    garage_api POST "DeleteKey?id=$OLD_KEY_ID" || true
   done
 
   # Create new key via admin API (returns the secret)
   echo "Creating key '$KEY_NAME'..."
   local CREATE_JSON
-  CREATE_JSON=$(garage_api POST "key" "{\"name\":\"$KEY_NAME\"}")
+  CREATE_JSON=$(garage_api POST "CreateKey" "{\"name\":\"$KEY_NAME\"}")
   ACCESS_KEY=$(echo "$CREATE_JSON" | tr -d '\n\r ' | sed -n 's/.*"accessKeyId":"\([^"]*\)".*/\1/p')
   SECRET_KEY=$(echo "$CREATE_JSON" | tr -d '\n\r ' | sed -n 's/.*"secretAccessKey":"\([^"]*\)".*/\1/p')
 
@@ -172,17 +172,17 @@ ensure_key_plain() {
     return 0
   fi
 
-  if $GR key info "$KEY_NAME" >/dev/null 2>&1; then
+  while $GR key info "$KEY_NAME" >/dev/null 2>&1; do
     echo "Deleting stale key '$KEY_NAME'..."
     local OLD_KEY_ID
     OLD_KEY_ID=$($GR key info "$KEY_NAME" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep "Key ID:" | awk '{print $NF}')
-    $GR bucket deny --read --write --owner "$BUCKET" --key "$KEY_NAME" 2>&1 | grep -v INFO || true
-    garage_api DELETE "key?id=$OLD_KEY_ID" || true
-  fi
+    $GR bucket deny --read --write --owner "$BUCKET" --key "$OLD_KEY_ID" 2>&1 | grep -v INFO || true
+    garage_api POST "DeleteKey?id=$OLD_KEY_ID" || true
+  done
 
   echo "Creating key '$KEY_NAME'..."
   local CREATE_JSON
-  CREATE_JSON=$(garage_api POST "key" "{\"name\":\"$KEY_NAME\"}")
+  CREATE_JSON=$(garage_api POST "CreateKey" "{\"name\":\"$KEY_NAME\"}")
   ACCESS_KEY=$(echo "$CREATE_JSON" | tr -d '\n\r ' | sed -n 's/.*"accessKeyId":"\([^"]*\)".*/\1/p')
   SECRET_KEY=$(echo "$CREATE_JSON" | tr -d '\n\r ' | sed -n 's/.*"secretAccessKey":"\([^"]*\)".*/\1/p')
 
@@ -209,5 +209,21 @@ EOF
 }
 
 ensure_key_plain "harbor-key" "harbor-registry" "storage" "harbor-s3-credentials"
+
+# ─── Wait for S3 endpoint to be healthy ─────────────────────────────
+# Velero will fail if S3 isn't serving when it starts
+echo "Verifying Garage S3 endpoint is healthy..."
+for i in $(seq 1 30); do
+  S3_STATUS=$($KC run garage-s3-check -n garage --rm -i --restart=Never \
+    --image=curlimages/curl:8.12.1 --command -- \
+    curl -s -o /dev/null -w '%{http_code}' http://garage-s3.garage.svc:3900/ 2>/dev/null || echo "000")
+  # Garage returns 400 (bad request) or 403 on unauthenticated root — both mean S3 is serving
+  if [ "$S3_STATUS" = "400" ] || [ "$S3_STATUS" = "403" ] || [ "$S3_STATUS" = "200" ]; then
+    echo "  S3 endpoint healthy (HTTP $S3_STATUS)"
+    break
+  fi
+  echo "  S3 not ready yet (HTTP $S3_STATUS, attempt $i/30)"
+  sleep 5
+done
 
 echo "Garage setup complete."

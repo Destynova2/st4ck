@@ -1,7 +1,16 @@
 # Grafana Alloy — unified collector (metrics + logs + traces)
 # Deployed as DaemonSet to collect from all nodes
 
+serviceAccount:
+  create: true
+
+rbac:
+  create: true
+
 alloy:
+  mounts:
+    varlog: true
+    dockercontainers: false
   configMap:
     content: |
       // ─── Discovery ────────────────────────────────────────────────
@@ -13,14 +22,196 @@ alloy:
         role = "node"
       }
 
-      // ─── Metrics: scrape Kubernetes pods & nodes ───────────────────
+      // ─── Metrics: scrape annotated pods (prometheus.io/scrape=true) ─
+      discovery.relabel "annotated_pods" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+          regex         = "true"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_port", "__meta_kubernetes_pod_ip"]
+          regex         = "(\\d+);(.*)"
+          target_label  = "__address__"
+          replacement   = "$2:$1"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+          regex         = "(.+)"
+          target_label  = "__metrics_path__"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_node_name"]
+          target_label  = "node"
+        }
+        rule {
+          target_label = "cluster"
+          replacement  = "talos"
+        }
+      }
+
       prometheus.scrape "pods" {
-        targets    = discovery.kubernetes.pods.targets
+        targets    = discovery.relabel.annotated_pods.output
         forward_to = [prometheus.remote_write.victoriametrics.receiver]
       }
 
-      prometheus.scrape "nodes" {
-        targets    = discovery.kubernetes.nodes.targets
+      // ─── Metrics: scrape kubelet from nodes ──────────────────────
+      discovery.relabel "kubelet" {
+        targets = discovery.kubernetes.nodes.targets
+        rule {
+          target_label  = "__address__"
+          replacement   = "kubernetes.default.svc:443"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          regex         = "(.+)"
+          target_label  = "__metrics_path__"
+          replacement   = "/api/v1/nodes/$1/proxy/metrics"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          target_label  = "node"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          target_label  = "instance"
+        }
+        rule {
+          target_label = "job"
+          replacement  = "kubelet"
+        }
+        rule {
+          target_label = "cluster"
+          replacement  = "talos"
+        }
+      }
+
+      prometheus.scrape "kubelet" {
+        targets         = discovery.relabel.kubelet.output
+        forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+        scheme          = "https"
+        scrape_interval = "30s"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config {
+          insecure_skip_verify = true
+        }
+      }
+
+      // ─── Metrics: scrape cadvisor from nodes (container CPU/mem) ─
+      discovery.relabel "cadvisor" {
+        targets = discovery.kubernetes.nodes.targets
+        rule {
+          target_label  = "__address__"
+          replacement   = "kubernetes.default.svc:443"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          regex         = "(.+)"
+          target_label  = "__metrics_path__"
+          replacement   = "/api/v1/nodes/$1/proxy/metrics/cadvisor"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          target_label  = "node"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          target_label  = "instance"
+        }
+        rule {
+          target_label = "job"
+          replacement  = "cadvisor"
+        }
+        rule {
+          target_label = "cluster"
+          replacement  = "talos"
+        }
+      }
+
+      prometheus.scrape "cadvisor" {
+        targets         = discovery.relabel.cadvisor.output
+        forward_to      = [prometheus.remote_write.victoriametrics.receiver]
+        scheme          = "https"
+        scrape_interval = "30s"
+        bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        tls_config {
+          insecure_skip_verify = true
+        }
+      }
+
+      // ─── kube-state-metrics ──────────────────────────────────────
+      discovery.kubernetes "services" {
+        role = "service"
+      }
+
+      discovery.relabel "kube_state_metrics" {
+        targets = discovery.kubernetes.services.targets
+        rule {
+          source_labels = ["__meta_kubernetes_service_label_app_kubernetes_io_name"]
+          regex         = "kube-state-metrics"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          target_label = "cluster"
+          replacement  = "talos"
+        }
+      }
+
+      prometheus.scrape "kube_state_metrics" {
+        targets    = discovery.relabel.kube_state_metrics.output
+        forward_to = [prometheus.remote_write.victoriametrics.receiver]
+      }
+
+      // ─── Node Exporter (host-level node_* metrics) ──────────────
+      discovery.kubernetes "endpoints" {
+        role = "endpoints"
+      }
+
+      discovery.relabel "node_exporter" {
+        targets = discovery.kubernetes.endpoints.targets
+        rule {
+          source_labels = ["__meta_kubernetes_service_label_app_kubernetes_io_name"]
+          regex         = "prometheus-node-exporter"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_endpoint_node_name"]
+          target_label  = "node"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_endpoint_node_name"]
+          target_label  = "instance"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          target_label = "job"
+          replacement  = "node-exporter"
+        }
+        rule {
+          target_label = "cluster"
+          replacement  = "talos"
+        }
+      }
+
+      prometheus.scrape "node_exporter" {
+        targets    = discovery.relabel.node_exporter.output
         forward_to = [prometheus.remote_write.victoriametrics.receiver]
       }
 
@@ -157,20 +348,60 @@ alloy:
         honor_labels    = true
       }
 
+      // ─── Remote write to VictoriaMetrics ─────────────────────────
       prometheus.remote_write "victoriametrics" {
         endpoint {
           url = "http://victoria-metrics-single-server.monitoring.svc:8428/api/v1/write"
         }
       }
 
-      // ─── Logs: collect from all containers ─────────────────────────
-      loki.source.kubernetes "pods" {
-        targets    = discovery.kubernetes.pods.targets
+      // ─── Logs: discover pod log files on each node ──────────────
+      local.file_match "pod_logs" {
+        path_targets = [{
+          __path__ = "/var/log/pods/*/*/*.log",
+        }]
+      }
+
+      loki.source.file "pod_logs" {
+        targets    = local.file_match.pod_logs.targets
+        forward_to = [loki.process.pod_logs.receiver]
+      }
+
+      // Extract namespace, pod, container from log file path
+      loki.process "pod_logs" {
+        stage.regex {
+          expression = "/var/log/pods/(?P<namespace>[^_]+)_(?P<pod>[^_]+)_[^/]+/(?P<container>[^/]+)/.+\\.log"
+          source     = "filename"
+        }
+        stage.labels {
+          values = {
+            namespace = "",
+            pod       = "",
+            container = "",
+          }
+        }
+        stage.regex {
+          expression = "^(?P<time>[^ ]+) (?P<stream>stdout|stderr) (?P<flags>[^ ]+) (?P<content>.*)$"
+        }
+        stage.labels {
+          values = {
+            stream = "",
+          }
+        }
+        stage.output {
+          source = "content"
+        }
+        stage.static_labels {
+          values = {
+            cluster = "talos",
+            job     = "pod-logs",
+          }
+        }
         forward_to = [loki.write.default.receiver]
       }
 
       loki.write "default" {
         endpoint {
-          url = "http://loki-gateway.monitoring.svc:3100/loki/api/v1/push"
+          url = "http://loki.monitoring.svc:3100/loki/api/v1/push"
         }
       }

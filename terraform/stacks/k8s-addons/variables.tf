@@ -64,3 +64,15 @@ variable "headlamp_version" {
   type        = string
   default     = "0.40.0"
 }
+
+variable "kube_state_metrics_version" {
+  description = "kube-state-metrics Helm chart version"
+  type        = string
+  default     = "5.30.1"
+}
+
+variable "node_exporter_version" {
+  description = "Prometheus node-exporter Helm chart version"
+  type        = string
+  default     = "4.52.0"
+}

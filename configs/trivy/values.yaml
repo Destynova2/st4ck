@@ -6,6 +6,9 @@ operator:
   clusterComplianceEnabled: false
   # Disable node scanning entirely (Talos: no systemd, read-only fs — ADR-004)
   scanNodeCollectorLimit: 0
+  # Limit concurrent scan jobs to avoid resource pressure on fresh clusters
+  concurrentScanJobsLimit: 3
+  scanJobTimeout: 10m
 
 compliance:
   specs: []
@@ -16,7 +19,18 @@ nodeCollector:
 
 trivy:
   ignoreUnfixed: true
+  # Slow mode: download DB inside each scan job (no persistent storage needed)
+  mode: Standalone
+  slow: true
+  # Scan job container resources (downloads ~500MB vuln DB)
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
 
+# Operator pod resources
 resources:
   requests:
     cpu: 100m
