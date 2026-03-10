@@ -20,6 +20,9 @@ _out/
 **/*.tfstate.*.backup
 **/.terraform.lock.hcl
 
+# KMS bootstrap outputs (secrets)
+kms-output/
+
 # Build artifacts
 image-cache.oci
 *.ova

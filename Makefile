@@ -420,6 +420,17 @@ capi-destroy: scaleway-kubeconfig ## Remove CAPI providers from management clust
 	@KUBECONFIG=$(KC_FILE) kubectl delete namespace $(CAPI_NS) --ignore-not-found
 	@echo "CAPI providers removed."
 
+# ─── OpenBao KMS bootstrap (podman) ─────────────────────────────────────────
+
+.PHONY: kms-bootstrap kms-stop
+
+kms-bootstrap: ## Start 3-node OpenBao KMS (transit auto-unseal + PKI CA chain)
+	@command -v podman >/dev/null 2>&1 || { echo "Error: podman required"; exit 1; }
+	@bash scripts/openbao-kms-bootstrap.sh
+
+kms-stop: ## Stop the OpenBao KMS cluster
+	@podman play kube --down configs/openbao/kms-pod.yaml
+
 # ─── VMware airgap (scripts, not Terraform) ────────────────────────────────
 
 .PHONY: vmware-image-cache vmware-build-ova vmware-gen-configs vmware-bootstrap

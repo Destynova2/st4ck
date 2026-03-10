@@ -1,0 +1,129 @@
+# OpenBao KMS cluster — 3 nodes Raft via podman play kube
+# Provides: transit auto-unseal + PKI root/intermediate CA
+#
+# Usage:
+#   podman play kube configs/openbao/kms-pod.yaml --configmap configs/openbao/kms-config.yaml
+#   bash scripts/openbao-kms-bootstrap.sh
+#
+# Ports: node-0=8200, node-1=8202, node-2=8204
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-kms-config
+data:
+  node-0.hcl: |
+    ui = true
+    disable_mlock = true
+    api_addr = "http://127.0.0.1:8200"
+    cluster_addr = "http://127.0.0.1:8201"
+    listener "tcp" {
+      address         = "0.0.0.0:8200"
+      cluster_address = "0.0.0.0:8201"
+      tls_disable     = true
+    }
+    storage "raft" {
+      path    = "/bao/data"
+      node_id = "node-0"
+    }
+  node-1.hcl: |
+    ui = true
+    disable_mlock = true
+    api_addr = "http://127.0.0.1:8202"
+    cluster_addr = "http://127.0.0.1:8203"
+    listener "tcp" {
+      address         = "0.0.0.0:8202"
+      cluster_address = "0.0.0.0:8203"
+      tls_disable     = true
+    }
+    storage "raft" {
+      path    = "/bao/data"
+      node_id = "node-1"
+    }
+  node-2.hcl: |
+    ui = true
+    disable_mlock = true
+    api_addr = "http://127.0.0.1:8204"
+    cluster_addr = "http://127.0.0.1:8205"
+    listener "tcp" {
+      address         = "0.0.0.0:8204"
+      cluster_address = "0.0.0.0:8205"
+      tls_disable     = true
+    }
+    storage "raft" {
+      path    = "/bao/data"
+      node_id = "node-2"
+    }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: openbao-kms
+  labels:
+    app: openbao-kms
+spec:
+  containers:
+    - name: node-0
+      image: quay.io/openbao/openbao:2.1.0
+      command: ["bao", "server", "-config=/config/node-0.hcl"]
+      ports:
+        - containerPort: 8200
+          hostPort: 8200
+        - containerPort: 8201
+          hostPort: 8201
+      env:
+        - name: SKIP_CHOWN
+          value: "true"
+      volumeMounts:
+        - name: openbao-kms-config
+          mountPath: /config
+          readOnly: true
+        - name: data-0
+          mountPath: /bao/data
+
+    - name: node-1
+      image: quay.io/openbao/openbao:2.1.0
+      command: ["bao", "server", "-config=/config/node-1.hcl"]
+      ports:
+        - containerPort: 8202
+          hostPort: 8202
+        - containerPort: 8203
+          hostPort: 8203
+      env:
+        - name: SKIP_CHOWN
+          value: "true"
+      volumeMounts:
+        - name: openbao-kms-config
+          mountPath: /config
+          readOnly: true
+        - name: data-1
+          mountPath: /bao/data
+
+    - name: node-2
+      image: quay.io/openbao/openbao:2.1.0
+      command: ["bao", "server", "-config=/config/node-2.hcl"]
+      ports:
+        - containerPort: 8204
+          hostPort: 8204
+        - containerPort: 8205
+          hostPort: 8205
+      env:
+        - name: SKIP_CHOWN
+          value: "true"
+      volumeMounts:
+        - name: openbao-kms-config
+          mountPath: /config
+          readOnly: true
+        - name: data-2
+          mountPath: /bao/data
+
+  volumes:
+    - name: openbao-kms-config
+      configMap:
+        name: openbao-kms-config
+    - name: data-0
+      emptyDir: {}
+    - name: data-1
+      emptyDir: {}
+    - name: data-2
+      emptyDir: {}
