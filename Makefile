@@ -348,10 +348,22 @@ scaleway-nuke: ## DANGEROUS: destroy everything including IAM and image
 
 # ─── CAPI Workload Clusters ──────────────────────────────────────────────────
 
-.PHONY: capi-init capi-create capi-status capi-kubeconfig capi-delete capi-destroy
+.PHONY: capi-init capi-create-cpu capi-create-gpu capi-status capi-kubeconfig capi-delete capi-destroy
 
-CAPI_NS       := capi-workload
-CAPI_CLUSTER  := workload-1
+CAPI_NS := capi-workload
+
+# Internal: ensure namespace + credentials secret exist
+define capi-ensure-ns
+	@KUBECONFIG=$(KC_FILE) kubectl create namespace $(CAPI_NS) 2>/dev/null || true
+	@SCW_AK=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw cluster_access_key) && \
+		SCW_SK=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw cluster_secret_key) && \
+		SCW_PID=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw project_id) && \
+		KUBECONFIG=$(KC_FILE) kubectl -n $(CAPI_NS) create secret generic scaleway-credentials \
+			--from-literal=SCW_ACCESS_KEY="$$SCW_AK" \
+			--from-literal=SCW_SECRET_KEY="$$SCW_SK" \
+			--from-literal=SCW_DEFAULT_PROJECT_ID="$$SCW_PID" \
+			--dry-run=client -o yaml | KUBECONFIG=$(KC_FILE) kubectl apply -f -
+endef
 
 capi-init: scaleway-kubeconfig ## Install CAPI + CAPT + CAPS providers on management cluster
 	@command -v clusterctl >/dev/null 2>&1 || { echo "Installing clusterctl..."; brew install clusterctl; }
@@ -367,25 +379,24 @@ capi-init: scaleway-kubeconfig ## Install CAPI + CAPT + CAPS providers on manage
 			--control-plane talos:v0.5.12
 	@echo "CAPI providers installed."
 
-capi-create: scaleway-kubeconfig ## Create a workload cluster via CAPI
-	@echo "Creating workload cluster $(CAPI_CLUSTER)..."
-	@KUBECONFIG=$(KC_FILE) kubectl create namespace $(CAPI_NS) 2>/dev/null || true
-	@# Create Scaleway credentials secret for CAPS
-	@SCW_AK=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw cluster_access_key) && \
-		SCW_SK=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw cluster_secret_key) && \
-		SCW_PID=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw project_id) && \
-		KUBECONFIG=$(KC_FILE) kubectl -n $(CAPI_NS) create secret generic scaleway-credentials \
-			--from-literal=SCW_ACCESS_KEY="$$SCW_AK" \
-			--from-literal=SCW_SECRET_KEY="$$SCW_SK" \
-			--from-literal=SCW_DEFAULT_PROJECT_ID="$$SCW_PID" \
-			--dry-run=client -o yaml | KUBECONFIG=$(KC_FILE) kubectl apply -f -
+capi-create-cpu: scaleway-kubeconfig ## Create a CPU workload cluster (DEV1-S)
+	@echo "Creating CPU workload cluster..."
+	$(capi-ensure-ns)
 	@SCW_PROJECT_ID=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw project_id) \
-		envsubst '$$SCW_PROJECT_ID' < configs/capi/workload-cluster.yaml | \
+		envsubst '$$SCW_PROJECT_ID' < configs/capi/workload-cpu.yaml | \
 		KUBECONFIG=$(KC_FILE) kubectl apply -f -
-	@echo "Workload cluster $(CAPI_CLUSTER) created. Watch progress with: make capi-status"
+	@echo "CPU cluster created. Watch: make capi-status"
 
-capi-status: scaleway-kubeconfig ## Show workload cluster status
-	@echo "=== Cluster ==="
+capi-create-gpu: scaleway-kubeconfig ## Create a GPU workload cluster (L4-1-24G)
+	@echo "Creating GPU workload cluster..."
+	$(capi-ensure-ns)
+	@SCW_PROJECT_ID=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw project_id) \
+		envsubst '$$SCW_PROJECT_ID' < configs/capi/workload-gpu.yaml | \
+		KUBECONFIG=$(KC_FILE) kubectl apply -f -
+	@echo "GPU cluster created. Watch: make capi-status"
+
+capi-status: scaleway-kubeconfig ## Show all workload cluster status
+	@echo "=== Clusters ==="
 	@KUBECONFIG=$(KC_FILE) kubectl get cluster -n $(CAPI_NS) -o wide 2>/dev/null || echo "No clusters found"
 	@echo ""
 	@echo "=== Machines ==="
@@ -394,15 +405,14 @@ capi-status: scaleway-kubeconfig ## Show workload cluster status
 	@echo "=== ScalewayMachines ==="
 	@KUBECONFIG=$(KC_FILE) kubectl get scalewaymachines -n $(CAPI_NS) -o wide 2>/dev/null || echo "No ScalewayMachines found"
 
-capi-kubeconfig: scaleway-kubeconfig ## Get workload cluster kubeconfig
-	@KUBECONFIG=$(KC_FILE) clusterctl get kubeconfig $(CAPI_CLUSTER) -n $(CAPI_NS) > $(HOME)/.kube/talos-workload-1
-	@echo "Workload kubeconfig written to $(HOME)/.kube/talos-workload-1"
-	@echo "export KUBECONFIG=$(HOME)/.kube/talos-workload-1"
+capi-kubeconfig: scaleway-kubeconfig ## Get workload cluster kubeconfig (CLUSTER=name)
+	@KUBECONFIG=$(KC_FILE) clusterctl get kubeconfig $(CLUSTER) -n $(CAPI_NS) > $(HOME)/.kube/talos-$(CLUSTER)
+	@echo "Kubeconfig written to $(HOME)/.kube/talos-$(CLUSTER)"
 
-capi-delete: scaleway-kubeconfig ## Delete workload cluster (machines + LB destroyed)
-	@echo "Deleting workload cluster $(CAPI_CLUSTER)..."
-	@KUBECONFIG=$(KC_FILE) kubectl delete cluster $(CAPI_CLUSTER) -n $(CAPI_NS) --timeout=300s
-	@echo "Workload cluster $(CAPI_CLUSTER) deleted."
+capi-delete: scaleway-kubeconfig ## Delete a workload cluster (CLUSTER=name)
+	@echo "Deleting cluster $(CLUSTER)..."
+	@KUBECONFIG=$(KC_FILE) kubectl delete cluster $(CLUSTER) -n $(CAPI_NS) --timeout=300s
+	@echo "Cluster $(CLUSTER) deleted."
 
 capi-destroy: scaleway-kubeconfig ## Remove CAPI providers from management cluster
 	@echo "Removing CAPI providers..."

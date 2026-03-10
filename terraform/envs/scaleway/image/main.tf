@@ -76,10 +76,30 @@ resource "scaleway_instance_snapshot" "talos" {
   depends_on = [terraform_data.wait_for_upload]
 }
 
-# ─── Bootable image from snapshot ────────────────────────────────────────
+# ─── Bootable image from snapshot (local SSD — DEV1, GP1, etc.) ─────────
 
 resource "scaleway_instance_image" "talos" {
   name           = "talos-${var.talos_version}"
   root_volume_id = scaleway_instance_snapshot.talos.id
   architecture   = "x86_64"
+}
+
+# ─── Block snapshot from S3 (for GPU instances: L4, H100, etc.) ─────────
+# The Terraform provider doesn't support scaleway_block_volume import yet,
+# so we use the CLI to import the QCOW2 as a block snapshot directly.
+
+resource "terraform_data" "block_snapshot" {
+  depends_on = [terraform_data.wait_for_upload]
+
+  provisioner "local-exec" {
+    command = "bash ${path.module}/create-block-image.sh"
+    environment = {
+      SCW_ACCESS_KEY         = var.scw_access_key
+      SCW_SECRET_KEY         = var.scw_secret_key
+      SCW_DEFAULT_PROJECT_ID = var.project_id
+      SCW_DEFAULT_ZONE       = var.zone
+      BUCKET_NAME            = scaleway_object_bucket.talos_image.name
+      TALOS_VERSION          = var.talos_version
+    }
+  }
 }
