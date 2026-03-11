@@ -495,7 +495,7 @@ Phase 1.2 CI/CD & Registry (Gitea + Woodpecker + Harbor)          [DONE]
 | Tunnels chiffres | WireGuard IPv6 | Differe (ADR-015) | Pertinent multi-site Gate 3 |
 | DLP egress | Envoy ext_proc | Differe (ADR-016) | Pertinent quand IA deployee Gate 2+ |
 | PaaS self-service | — | Cozystack (ADR-017) | Planifie Gate 3, Phase 3.5 |
-| Runtime security | Falco | Tetragon | eBPF natif Cilium, mieux integre, fix Talos tracefs simple |
+| Runtime security | Falco | Tetragon (ADR-018) | eBPF natif Cilium, un seul plan eBPF, enforcement temps reel, fix Talos tracefs simple |
 | Identity/SSO | Keycloak | Ory Stack (Kratos+Hydra+Pomerium) | Plus leger, cloud-native, modulaire |
 | Policy engine | Pod Security Standards | Kyverno | Plus flexible, CRD-based, admission + mutation |
 
