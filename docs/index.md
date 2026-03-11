@@ -61,3 +61,4 @@ See [Getting Started](tutorials/getting-started.md) for a detailed walkthrough.
 | Why a specific technology was chosen | [ADRs](adr/) |
 | Full component inventory | [Technology Stack](techno.md) |
 | Implementation timeline | [Roadmap](roadmap.md) |
+| How to contribute | [CONTRIBUTING.md](../CONTRIBUTING.md) |

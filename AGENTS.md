@@ -95,7 +95,7 @@ make capi-create-gpu            # Create GPU workload cluster
 - **Cilium must deploy before anything else**. Without CNI, no pods can schedule. The `k8s-up` target handles this automatically.
 - **openbao-init is a separate step** from kms-bootstrap. The former initializes in-cluster OpenBao instances; the latter bootstraps the local KMS. Both are needed.
 - **Scaleway uses 4 stages**: IAM (admin creds) -> image (builder VM) -> cluster (VMs + LB) -> CI (Gitea + Woodpecker). Credentials chain between stages.
-- **No README.md exists** -- this file and CLAUDE.md are the primary documentation.
+- **README.md** exists for GitHub visitors. CLAUDE.md and this file provide deeper context for agents and contributors.
 - **ADRs are in French** -- 17 ADRs in `docs/adr/` covering all major architectural decisions.
 - **Talos has no shell access** -- you cannot SSH into nodes. Use `talosctl` for node operations.
 - **Kyverno webhooks block deletion** -- `k8s-down` deletes webhooks first to prevent cascading failures.

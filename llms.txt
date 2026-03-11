@@ -3,8 +3,10 @@
 > Sovereign air-gapped Kubernetes platform built on Talos Linux v1.12. Deploys a management cluster with full observability, PKI, identity (OIDC), security scanning, S3 storage, and GitOps across Scaleway, libvirt/KVM, Outscale, and VMware airgap environments. Uses OpenTofu for infrastructure, Flux v2 for day-2 GitOps, and OpenBao for secrets and state storage.
 
 ## Project Context
+- [README.md](README.md): Project overview and quick start
 - [CLAUDE.md](CLAUDE.md): Comprehensive project context (architecture, commands, debugging)
 - [AGENTS.md](AGENTS.md): AI agent context file (stack, patterns, gotchas)
+- [CONTRIBUTING.md](CONTRIBUTING.md): Development workflow and conventions
 
 ## Architecture & Decisions
 - [Roadmap](docs/roadmap.md): 3-gate implementation roadmap with dependency graph
@@ -13,12 +15,27 @@
 - [ADR-002: Block Storage](docs/adr/002-block-storage-evaluation.md): Why no distributed block storage
 - [ADR-003: Garage S3](docs/adr/003-garage-sole-s3.md): Garage as sole S3 provider
 - [ADR-004: Woodpecker CI/CD](docs/adr/004-woodpecker-cicd.md): Why Woodpecker over FluxCD
+- [ADR-005: Podman Quadlet](docs/adr/005-podman-quadlet-ci.md): CI VM deployment method
+- [ADR-006: Flux SSH](docs/adr/006-flux-ssh-static-key.md): Flux Git authentication
 - [ADR-007: OpenBao](docs/adr/007-openbao-secrets-manager.md): OpenBao as secrets manager
+- [ADR-008: Random Secrets](docs/adr/008-random-id-secrets.md): Auto-generated secrets
 - [ADR-009: State Backend](docs/adr/009-state-backend-openbao.md): HTTP state backend via OpenBao
 - [ADR-010: VictoriaMetrics](docs/adr/010-victoriametrics-observability.md): Observability stack choice
+- [ADR-011: Trivy](docs/adr/011-trivy-node-collector-disabled.md): Node collector disabled for Talos
+- [ADR-012: Garage Job](docs/adr/012-garage-k8s-job.md): Post-deploy setup via K8s Job
+- [ADR-013: Service Mesh](docs/adr/013-kuma-mesh-deferred.md): Service mesh deferred
+- [ADR-014: Backstage](docs/adr/014-backstage-deferred.md): Developer portal deferred
+- [ADR-015: WireGuard](docs/adr/015-wireguard-ipv6-deferred.md): WireGuard + IPv6 deferred
+- [ADR-016: Envoy DLP](docs/adr/016-envoy-dlp-deferred.md): Data loss prevention deferred
+- [ADR-017: CozyStack](docs/adr/017-cozystack-paas-gate3.md): PaaS layer for Gate 3
 
-## Documentation
+## Documentation (Diataxis)
+- [Landing Page](docs/index.md): What this is and where to go
 - [Getting Started](docs/tutorials/getting-started.md): Prerequisites and first deployment
+- [How to Deploy](docs/how-to/deploy.md): Deploy to any supported environment
+- [How to Troubleshoot](docs/how-to/troubleshoot.md): Symptom/cause/fix table + health checks
+- [Command Reference](docs/reference/commands.md): All Makefile targets, variables, env vars
+- [Architecture](docs/explanation/architecture.md): Two-phase model, state, secrets, PKI, CAPI
 - [VMware Airgap Guide](docs/vmware-deploy-instructions.txt): Air-gapped VMware deployment
 
 ## Infrastructure
@@ -45,9 +62,14 @@
 - [OpenBao Init](scripts/openbao-cluster-init.sh): In-cluster OpenBao initialization
 - [OIDC Setup](scripts/setup-oidc.sh): Kubernetes apiServer OIDC configuration
 - [Velero Test](scripts/velero-test.sh): Backup/restore validation
+- [Garage Setup](scripts/garage-setup.sh): Garage S3 bucket and key setup
 
 ## Configuration
 - [Cilium Values](configs/cilium/values.yaml): Cilium Helm values
 - [Garage Values](configs/garage/values.yaml): Garage S3 Helm values
 - [Harbor Values](configs/harbor/values.yaml): Harbor registry Helm values
 - [OpenBao KMS Pod](configs/openbao/kms-pod.yaml): Local KMS pod manifest
+- [CAPI Manifests](configs/capi/): Cluster API workload cluster definitions
+
+## Design
+- [Design Doc Template](docs/design/000-template.md): Template for pre-implementation design docs
