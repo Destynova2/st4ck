@@ -9,18 +9,14 @@ set -euo pipefail
 ADMIN_TOKEN="${GARAGE_ADMIN_TOKEN:?Set GARAGE_ADMIN_TOKEN env var (must match admin_token in garage.toml)}"
 
 # ─── Auth setup ──────────────────────────────────────────────────────
-CA=$(mktemp) && CERT=$(mktemp) && KEY=$(mktemp)
-trap 'rm -f "$CA" "$CERT" "$KEY"' EXIT
-echo "$K8S_CA" | base64 -d > "$CA"
-echo "$K8S_CERT" | base64 -d > "$CERT"
-echo "$K8S_KEY" | base64 -d > "$KEY"
-KC="kubectl --server=$K8S_HOST --certificate-authority=$CA --client-certificate=$CERT --client-key=$KEY"
+: "${KUBECONFIG:?Set KUBECONFIG env var}"
+KC="kubectl --kubeconfig=$KUBECONFIG"
 GR="$KC exec garage-0 -n garage -- /garage"
 
 # ─── Wait for pods ───────────────────────────────────────────────────
 echo "Waiting for Garage pods to be ready..."
 for i in $(seq 1 60); do
-  READY=$($KC get pods -n garage -l app=garage -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}' 2>/dev/null | grep -c Running || true)
+  READY=$($KC get pods -n garage -l app.kubernetes.io/name=garage -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}' 2>/dev/null | grep -c Running || true)
   [ "$READY" -ge 3 ] && break
   echo "  $READY/3 pods running ($i/60)"
   sleep 5
@@ -73,20 +69,16 @@ done
 # ─── Admin API (in-cluster curl pod) ─────────────────────────────────
 # Garage v2.2+ redacts secrets in CLI output, so we use the admin API.
 # Uses kubectl run --rm -i --command with a bash array — no shell, no quoting issues.
-GARAGE_API="http://garage.garage.svc:3903/v2"
+GARAGE_API="http://garage-0.garage-headless.garage.svc:3903/v2"
 
 garage_api() {
   local METHOD="$1"
   local ENDPOINT="$2"
   local DATA="${3:-}"
-  local CURL_ARGS=(-s -X "$METHOD"
-    -H "Authorization: Bearer $ADMIN_TOKEN"
-    -H "Content-Type: application/json")
-  [ -n "$DATA" ] && CURL_ARGS+=(-d "$DATA")
-  CURL_ARGS+=("${GARAGE_API}/${ENDPOINT}")
-  $KC delete pod garage-api-call -n garage --ignore-not-found >/dev/null 2>&1
-  $KC run garage-api-call -n garage --rm -i --restart=Never \
-    --image=curlimages/curl:8.12.1 --command -- curl "${CURL_ARGS[@]}" 2>/dev/null
+  local CURL_CMD="curl -s -X $METHOD -H 'Authorization: Bearer $ADMIN_TOKEN' -H 'Content-Type: application/json'"
+  [ -n "$DATA" ] && CURL_CMD="$CURL_CMD -d '$DATA'"
+  CURL_CMD="$CURL_CMD ${GARAGE_API}/${ENDPOINT}"
+  $KC exec garage-0 -n garage -- sh -c "$CURL_CMD" 2>/dev/null
 }
 
 # ─── API Keys ────────────────────────────────────────────────────────
@@ -214,9 +206,8 @@ ensure_key_plain "harbor-key" "harbor-registry" "storage" "harbor-s3-credentials
 # Velero will fail if S3 isn't serving when it starts
 echo "Verifying Garage S3 endpoint is healthy..."
 for i in $(seq 1 30); do
-  S3_STATUS=$($KC run garage-s3-check -n garage --rm -i --restart=Never \
-    --image=curlimages/curl:8.12.1 --command -- \
-    curl -s -o /dev/null -w '%{http_code}' http://garage-s3.garage.svc:3900/ 2>/dev/null || echo "000")
+  S3_STATUS=$($KC exec garage-0 -n garage -- \
+    curl -s -o /dev/null -w '%{http_code}' http://localhost:3900/ 2>/dev/null || echo "000")
   # Garage returns 400 (bad request) or 403 on unauthenticated root — both mean S3 is serving
   if [ "$S3_STATUS" = "400" ] || [ "$S3_STATUS" = "403" ] || [ "$S3_STATUS" = "200" ]; then
     echo "  S3 endpoint healthy (HTTP $S3_STATUS)"

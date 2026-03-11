@@ -23,6 +23,9 @@ _out/
 # KMS bootstrap outputs (secrets)
 kms-output/
 
+# Fetched Helm charts (upstream dependencies)
+configs/garage/chart/
+
 # Build artifacts
 image-cache.oci
 *.ova

@@ -27,30 +27,17 @@ resource "random_id" "garage_admin_token" {
   byte_length = 32
 }
 
+resource "random_id" "harbor_admin_password" {
+  byte_length = 16
+}
+
 provider "kubernetes" {
-  host                   = var.kubernetes_host
-  client_certificate     = base64decode(var.kubernetes_client_certificate)
-  client_key             = base64decode(var.kubernetes_client_key)
-  cluster_ca_certificate = base64decode(var.kubernetes_ca_certificate)
+  config_path = var.kubeconfig_path
 }
 
 provider "helm" {
   kubernetes {
-    host                   = var.kubernetes_host
-    client_certificate     = base64decode(var.kubernetes_client_certificate)
-    client_key             = base64decode(var.kubernetes_client_key)
-    cluster_ca_certificate = base64decode(var.kubernetes_ca_certificate)
-  }
-}
-
-# ─── Kubernetes connection info (reusable for terraform_data.input) ──
-
-locals {
-  k8s_conn = {
-    host = var.kubernetes_host
-    ca   = var.kubernetes_ca_certificate
-    cert = var.kubernetes_client_certificate
-    key  = var.kubernetes_client_key
+    config_path = var.kubeconfig_path
   }
 }
 
@@ -81,105 +68,198 @@ resource "helm_release" "local_path_provisioner" {
 }
 
 # ─── Garage (S3-compatible object store) ──────────────────────────────
-# Lightweight Rust-based S3, uses local-path PVCs for persistence
 
-resource "terraform_data" "garage" {
+resource "helm_release" "garage" {
+  name             = "garage"
+  chart            = "${path.module}/../../../configs/garage/chart"
+  namespace        = "garage"
+  create_namespace = true
+  wait             = false # Garage returns 503 until layout is configured
+
+  values = [templatefile("${path.module}/../../../configs/garage/values.yaml", {
+    garage_rpc_secret  = random_id.garage_rpc_secret.hex
+    garage_admin_token = random_id.garage_admin_token.hex
+  })]
+
   depends_on = [helm_release.local_path_provisioner]
+}
 
-  input = local.k8s_conn
+# ─── Garage setup Job (layout, buckets, API keys, K8s secrets) ───────
+# Runs in-cluster as a K8s Job. Creates:
+#   - velero-s3-credentials (storage ns, INI format)
+#   - harbor-s3-credentials (storage ns, plain key/secret)
 
-  triggers_replace = [
-    filemd5("${path.module}/../../../configs/garage/garage.yaml"),
-    random_id.garage_rpc_secret.hex,
-    random_id.garage_admin_token.hex,
-  ]
-
-  provisioner "local-exec" {
-    command     = <<-EOT
-      set -e
-      CA=$(mktemp) && CERT=$(mktemp) && KEY=$(mktemp) && MANIFEST=$(mktemp)
-      echo "$K8S_CA" | base64 -d > "$CA"
-      echo "$K8S_CERT" | base64 -d > "$CERT"
-      echo "$K8S_KEY" | base64 -d > "$KEY"
-      echo "$GARAGE_MANIFEST" > "$MANIFEST"
-      kubectl --server="$K8S_HOST" --certificate-authority="$CA" --client-certificate="$CERT" --client-key="$KEY" \
-        apply -f "$MANIFEST"
-      rm -f "$CA" "$CERT" "$KEY" "$MANIFEST"
-    EOT
-    environment = {
-      K8S_HOST         = var.kubernetes_host
-      K8S_CA           = var.kubernetes_ca_certificate
-      K8S_CERT         = var.kubernetes_client_certificate
-      K8S_KEY          = var.kubernetes_client_key
-      GARAGE_MANIFEST  = templatefile("${path.module}/../../../configs/garage/garage.yaml", {
-        garage_rpc_secret  = random_id.garage_rpc_secret.hex
-        garage_admin_token = random_id.garage_admin_token.hex
-      })
-    }
+resource "kubernetes_service_account_v1" "garage_setup" {
+  metadata {
+    name      = "garage-setup"
+    namespace = "garage"
   }
+  depends_on = [helm_release.garage]
+}
 
-  provisioner "local-exec" {
-    when    = destroy
-    command = <<-EOT
-      set -e
-      CA=$(mktemp) && CERT=$(mktemp) && KEY=$(mktemp)
-      echo "${self.input.ca}" | base64 -d > "$CA"
-      echo "${self.input.cert}" | base64 -d > "$CERT"
-      echo "${self.input.key}" | base64 -d > "$KEY"
-      KC="kubectl --server=${self.input.host} --certificate-authority=$CA --client-certificate=$CERT --client-key=$KEY"
-      # Delete StatefulSet first (releases PVCs)
-      $KC delete statefulset garage -n garage --ignore-not-found --timeout=60s || true
-      # Wait for pods to terminate
-      $KC wait --for=delete pod -l app=garage -n garage --timeout=60s 2>/dev/null || true
-      # Delete PVCs
-      $KC delete pvc -n garage --all --timeout=60s || true
-      # Delete remaining resources (services, configmap)
-      $KC delete svc garage garage-s3 -n garage --ignore-not-found || true
-      $KC delete configmap garage-config -n garage --ignore-not-found || true
-      # Delete namespace
-      $KC delete namespace garage --ignore-not-found --timeout=120s || true
-      rm -f "$CA" "$CERT" "$KEY"
-    EOT
+resource "kubernetes_role_v1" "garage_setup_storage" {
+  metadata {
+    name      = "garage-setup"
+    namespace = "storage"
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["secrets"]
+    verbs      = ["get", "create", "update", "patch"]
   }
 }
 
-# ─── Garage setup (layout, buckets, API keys, K8s secrets) ───────────
-# Creates: velero-s3-credentials (storage)
+resource "kubernetes_role_binding_v1" "garage_setup_storage" {
+  metadata {
+    name      = "garage-setup"
+    namespace = "storage"
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role_v1.garage_setup_storage.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account_v1.garage_setup.metadata[0].name
+    namespace = "garage"
+  }
+}
 
-resource "terraform_data" "garage_setup" {
-  depends_on = [terraform_data.garage, kubernetes_namespace.storage]
+resource "kubernetes_job_v1" "garage_setup" {
+  metadata {
+    name      = "garage-setup-${substr(md5(random_id.garage_admin_token.hex), 0, 8)}"
+    namespace = "garage"
+  }
 
-  input = local.k8s_conn
+  spec {
+    backoff_limit = 5
+    completions   = 1
 
-  triggers_replace = [
-    filemd5("${path.module}/../../../scripts/garage-setup.sh"),
-    filemd5("${path.module}/../../../configs/garage/garage.yaml"),
-  ]
+    template {
+      metadata {
+        labels = { app = "garage-setup" }
+      }
+      spec {
+        service_account_name = kubernetes_service_account_v1.garage_setup.metadata[0].name
+        restart_policy       = "OnFailure"
 
-  provisioner "local-exec" {
-    command     = "bash ${path.module}/../../../scripts/garage-setup.sh"
-    environment = {
-      K8S_HOST           = var.kubernetes_host
-      K8S_CA             = var.kubernetes_ca_certificate
-      K8S_CERT           = var.kubernetes_client_certificate
-      K8S_KEY            = var.kubernetes_client_key
-      GARAGE_ADMIN_TOKEN = random_id.garage_admin_token.hex
+        container {
+          name  = "setup"
+          image = "alpine:3.21"
+
+          env {
+            name  = "GARAGE_ADMIN_TOKEN"
+            value = random_id.garage_admin_token.hex
+          }
+          env {
+            name  = "GARAGE_API"
+            value = "http://garage-0.garage-headless.garage.svc.cluster.local:3903/v2"
+          }
+          env {
+            name  = "KUBE_API"
+            value = "https://kubernetes.default.svc"
+          }
+
+          command = ["/bin/sh", "-c"]
+          args = [<<-SCRIPT
+            set -eu
+            apk add --no-cache curl jq >/dev/null 2>&1
+
+            TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+            CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            garage() { curl -sf -H "Authorization: Bearer $GARAGE_ADMIN_TOKEN" -H "Content-Type: application/json" "$@"; }
+            kube()   { curl -sf --cacert $CA -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" "$@"; }
+
+            # ─── Wait for Garage admin API ──────────────────────────────
+            echo "Waiting for Garage admin API..."
+            for i in $(seq 1 60); do
+              garage "$GARAGE_API/GetClusterStatus" >/dev/null 2>&1 && break
+              echo "  attempt $i/60..." && sleep 5
+            done
+            garage "$GARAGE_API/GetClusterStatus" >/dev/null || { echo "ERROR: Garage admin API unreachable"; exit 1; }
+            echo "Garage API ready."
+
+            # ─── Layout ─────────────────────────────────────────────────
+            LAYOUT=$(garage "$GARAGE_API/GetClusterLayout")
+            LAYOUT_VER=$(echo "$LAYOUT" | jq -r '.version')
+            if [ "$LAYOUT_VER" = "0" ]; then
+              echo "Configuring layout..."
+              NODES=$(garage "$GARAGE_API/GetClusterStatus" | jq '[.nodes[] | select(.isUp) | {id: .id, zone: "dc1", capacity: 5000000000, tags: []}]')
+              garage -X POST -d "$NODES" "$GARAGE_API/UpdateClusterLayout" >/dev/null
+              garage -X POST -d "{\"version\": 1}" "$GARAGE_API/ApplyClusterLayout" >/dev/null
+              echo "Layout applied (version 1)."
+            else
+              echo "Layout already configured (version $LAYOUT_VER)."
+            fi
+
+            # ─── Buckets ────────────────────────────────────────────────
+            for BUCKET in velero-backups harbor-registry; do
+              if garage "$GARAGE_API/GetBucketInfo?globalAlias=$BUCKET" >/dev/null 2>&1; then
+                echo "Bucket '$BUCKET' exists."
+              else
+                echo "Creating bucket '$BUCKET'..."
+                garage -X POST -d "{\"globalAlias\": \"$BUCKET\"}" "$GARAGE_API/CreateBucket" >/dev/null
+              fi
+            done
+
+            # ─── Helper: create key + grant + K8s secret ────────────────
+            create_key() {
+              KEY_NAME=$1; BUCKET=$2; SECRET_NS=$3; SECRET_NAME=$4; SECRET_FORMAT=$5
+
+              # Check if K8s secret already exists
+              if kube "$KUBE_API/api/v1/namespaces/$SECRET_NS/secrets/$SECRET_NAME" >/dev/null 2>&1; then
+                echo "Secret '$SECRET_NAME' already exists, skipping key '$KEY_NAME'."
+                return 0
+              fi
+
+              # Create key
+              echo "Creating key '$KEY_NAME'..."
+              KEY_JSON=$(garage -X POST -d "{\"name\": \"$KEY_NAME\"}" "$GARAGE_API/CreateKey")
+              ACCESS=$(echo "$KEY_JSON" | jq -r '.accessKeyId')
+              SECRET=$(echo "$KEY_JSON" | jq -r '.secretAccessKey')
+              [ -z "$ACCESS" ] || [ "$ACCESS" = "null" ] && { echo "ERROR: key creation failed"; exit 1; }
+
+              # Grant permissions
+              BUCKET_ID=$(garage "$GARAGE_API/GetBucketInfo?globalAlias=$BUCKET" | jq -r '.id')
+              garage -X POST -d "{\"bucketId\": \"$BUCKET_ID\", \"accessKeyId\": \"$ACCESS\", \"permissions\": {\"read\": true, \"write\": true, \"owner\": true}}" \
+                "$GARAGE_API/AllowBucketKey" >/dev/null
+
+              # Create K8s secret
+              if [ "$SECRET_FORMAT" = "ini" ]; then
+                CLOUD=$(printf '[default]\naws_access_key_id=%s\naws_secret_access_key=%s\n' "$ACCESS" "$SECRET" | base64 | tr -d '\n')
+                BODY="{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"metadata\":{\"name\":\"$SECRET_NAME\",\"namespace\":\"$SECRET_NS\"},\"data\":{\"cloud\":\"$CLOUD\"}}"
+              else
+                AK=$(printf '%s' "$ACCESS" | base64 | tr -d '\n')
+                SK=$(printf '%s' "$SECRET" | base64 | tr -d '\n')
+                BODY="{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"metadata\":{\"name\":\"$SECRET_NAME\",\"namespace\":\"$SECRET_NS\"},\"data\":{\"access_key\":\"$AK\",\"secret_key\":\"$SK\"}}"
+              fi
+              kube -X POST -d "$BODY" "$KUBE_API/api/v1/namespaces/$SECRET_NS/secrets" >/dev/null
+              echo "  Key '$KEY_NAME' created ($ACCESS), secret '$SECRET_NAME' written."
+            }
+
+            create_key "velero-key"  "velero-backups"   "storage" "velero-s3-credentials"  "ini"
+            create_key "harbor-key"  "harbor-registry"  "storage" "harbor-s3-credentials"  "plain"
+
+            echo "Garage setup complete."
+          SCRIPT
+          ]
+        }
+      }
     }
   }
 
-  provisioner "local-exec" {
-    when    = destroy
-    command = <<-EOT
-      set -e
-      CA=$(mktemp) && CERT=$(mktemp) && KEY=$(mktemp)
-      echo "${self.input.ca}" | base64 -d > "$CA"
-      echo "${self.input.cert}" | base64 -d > "$CERT"
-      echo "${self.input.key}" | base64 -d > "$KEY"
-      KC="kubectl --server=${self.input.host} --certificate-authority=$CA --client-certificate=$CERT --client-key=$KEY"
-      $KC delete secret velero-s3-credentials -n storage --ignore-not-found || true
-      rm -f "$CA" "$CERT" "$KEY"
-    EOT
+  wait_for_completion = true
+
+  timeouts {
+    create = "10m"
   }
+
+  depends_on = [
+    helm_release.garage,
+    kubernetes_namespace.storage,
+    kubernetes_role_binding_v1.garage_setup_storage,
+  ]
 }
 
 # ─── Velero (backup & DR → Garage S3) ────────────────────────────────
@@ -198,13 +278,13 @@ resource "helm_release" "velero" {
     s3_url        = var.s3_url
   })]
 
-  depends_on = [kubernetes_namespace.storage, terraform_data.garage_setup]
+  depends_on = [kubernetes_namespace.storage, kubernetes_job_v1.garage_setup]
 }
 
 # ─── Harbor (container registry with Garage S3 backend) ──────────────
 
 data "kubernetes_secret" "harbor_s3" {
-  depends_on = [terraform_data.garage_setup]
+  depends_on = [kubernetes_job_v1.garage_setup]
 
   metadata {
     name      = "harbor-s3-credentials"
@@ -224,7 +304,7 @@ resource "helm_release" "harbor" {
   values = [
     file("${path.module}/../../../configs/harbor/values.yaml"),
     sensitive(yamlencode({
-      harborAdminPassword = var.harbor_admin_password
+      harborAdminPassword = random_id.harbor_admin_password.hex
       persistence = {
         imageChartStorage = {
           s3 = {
@@ -236,5 +316,5 @@ resource "helm_release" "harbor" {
     })),
   ]
 
-  depends_on = [kubernetes_namespace.storage, terraform_data.garage_setup]
+  depends_on = [kubernetes_namespace.storage, kubernetes_job_v1.garage_setup]
 }

@@ -3,11 +3,25 @@ package_update: true
 packages:
   - ca-certificates
   - curl
-  - gnupg
   - git
   - jq
+  - podman
 
 write_files:
+  - path: /etc/containers/systemd/ci.kube
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=CI Pod (Gitea + Woodpecker)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Kube]
+      Yaml=/opt/woodpecker/ci-pod.yaml
+
+      [Install]
+      WantedBy=multi-user.target
+
   - path: /opt/woodpecker/setup.sh
     permissions: "0755"
     content: |
@@ -28,7 +42,7 @@ write_files:
       done
 
       echo "=== Creating Gitea admin user ==="
-      docker compose exec -T gitea gitea admin user create \
+      podman exec ci-gitea gitea admin user create \
         --admin --username "$$GITEA_ADMIN" \
         --password "$$GITEA_PASSWORD" \
         --email "${gitea_admin_email}" \
@@ -46,19 +60,21 @@ write_files:
       CLIENT_ID=$$(echo "$$OAUTH_RESPONSE" | jq -r '.client_id')
       CLIENT_SECRET=$$(echo "$$OAUTH_RESPONSE" | jq -r '.client_secret')
 
-      echo "=== Writing .env ==="
-      cat > /opt/woodpecker/.env <<-DOTENV
-      GITEA_URL=$$GITEA_URL
-      GITEA_DOMAIN=${public_ip}
-      GITEA_ADMIN_USER=$$GITEA_ADMIN
-      WOODPECKER_HOST=$$WOODPECKER_HOST
-      WOODPECKER_GITEA_CLIENT=$$CLIENT_ID
-      WOODPECKER_GITEA_SECRET=$$CLIENT_SECRET
-      WOODPECKER_AGENT_SECRET=$$AGENT_SECRET
-      DOTENV
+      echo "=== Restarting pod with real env vars ==="
+      systemctl stop ci
 
-      echo "=== Starting Woodpecker ==="
-      docker compose up -d woodpecker-server woodpecker-agent
+      sed -i \
+        -e "s|PLACEHOLDER_GITEA_URL|$$GITEA_URL|g" \
+        -e "s|PLACEHOLDER_DOMAIN|${public_ip}|g" \
+        -e "s|PLACEHOLDER_WP_HOST|$$WOODPECKER_HOST|g" \
+        -e "s|PLACEHOLDER_ADMIN|$$GITEA_ADMIN|g" \
+        -e "s|PLACEHOLDER_CLIENT|$$CLIENT_ID|g" \
+        -e "s|PLACEHOLDER_SECRET|$$CLIENT_SECRET|g" \
+        -e "s|PLACEHOLDER_AGENT_SECRET|$$AGENT_SECRET|g" \
+        /opt/woodpecker/ci-pod.yaml
+
+      systemctl daemon-reload
+      systemctl start ci
 
       echo "=== Waiting for Woodpecker to be ready ==="
       for i in $$(seq 1 30); do
@@ -110,22 +126,20 @@ write_files:
       scw_cluster_secret_key=${scw_cluster_secret_key}
 
 runcmd:
-  # ─── Install Docker ──────────────────────────────────────────────────
-  - install -m 0755 -d /etc/apt/keyrings
-  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-  - chmod a+r /etc/apt/keyrings/docker.asc
-  - echo "deb [arch=$$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $$( . /etc/os-release && echo $$VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
-  - apt-get update
-  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  # ─── Enable Podman socket (for Woodpecker agent) ───────────────────
+  - systemctl enable --now podman.socket
 
-  # ─── Clone infra repo ────────────────────────────────────────────────
+  # ─── Clone infra repo ──────────────────────────────────────────────
   - git clone ${git_repo_url} /opt/talos
 
-  # ─── Prepare and start Gitea first ──────────────────────────────────
+  # ─── Prepare pod manifest ──────────────────────────────────────────
   - mkdir -p /opt/woodpecker/gitea-data /opt/woodpecker/woodpecker-data
-  - cp /opt/talos/configs/woodpecker/docker-compose.yml /opt/woodpecker/
-  - touch /opt/woodpecker/.env
-  - cd /opt/woodpecker && docker compose up -d gitea
+  - cp /opt/talos/configs/woodpecker/ci-pod.yaml /opt/woodpecker/ci-pod.yaml
+  - sed -i "s|PLACEHOLDER_GITEA_URL|http://${public_ip}:3000|g; s|PLACEHOLDER_DOMAIN|${public_ip}|g" /opt/woodpecker/ci-pod.yaml
 
-  # ─── Run setup script (creates admin, OAuth, pushes repo, injects secrets) ──
-  - cd /opt/woodpecker && bash /opt/woodpecker/setup.sh
+  # ─── Start CI pod via systemd (Quadlet) ────────────────────────────
+  - systemctl daemon-reload
+  - systemctl enable --now ci
+
+  # ─── Run setup (admin, OAuth, restart with real env, push repo) ────
+  - bash /opt/woodpecker/setup.sh

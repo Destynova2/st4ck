@@ -1,0 +1,17 @@
+# VictoriaLogs Collector — log collection DaemonSet (replaces Alloy log forwarding)
+# Chart: victoria-logs-collector from https://victoriametrics.github.io/helm-charts
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+
+tolerations:
+  - operator: Exists
+    effect: NoSchedule
+
+# Forward to VictoriaLogs (list format required)
+remoteWrite:
+  - url: http://vlogs-server.monitoring.svc:9428

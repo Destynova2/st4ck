@@ -1,26 +1,30 @@
-# Garage — Lightweight S3-compatible distributed storage
-# Written in Rust, minimal footprint (~100 MB RAM per node)
+# Garage S3-compatible object store — Helm values for chart v0.9.2 (Garage v2.2.0)
+# Chart fetched via: make garage-chart
+# Source: https://git.deuxfleurs.fr/Deuxfleurs/garage (branch main-v2)
 
 garage:
-  replicationFactor: 3
-  dbEngine: lmdb
+  rpcSecret: "${garage_rpc_secret}"
   s3:
     api:
-      region: garage
       rootDomain: ".s3.garage.local"
-  # metadataDir and dataDir are set via PVC below
+    web:
+      rootDomain: ".web.garage.local"
 
-replicaCount: 3
+deployment:
+  replicaCount: 3
+  podManagementPolicy: Parallel
+  fullnameOverride: "garage"
+  image:
+    repository: dxflrs/garage
+    tag: "v2.2.0"
 
 persistence:
   meta:
-    enabled: true
     storageClass: local-path
     size: 1Gi
   data:
-    enabled: true
     storageClass: local-path
-    size: 20Gi
+    size: 5Gi
 
 resources:
   requests:
@@ -28,3 +32,21 @@ resources:
     memory: 128Mi
   limits:
     memory: 512Mi
+
+environment:
+  - name: GARAGE_ADMIN_TOKEN
+    value: "${garage_admin_token}"
+
+livenessProbe:
+  tcpSocket:
+    port: 3900
+  initialDelaySeconds: 10
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 3903
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 60

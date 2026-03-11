@@ -8,10 +8,14 @@
 #   root-token.txt          — KMS root token (keep secret)
 #   unseal-keys.txt         — Shamir unseal keys (keep secret)
 #   transit-token.txt       — Token for auto-unseal policy (inject into k8s)
+#   vault-backend-token.txt — Token for vault-backend (Terraform state in KV v2)
 #   root-ca.pem             — Root CA certificate
-#   intermediate-ca.pem     — Intermediate CA certificate
-#   intermediate-ca-key.pem — Intermediate CA private key
-#   ca-chain.pem            — Full chain (intermediate + root)
+#   infra-ca.pem            — Infra sub-CA cert (Cilium mTLS, etcd, internal)
+#   infra-ca-key.pem        — Infra sub-CA private key (for cert-manager)
+#   infra-ca-chain.pem      — Infra chain (infra + root)
+#   app-ca.pem              — App sub-CA cert (Hydra TLS, user-facing)
+#   app-ca-key.pem          — App sub-CA private key
+#   app-ca-chain.pem        — App chain (app + root)
 set -euo pipefail
 
 OUTDIR="${1:-./kms-output}"
@@ -113,6 +117,25 @@ echo "$TRANSIT_TOKEN" > "$OUTDIR/transit-token.txt"
 echo "  Transit key 'autounseal' created"
 echo "  Transit token saved to $OUTDIR/transit-token.txt"
 
+# ─── 5b. KV v2 + vault-backend policy/token (Terraform state) ─────────
+
+echo "=== Configuring KV v2 for Terraform state ==="
+bao_api POST "$NODE0/v1/sys/mounts/secret" \
+  -d '{"type":"kv","options":{"version":"2"}}' > /dev/null
+
+# Policy: vault-backend needs CRUD on tfstate data + list/delete on metadata
+bao_api PUT "$NODE0/v1/sys/policies/acl/vault-backend" -d '{
+  "policy": "path \"secret/data/tfstate/*\" { capabilities = [\"create\", \"read\", \"update\"] }\npath \"secret/metadata/tfstate/*\" { capabilities = [\"delete\", \"read\", \"list\"] }"
+}' > /dev/null
+
+# Create token with vault-backend policy (no expiry, periodic renewal)
+VB_TOKEN=$(bao_api POST "$NODE0/v1/auth/token/create" \
+  -d '{"policies":["vault-backend"],"no_parent":true,"period":"768h"}' | jq -r '.auth.client_token')
+echo "$VB_TOKEN" > "$OUTDIR/vault-backend-token.txt"
+echo "  KV v2 mounted at secret/"
+echo "  vault-backend policy created"
+echo "  vault-backend token saved to $OUTDIR/vault-backend-token.txt"
+
 # ─── 6. PKI — Root CA ──────────────────────────────────────────────────
 
 echo "=== Generating PKI Root CA ==="
@@ -129,50 +152,65 @@ ROOT_CA=$(bao_api POST "$NODE0/v1/pki/root/generate/internal" -d "{
 echo "$ROOT_CA" | jq -r '.data.certificate' > "$OUTDIR/root-ca.pem"
 echo "  Root CA generated: ${PKI_ORG} Root CA"
 
-# ─── 7. PKI — Intermediate CA ──────────────────────────────────────────
+# ─── 7. PKI — Sub-CA Infra (Cilium mTLS, etcd, cert-manager internal) ──
 
-echo "=== Generating PKI Intermediate CA ==="
-bao_api POST "$NODE0/v1/sys/mounts/pki_int" -d "{\"type\":\"pki\",\"config\":{\"max_lease_ttl\":\"$PKI_INT_TTL\"}}" > /dev/null
+generate_sub_ca() {
+  local name="$1" cn="$2" mount="$3" domains="$4"
 
-# Generate CSR
-INT_CSR=$(bao_api POST "$NODE0/v1/pki_int/intermediate/generate/internal" -d "{
-  \"common_name\": \"${PKI_ORG} Intermediate CA\",
-  \"organization\": \"${PKI_ORG}\",
-  \"key_type\": \"ec\",
-  \"key_bits\": 384,
-  \"issuer_name\": \"intermediate\"
-}" | jq -r '.data.csr')
+  echo "=== Generating PKI Sub-CA: $cn ==="
+  bao_api POST "$NODE0/v1/sys/mounts/$mount" \
+    -d "{\"type\":\"pki\",\"config\":{\"max_lease_ttl\":\"$PKI_INT_TTL\"}}" > /dev/null
 
-# Sign with Root CA
-SIGNED=$(bao_api POST "$NODE0/v1/pki/root/sign-intermediate" -d "{
-  \"csr\": $(echo "$INT_CSR" | jq -Rs .),
-  \"common_name\": \"${PKI_ORG} Intermediate CA\",
-  \"organization\": \"${PKI_ORG}\",
-  \"ttl\": \"$PKI_INT_TTL\"
-}")
-echo "$SIGNED" | jq -r '.data.certificate' > "$OUTDIR/intermediate-ca.pem"
-echo "$SIGNED" | jq -r '.data.ca_chain[]' >> "$OUTDIR/ca-chain.pem"
+  local gen_result
+  gen_result=$(bao_api POST "$NODE0/v1/$mount/intermediate/generate/exported" -d "{
+    \"common_name\": \"$cn\",
+    \"organization\": \"${PKI_ORG}\",
+    \"key_type\": \"ec\",
+    \"key_bits\": 384,
+    \"issuer_name\": \"$name\"
+  }")
+  local csr
+  csr=$(echo "$gen_result" | jq -r '.data.csr')
+  echo "$gen_result" | jq -r '.data.private_key' > "$OUTDIR/${name}-ca-key.pem"
 
-# Set signed certificate on intermediate
-bao_api POST "$NODE0/v1/pki_int/intermediate/set-signed" -d "{
-  \"certificate\": $(echo "$SIGNED" | jq -r '.data.certificate + "\n" + .data.issuing_ca' | jq -Rs .)
-}" > /dev/null
+  local signed
+  signed=$(bao_api POST "$NODE0/v1/pki/root/sign-intermediate" -d "{
+    \"csr\": $(echo "$csr" | jq -Rs .),
+    \"common_name\": \"$cn\",
+    \"organization\": \"${PKI_ORG}\",
+    \"ttl\": \"$PKI_INT_TTL\"
+  }")
 
-# Create default role for cert issuance
-bao_api POST "$NODE0/v1/pki_int/roles/default" -d "{
-  \"allowed_domains\": [\"svc.cluster.local\", \"local\"],
-  \"allow_subdomains\": true,
-  \"allow_bare_domains\": true,
-  \"max_ttl\": \"8760h\",
-  \"key_type\": \"ec\",
-  \"key_bits\": 256
-}" > /dev/null
+  echo "$signed" | jq -r '.data.certificate' > "$OUTDIR/${name}-ca.pem"
+  cat "$OUTDIR/${name}-ca.pem" "$OUTDIR/root-ca.pem" > "$OUTDIR/${name}-ca-chain.pem"
 
-echo "  Intermediate CA generated and signed by Root"
+  # Set signed cert
+  bao_api POST "$NODE0/v1/$mount/intermediate/set-signed" -d "{
+    \"certificate\": $(echo "$signed" | jq -r '.data.certificate + "\n" + .data.issuing_ca' | jq -Rs .)
+  }" > /dev/null
 
-# ─── 8. Summary ────────────────────────────────────────────────────────
+  # Create role
+  bao_api POST "$NODE0/v1/$mount/roles/default" -d "{
+    \"allowed_domains\": [$domains],
+    \"allow_subdomains\": true,
+    \"allow_bare_domains\": true,
+    \"max_ttl\": \"8760h\",
+    \"key_type\": \"ec\",
+    \"key_bits\": 256
+  }" > /dev/null
 
-cat "$OUTDIR/root-ca.pem" "$OUTDIR/intermediate-ca.pem" > "$OUTDIR/ca-chain.pem"
+  echo "  $cn generated and signed by Root"
+}
+
+generate_sub_ca "infra" "${PKI_ORG} Infra CA" "pki_infra" \
+  '"svc.cluster.local","cluster.local","local"'
+
+# ─── 8. PKI — Sub-CA App (Hydra TLS, user-facing services) ────────────
+
+generate_sub_ca "app" "${PKI_ORG} App CA" "pki_app" \
+  '"svc.cluster.local","local"'
+
+# ─── 9. Summary ────────────────────────────────────────────────────────
 
 echo ""
 echo "════════════════════════════════════════════════════════════"
@@ -183,9 +221,14 @@ echo "  Outputs in $OUTDIR/:"
 echo "    root-token.txt          — KMS root token"
 echo "    unseal-keys.txt         — Shamir keys (3 shares, threshold 2)"
 echo "    transit-token.txt       — Auto-unseal token for OpenBao App/Infra"
+echo "    vault-backend-token.txt — Token for vault-backend (Terraform state)"
 echo "    root-ca.pem             — Root CA cert"
-echo "    intermediate-ca.pem     — Intermediate CA cert"
-echo "    ca-chain.pem            — Full chain"
+echo "    infra-ca.pem            — Infra sub-CA cert (Cilium mTLS, etcd)"
+echo "    infra-ca-key.pem        — Infra sub-CA private key"
+echo "    infra-ca-chain.pem      — Infra chain (infra + root)"
+echo "    app-ca.pem              — App sub-CA cert (Hydra TLS, user-facing)"
+echo "    app-ca-key.pem          — App sub-CA private key"
+echo "    app-ca-chain.pem        — App chain (app + root)"
 echo ""
 echo "  Auto-unseal config for OpenBao App/Infra:"
 echo "    seal \"transit\" {"
@@ -194,6 +237,15 @@ echo "      token           = \"$(cat "$OUTDIR/transit-token.txt")\""
 echo "      key_name        = \"autounseal\""
 echo "      mount_path      = \"transit/\""
 echo "      tls_skip_verify = true"
+echo "    }"
+echo ""
+echo "  Terraform HTTP backend (vault-backend on :8080):"
+echo "    backend \"http\" {"
+echo "      address        = \"http://127.0.0.1:8080\""
+echo "      lock_address   = \"http://127.0.0.1:8080\""
+echo "      unlock_address = \"http://127.0.0.1:8080\""
+echo "      username       = \"TOKEN\""
+echo "      password       = \"$(cat "$OUTDIR/vault-backend-token.txt")\""
 echo "    }"
 echo ""
 echo "  To stop:  podman play kube --down configs/openbao/kms-pod.yaml"

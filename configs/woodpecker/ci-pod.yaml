@@ -1,0 +1,87 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ci
+  labels:
+    app: ci
+spec:
+  restartPolicy: Always
+  containers:
+    - name: gitea
+      image: docker.io/gitea/gitea:1
+      ports:
+        - containerPort: 3000
+          hostPort: 3000
+        - containerPort: 22
+          hostPort: 2222
+      volumeMounts:
+        - name: gitea-data
+          mountPath: /data
+      env:
+        - name: GITEA__server__ROOT_URL
+          value: "PLACEHOLDER_GITEA_URL"
+        - name: GITEA__server__DOMAIN
+          value: "PLACEHOLDER_DOMAIN"
+        - name: GITEA__server__SSH_PORT
+          value: "2222"
+        - name: GITEA__server__SSH_LISTEN_PORT
+          value: "22"
+        - name: GITEA__webhook__ALLOWED_HOST_LIST
+          value: "private"
+
+    - name: woodpecker-server
+      image: docker.io/woodpeckerci/woodpecker-server:v2
+      ports:
+        - containerPort: 8000
+          hostPort: 8000
+        - containerPort: 9000
+          hostPort: 9000
+      volumeMounts:
+        - name: woodpecker-data
+          mountPath: /var/lib/woodpecker
+      env:
+        - name: WOODPECKER_HOST
+          value: "PLACEHOLDER_WP_HOST"
+        - name: WOODPECKER_OPEN
+          value: "true"
+        - name: WOODPECKER_ADMIN
+          value: "PLACEHOLDER_ADMIN"
+        - name: WOODPECKER_GITEA
+          value: "true"
+        - name: WOODPECKER_GITEA_URL
+          value: "PLACEHOLDER_GITEA_URL"
+        - name: WOODPECKER_GITEA_CLIENT
+          value: "PLACEHOLDER_CLIENT"
+        - name: WOODPECKER_GITEA_SECRET
+          value: "PLACEHOLDER_SECRET"
+        - name: WOODPECKER_AGENT_SECRET
+          value: "PLACEHOLDER_AGENT_SECRET"
+
+    - name: woodpecker-agent
+      image: docker.io/woodpeckerci/woodpecker-agent:v2
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - name: podman-sock
+          mountPath: /var/run/docker.sock
+      env:
+        - name: WOODPECKER_SERVER
+          value: "localhost:9000"
+        - name: WOODPECKER_BACKEND
+          value: "docker"
+        - name: WOODPECKER_AGENT_SECRET
+          value: "PLACEHOLDER_AGENT_SECRET"
+
+  volumes:
+    - name: gitea-data
+      hostPath:
+        path: /opt/woodpecker/gitea-data
+        type: DirectoryOrCreate
+    - name: woodpecker-data
+      hostPath:
+        path: /opt/woodpecker/woodpecker-data
+        type: DirectoryOrCreate
+    - name: podman-sock
+      hostPath:
+        path: /run/podman/podman.sock
+        type: Socket

@@ -1,4 +1,11 @@
-output "local_path_provisioner_version" {
-  description = "Deployed local-path-provisioner version"
-  value       = helm_release.local_path_provisioner.version
+output "harbor_admin_password" {
+  description = "Harbor admin password"
+  value       = random_id.harbor_admin_password.hex
+  sensitive   = true
+}
+
+output "garage_admin_token" {
+  description = "Garage admin API token"
+  value       = random_id.garage_admin_token.hex
+  sensitive   = true
 }

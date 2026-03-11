@@ -1,0 +1,47 @@
+# State encryption with OpenBao Transit (KMS-backed)
+#
+# Copy this block into stacks that run AFTER `make openbao-init`:
+#   - terraform/stacks/k8s-identity/main.tf
+#   - terraform/stacks/k8s-security/main.tf
+#   - terraform/stacks/k8s-storage/main.tf
+#
+# Prerequisites:
+#   - OpenBao infra instance is initialized and unsealed
+#   - Transit engine enabled with key "state-encryption"
+#   - kubectl port-forward or in-cluster access to OpenBao
+#
+# Set token via: export TF_VAR_openbao_token="$(cat kms-output/openbao-infra-token.txt)"
+# Or via: export BAO_TOKEN="$(cat kms-output/openbao-infra-token.txt)"
+
+variable "openbao_token" {
+  description = "OpenBao root token (from kms-output/openbao-infra-token.txt)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+terraform {
+  encryption {
+    key_provider "openbao" "transit" {
+      key_name = "state-encryption"
+      address  = "http://openbao-infra.secrets.svc:8200"
+      token    = var.openbao_token
+
+      # Use kubectl port-forward for local access:
+      # address = "http://127.0.0.1:8200"
+      # Then: kubectl port-forward -n secrets svc/openbao-infra 8200:8200
+    }
+
+    method "aes_gcm" "state" {
+      keys = key_provider.openbao.transit
+    }
+
+    state {
+      method = method.aes_gcm.state
+    }
+
+    plan {
+      method = method.aes_gcm.state
+    }
+  }
+}

@@ -1,13 +1,38 @@
 # OpenBao App — application secrets
-# Dev mode for POC (no persistence, no unseal)
+# Standalone mode with file storage (init required after first deploy)
+#
+# After deploy: make openbao-init
 
 server:
   dev:
-    enabled: true
-    devRootToken: "${root_token}"
+    enabled: false
 
   standalone:
     enabled: true
+    config: |
+      ui = true
+
+      listener "tcp" {
+        tls_disable     = true
+        address         = "[::]:8200"
+        cluster_address = "[::]:8201"
+      }
+
+      storage "file" {
+        path = "/openbao/data"
+      }
+
+      # Production: transit auto-unseal from external KMS
+      # seal "transit" {
+      #   address    = "https://kms.example.com:8200"
+      #   token      = "s.xxxxx"
+      #   key_name   = "autounseal"
+      #   mount_path = "transit/"
+      # }
+
+  dataStorage:
+    enabled: true
+    size: 1Gi
 
   resources:
     requests:

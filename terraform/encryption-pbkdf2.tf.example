@@ -1,0 +1,36 @@
+# State encryption with PBKDF2 (passphrase-based)
+#
+# Copy this block into any stack's main.tf to enable state encryption.
+# Used for stacks that run BEFORE OpenBao is available:
+#   - terraform/envs/*/main.tf (infra)
+#   - terraform/stacks/k8s-cni/main.tf
+#   - terraform/stacks/k8s-monitoring/main.tf
+#   - terraform/stacks/k8s-pki/main.tf
+#
+# Set passphrase via: export TF_VAR_state_passphrase="your-long-passphrase-here"
+
+variable "state_passphrase" {
+  description = "Passphrase for state encryption (min 16 chars)"
+  type        = string
+  sensitive   = true
+}
+
+terraform {
+  encryption {
+    key_provider "pbkdf2" "state" {
+      passphrase = var.state_passphrase
+    }
+
+    method "aes_gcm" "state" {
+      keys = key_provider.pbkdf2.state
+    }
+
+    state {
+      method = method.aes_gcm.state
+    }
+
+    plan {
+      method = method.aes_gcm.state
+    }
+  }
+}

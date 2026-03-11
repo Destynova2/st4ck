@@ -1,0 +1,195 @@
+# victoria-metrics-k8s-stack — consolidated monitoring
+# Chart: 0.72.4 from https://victoriametrics.github.io/helm-charts
+# Replaces: vm-single + grafana + alertmanager + node-exporter + kube-state-metrics + alloy
+
+# ─── Disabled components (Talos / Cilium) ───────────────────────────
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+# ─── VMSingle (metrics storage) ─────────────────────────────────────
+vmsingle:
+  enabled: true
+  spec:
+    retentionPeriod: "30d"
+    storage: {}
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+
+# ─── VMAgent (replaces Alloy for metrics collection) ────────────────
+vmagent:
+  enabled: true
+  spec:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+    # Scrape annotated pods (prometheus.io/scrape=true)
+    scrapeInterval: 30s
+    externalLabels:
+      cluster: talos
+    scrapeInterval: 30s
+
+# ─── VMAlert (alerting rules evaluation) ────────────────────────────
+vmalert:
+  enabled: true
+  spec:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+
+# ─── Alertmanager ───────────────────────────────────────────────────
+alertmanager:
+  enabled: true
+  spec:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+
+# ─── Grafana (sub-chart) ───────────────────────────────────────────
+grafana:
+  enabled: true
+  fullnameOverride: "grafana"
+  persistence:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  readinessProbe:
+    httpGet:
+      path: /api/health
+      port: 3000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    failureThreshold: 10
+  sidecar:
+    dashboards:
+      enabled: false
+  # VictoriaLogs datasource plugin
+  plugins:
+    - victoriametrics-logs-datasource
+  additionalDataSources:
+    - name: VictoriaLogs
+      type: victoriametrics-logs-datasource
+      uid: vlogs
+      url: http://vlogs-server.monitoring.svc:9428
+      access: proxy
+  # Dashboards from grafana.com
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: kubernetes
+          orgId: 1
+          folder: Kubernetes
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/kubernetes
+        - name: logs
+          orgId: 1
+          folder: Logs
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/logs
+        - name: system
+          orgId: 1
+          folder: System
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/system
+  dashboards:
+    kubernetes:
+      k8s-global:
+        gnetId: 15757
+        revision: 37
+        datasource: VictoriaMetrics
+      k8s-nodes:
+        gnetId: 15759
+        revision: 29
+        datasource: VictoriaMetrics
+      k8s-pods:
+        gnetId: 15760
+        revision: 28
+        datasource: VictoriaMetrics
+    logs:
+      loki-logs:
+        gnetId: 13639
+        revision: 2
+        datasource: VictoriaLogs
+      loki-container-log:
+        gnetId: 16966
+        revision: 1
+        datasource: VictoriaLogs
+    system:
+      node-exporter-full:
+        gnetId: 1860
+        revision: 37
+        datasource: VictoriaMetrics
+      cadvisor:
+        gnetId: 14282
+        revision: 1
+        datasource: VictoriaMetrics
+      k8s-resources-cluster:
+        gnetId: 7249
+        revision: 1
+        datasource: VictoriaMetrics
+
+# ─── Node Exporter (sub-chart, Talos-compatible) ───────────────────
+prometheus-node-exporter:
+  enabled: true
+  hostNetwork: true
+  hostPID: true
+  hostRootFsMount:
+    enabled: true
+    mountPropagation: HostToContainer
+  tolerations:
+    - operator: Exists
+      effect: NoSchedule
+  extraArgs:
+    - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/kubelet/.+|var/lib/containerd/.+|system)($|/)
+    - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
+
+# ─── kube-state-metrics (sub-chart) ────────────────────────────────
+kube-state-metrics:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+  metricLabelsAllowlist:
+    - pods=[*]
+    - nodes=[*]

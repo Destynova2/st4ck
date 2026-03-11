@@ -1,7 +1,7 @@
 # Stack Technologique — Plateforme Souveraine
 
 > Inventaire complet des composants deployes, versions, et roles.
-> Mis a jour 2026-03-10.
+> Mis a jour 2026-03-11.
 
 ---
 
@@ -18,81 +18,66 @@
 
 | Composant | Version | Role | Notes |
 |---|---|---|---|
-| Woodpecker CI | - | Pipeline CI/CD push-based | 7 stages sequentiels (validate → storage) |
-| Gitea | - | Serveur Git | Deploye sur VM CI avec Woodpecker |
+| Woodpecker CI | v2 | Pipeline CI/CD push-based | 8 stages, parallelisme pki+monitoring et security+storage |
+| Gitea | 1.x | Serveur Git | VM CI Scaleway, Podman Quadlet + systemd |
 | Harbor | 1.16.2 | Registry conteneurs | S3 Garage backend, Trivy scan integre |
 
-## Observabilite (stack k8s-addons)
+### VM CI (Scaleway DEV1-M)
+
+```
+/etc/containers/systemd/ci.kube  →  Quadlet unit
+    └── /opt/woodpecker/ci-pod.yaml  →  Pod manifest (podman play kube)
+        ├── gitea        :3000 (UI) :2222 (SSH)
+        ├── woodpecker-server  :8000 (UI) :9000 (gRPC)
+        └── woodpecker-agent   (monte /run/podman/podman.sock)
+
+systemctl enable --now ci
+systemctl status ci
+journalctl -u ci
+```
+
+Cloud-init : installe podman, clone le repo, cree admin Gitea, OAuth Woodpecker, push mirror, injecte secrets Scaleway.
+
+## CNI (stack k8s-cni)
 
 | Composant | Chart Version | Role | Notes |
 |---|---|---|---|
-| VictoriaMetrics | 0.32.0 | Stockage metriques (PromQL) | Single-node, scrape via Alloy |
-| Loki | 6.53.0 | Agregation logs | Single-binary, filesystem, gateway nginx |
-| Alertmanager | 1.33.1 | Routage alertes | Prometheus-community chart |
-| Grafana | 10.5.15 | Dashboards & visualisation | Datasources auto-configurees (uid stables) |
-| Alloy | 1.6.1 | Collecteur unifie metriques + logs | DaemonSet, 9 cibles scrape, logs file-based |
-| kube-state-metrics | 5.30.1 | Metriques Kubernetes (kube_*) | Pod counts, deployments, resource requests |
-| node-exporter | 4.52.0 | Metriques host (node_*) | DaemonSet, hostNetwork+hostPID, compatible Talos |
-| Headlamp | 0.40.0 | UI Kubernetes | kubernetes-sigs, auto-open au deploy |
+| Cilium | 1.17.13 | CNI + Network Policies + Service Mesh | eBPF, remplace kube-proxy, mTLS, Hubble |
 
-### Alloy — Detail pipeline
-
-```
-Metriques (9 cibles scrape) :
-├── Pods annotes (prometheus.io/scrape=true)
-├── kubelet (API proxy /nodes/$node/proxy/metrics)
-├── cadvisor (API proxy /nodes/$node/proxy/metrics/cadvisor)
-├── node-exporter (endpoints discovery)
-├── kube-state-metrics (service discovery)
-├── Cilium agent (port 9962)
-├── Hubble (port 9965)
-├── Cilium operator (port 9963)
-└── Hubble relay (port 9966)
-
-Relabeling :
-├── cluster=talos (global, via prometheus.relabel avant remote_write)
-└── instance=node name (node-exporter, kubelet, cadvisor)
-
-Logs :
-├── local.file_match /var/log/pods/*/*/*.log (hostPath /var/log)
-├── loki.process : regex extraction namespace/pod/container/stream
-├── CRI format parsing (timestamp stream flags content)
-└── Static labels : cluster=talos, job=pod-logs
-```
-
-### Grafana — Dashboards
-
-| Dashboard | Source | Folder | Datasource |
-|---|---|---|---|
-| K8s Global | grafana.com #15757 | Kubernetes | Prometheus |
-| K8s Nodes | grafana.com #15759 | Kubernetes | Prometheus |
-| K8s Pods | grafana.com #15760 | Kubernetes | Prometheus |
-| Loki Logs | grafana.com #13639 | Logs | Loki |
-| Container Log | grafana.com #16966 | Logs | Loki |
-| Node Exporter Full | grafana.com #1860 | System | Prometheus |
-| cAdvisor | grafana.com #14282 | System | Prometheus |
-| K8s Resources Cluster | grafana.com #7249 | System | Prometheus |
-| Platform Overview | ConfigMap (custom) | default | Prometheus |
-| Hubble / Cilium | Chart Cilium (natifs) | - | Prometheus |
-
-### Grafana — Datasources
-
-| Nom | Type | UID | URL interne |
-|---|---|---|---|
-| Prometheus | prometheus | `prometheus` | victoria-metrics-single-server.monitoring:8428 |
-| Loki | loki | `loki` | loki.monitoring:3100 |
-| Alertmanager | alertmanager | `alertmanager` | alertmanager.monitoring:9093 |
-
-## Secrets & Identite (stack k8s-secrets)
+## Observabilite (stack k8s-monitoring)
 
 | Composant | Chart Version | Role | Notes |
 |---|---|---|---|
-| OpenBao (infra) | 0.25.6 | PKI intermediaire, secrets infra | Instance separee |
+| victoria-metrics-k8s-stack | 0.72.4 | Metriques + alertes + dashboards (chart consolide) | VMSingle, VMAgent, VMAlert, Alertmanager, Grafana, kube-state-metrics, node-exporter |
+| victoria-logs-single | 0.11.28 | Stockage logs (remplace Loki) | Retention 30d |
+| victoria-logs-collector | 0.2.11 | Collecte logs (DaemonSet) | Remplace Alloy |
+| Headlamp | 0.40.0 | UI Kubernetes | kubernetes-sigs, healthmap cluster |
+
+## PKI & Secrets (stack k8s-pki)
+
+| Composant | Chart Version | Role | Notes |
+|---|---|---|---|
+| OpenBao (infra) | 0.25.6 | PKI intermediaire, secrets infra, Transit engine, SSH CA | Agent Injector active |
 | OpenBao (app) | 0.25.6 | Secrets applicatifs | Instance separee |
 | cert-manager | v1.19.4 | Gestion certificats TLS | ClusterIssuer internal-ca |
-| Kratos | 0.60.1 | Gestion identite | Ory Stack |
-| Hydra | 0.60.1 | Serveur OIDC/OAuth2 | TLS public, client K8s auto-enregistre |
-| Pomerium | 34.0.1 | Proxy authentifiant zero-trust | SSO tous composants |
+
+### OpenBao Infra — Engines & Auth
+
+```
+Secret Engines :
+├── transit/              — Chiffrement state OpenTofu (cle aes256-gcm96 "state-encryption")
+├── ssh-client-signer/    — SSH CA pour signature certs (role "flux", TTL 2h, max 24h)
+└── cubbyhole/            — Per-token storage
+
+Auth Methods :
+├── kubernetes/           — Auth pods via ServiceAccount
+│   └── role "flux-ssh"   — bound SA flux2-source-controller/flux-system, policy "flux-ssh"
+└── token/                — Auth par token
+
+Policies :
+├── flux-ssh              — create/update sur ssh-client-signer/sign/flux
+└── default/root
+```
 
 ### PKI
 
@@ -108,7 +93,24 @@ Root CA (Terraform TLS provider, auto-genere)
 Tous auto-generes via `random_id` Terraform :
 - `.hex` (64 chars) : tokens OpenBao, admin passwords
 - `.b64_std` (base64, 32 bytes) : Pomerium shared/cookie secrets
-- Stockes dans state Terraform (chiffre), jamais en clair sur disque
+- Stockes dans state Terraform (chiffre via Transit OpenBao), jamais en clair sur disque
+
+### State Backend
+
+```
+OpenBao KMS local (3 noeuds Raft, Podman)
+└── vault-backend (HTTP proxy → OpenBao KV v2)
+    └── http://localhost:8080/state/{stack-name}
+        └── TF_HTTP_PASSWORD = token vault-backend
+```
+
+## Identite (stack k8s-identity)
+
+| Composant | Chart Version | Role | Notes |
+|---|---|---|---|
+| Kratos | 0.60.1 | Gestion identite | Ory Stack |
+| Hydra | 0.60.1 | Serveur OIDC/OAuth2 | TLS public, client K8s auto-enregistre |
+| Pomerium | 34.0.1 | Proxy authentifiant zero-trust | SSO tous composants |
 
 ## Securite (stack k8s-security)
 
@@ -132,22 +134,51 @@ Tous auto-generes via `random_id` Terraform :
 | Velero | 11.4.0 | Backup/restore | Target: Garage S3, BSL Available |
 | Harbor | 1.16.2 | Registry conteneurs | S3 Garage backend, Trivy scan integre |
 
-## RBAC supplementaire (Terraform)
+### Garage Post-Deploy (K8s Job)
 
-| ClusterRole | Permissions | ServiceAccount | Raison |
+```
+kubernetes_job_v1.garage_setup :
+├── Wait Garage admin API
+├── Configure layout (5 GB/node, zone dc1)
+├── Create buckets (velero-backups, harbor-registry)
+├── Create API keys (velero-key, harbor-key)
+└── Create K8s secrets (velero-s3-credentials, harbor-s3-credentials)
+    └── RBAC: ServiceAccount garage-setup, Role/RoleBinding storage ns
+```
+
+## GitOps (stack flux-bootstrap)
+
+| Composant | Chart Version | Role | Notes |
 |---|---|---|---|
-| alloy-kubelet-access | nodes/proxy, nodes/metrics (get) | alloy (monitoring) | Scrape kubelet/cadvisor via API proxy |
-| alloy-kubelet-access | nodes, pods, services, endpoints (get/list/watch) | alloy (monitoring) | Discovery Kubernetes |
-| alloy-kubelet-access | pods/log (get/list/watch) | alloy (monitoring) | Collecte logs via API |
+| Flux v2 | 2.14.1 | GitOps controller | source, kustomize, helm, image, notification controllers |
+
+### Flux → Gitea (SSH)
+
+```
+tls_private_key.flux_ssh (ed25519)
+└── K8s secret "flux-ssh-identity" (identity + identity.pub + known_hosts)
+    └── GitRepository "management" (ssh://git@gitea.ci.internal:22/infra/talos.git)
+        └── Kustomization "management" (path: ./clusters/management)
+
+Deploy key : tofu output flux_ssh_public_key → Gitea Settings → Deploy Keys
+```
 
 ## Deploiement Terraform
 
 ```
 terraform/stacks/
-├── k8s-addons/     # Cilium, monitoring, observabilite (9 helm releases + RBAC)
-├── k8s-secrets/    # PKI, OpenBao x2, cert-manager, Ory Stack (8 helm releases)
+├── k8s-cni/        # Cilium (1 helm release)
+├── k8s-monitoring/ # vm-k8s-stack, VictoriaLogs, Headlamp (4 helm releases + dashboard)
+├── k8s-pki/        # PKI, OpenBao x2, cert-manager (4 helm releases + secrets + ClusterIssuer)
+├── k8s-identity/   # Kratos, Hydra, Pomerium (3 helm releases + OIDC client)
 ├── k8s-security/   # Trivy, Tetragon, Kyverno (3 helm releases + policy)
-└── k8s-storage/    # local-path, Garage, Velero, Harbor (4 helm releases + setup)
+├── k8s-storage/    # local-path, Garage, Velero, Harbor (4 helm releases + K8s Job setup)
+└── flux-bootstrap/ # Flux v2, SSH key, GitRepository, Kustomization
+
+terraform/envs/scaleway/
+├── iam/            # Projet, API keys (image-builder, cluster, ci), buckets
+├── ci/             # VM CI (Gitea + Woodpecker, Podman Quadlet)
+└── main.tf         # Cluster Talos (6 noeuds, LB, VPC)
 ```
 
 ## Environnements
@@ -161,4 +192,4 @@ terraform/stacks/
 
 ---
 
-*Total : ~26 composants Helm, 4 stacks Terraform, 3 environnements cloud + 1 air-gap*
+*Total : ~27 composants Helm, 7 stacks Terraform, 3 environnements cloud + 1 air-gap, 1 VM CI Podman Quadlet*

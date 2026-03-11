@@ -1,13 +1,38 @@
-# OpenBao Infra — PKI + infrastructure secrets
-# Dev mode for POC (no persistence, no unseal)
+# OpenBao Infra — PKI backend + infrastructure secrets
+# Standalone mode with file storage (init required after first deploy)
+#
+# After deploy: make openbao-init
 
 server:
   dev:
-    enabled: true
-    devRootToken: "${root_token}"
+    enabled: false
 
   standalone:
     enabled: true
+    config: |
+      ui = true
+
+      listener "tcp" {
+        tls_disable     = true
+        address         = "[::]:8200"
+        cluster_address = "[::]:8201"
+      }
+
+      storage "file" {
+        path = "/openbao/data"
+      }
+
+      # Production: transit auto-unseal from external KMS
+      # seal "transit" {
+      #   address    = "https://kms.example.com:8200"
+      #   token      = "s.xxxxx"
+      #   key_name   = "autounseal"
+      #   mount_path = "transit/"
+      # }
+
+  dataStorage:
+    enabled: true
+    size: 1Gi
 
   resources:
     requests:
@@ -17,7 +42,18 @@ server:
       memory: 512Mi
 
 injector:
-  enabled: false
+  enabled: true
+  replicas: 1
+  agentImage:
+    registry: "quay.io"
+    repository: "openbao/openbao"
+  agentDefaults:
+    cpuRequest: "50m"
+    cpuLimit: "250m"
+    memRequest: "64Mi"
+    memLimit: "128Mi"
+  webhook:
+    failurePolicy: Ignore
 
 csi:
   enabled: false

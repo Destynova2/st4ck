@@ -56,7 +56,7 @@
    └── Deploy via OpenTofu (7 stages sequentiels)
 ```
 
-**Decision** : FluxCD et SeaweedFS retires. Voir ADR-002 et ADR-003.
+**Decision** : FluxCD et SeaweedFS retires. Voir ADR-004 et ADR-003.
 - FluxCD : chicken-and-egg (Flux a besoin de Cilium pour tourner, Cilium doit etre deploye avant Flux).
   Woodpecker + OpenTofu couvre deja le CD avec ordering strict. Ajouter Flux = 2 systemes de deploiement.
 - SeaweedFS : Garage (phase 1.6) remplit le meme role (S3-compatible). Pas besoin de 2 object stores.
@@ -90,7 +90,7 @@
     └── SSO tous composants
 ```
 
-**Decision** : Secrets auto-generes via `random_id` Terraform. Voir ADR-005.
+**Decision** : Secrets auto-generes via `random_id` Terraform. Voir ADR-008.
 - Plus de `secret.tfvars` manuels — chaque deploy genere des secrets uniques
 - `random_id.*.hex` (64 chars) pour tokens/secrets generiques
 - `random_id.*.b64_std` (base64, 32 raw bytes) pour Pomerium shared/cookie secrets
@@ -111,71 +111,37 @@
 **Depends** : Phase 1.3 (secrets pour credentials)
 
 ```
-10. VictoriaMetrics
-    └── Stockage metriques (PromQL)
+10. victoria-metrics-k8s-stack (chart consolide)
+    ├── VMSingle (stockage metriques, retention 30d)
+    ├── VMAgent (scrape Cilium, kubelet, cadvisor, pods, etc.)
+    ├── VMAlert + Alertmanager
+    ├── Grafana (datasources auto, dashboards grafana.com)
+    ├── kube-state-metrics
+    └── node-exporter (compatible Talos)
 
-11. Loki
-    └── Agregation logs (single-binary)
+11. VictoriaLogs (remplace Loki)
+    ├── victoria-logs-single (stockage logs, retention 30d)
+    └── victoria-logs-collector (DaemonSet, collecte logs)
 
-12. Alertmanager
-    └── Routage alertes
-
-13. Alloy (DaemonSet)
-    ├── Scrape metriques → VictoriaMetrics
-    │   ├── Pods annotes (prometheus.io/scrape=true)
-    │   ├── kubelet / cadvisor (API proxy, bearer token)
-    │   ├── node-exporter (endpoints, 1 par noeud)
-    │   ├── kube-state-metrics (service discovery)
-    │   ├── Cilium agent (port 9962)
-    │   ├── Hubble (port 9965)
-    │   ├── Cilium operator (port 9963)
-    │   └── Hubble relay (port 9966)
-    ├── Relabeling global : cluster=talos, instance=node name
-    └── Collecte logs → Loki
-        └── File-based (/var/log/pods), pipeline CRI parsing
-
-14. kube-state-metrics
-    └── Metriques kube_* (pods, deployments, resources)
-
-15. node-exporter (DaemonSet)
-    ├── Metriques node_* (CPU, RAM, disk, network)
-    ├── hostNetwork + hostPID (requis Talos)
-    └── Compatible Talos (pas de path.procfs/sysfs/rootfs en extraArgs)
-
-16. Grafana
-    ├── Datasources: VictoriaMetrics (uid:prometheus), Loki (uid:loki), Alertmanager (uid:alertmanager)
-    ├── Dashboards grafana.com: K8s Global/Nodes/Pods, Node Exporter Full, cAdvisor, Loki logs
-    ├── Platform Overview dashboard (ConfigMap sidecar)
-    └── Hubble dashboards (natifs chart Cilium)
-
-17. Headlamp
+12. Headlamp
     ├── UI Kubernetes (kubernetes-sigs)
-    ├── S'ouvre automatiquement apres deploy addons (token auto-copie)
+    ├── S'ouvre automatiquement apres deploy monitoring (token auto-copie)
     └── Permet de suivre le deploiement des stacks restants en live
 
-15. Headlamp
-    ├── UI Kubernetes (kubernetes-sigs)
-    ├── S'ouvre automatiquement apres deploy addons (token auto-copie)
-    └── Permet de suivre le deploiement des stacks restants en live
+13. Platform Overview dashboard (ConfigMap sidecar Grafana)
 ```
 
-**Decision** : Alloy en DaemonSet unifie collecte metriques + logs. Voir ADR-006.
-- Metriques : scrape annotation-based (pods), API proxy (kubelet/cadvisor), endpoints (node-exporter, kube-state-metrics), direct (Cilium/Hubble)
-- Logs : `loki.source.file` lit `/var/log/pods/*/*/*.log` (hostPath mount). Pipeline `loki.process` extrait namespace/pod/container/stream depuis le chemin fichier et le format CRI
-- Label `cluster=talos` injecte globalement via `prometheus.relabel` avant remote_write (requis par dashboards grafana.com)
-- Label `instance` relabele au nom du noeud K8s pour node-exporter/kubelet/cadvisor (requis par dashboard 15759 qui resout `instance` via `node_uname_info`)
-- RBAC supplementaire : `nodes/proxy`, `nodes/metrics`, `pods/log` (ClusterRole Terraform, en plus du RBAC chart)
+**Decision** : victoria-metrics-k8s-stack consolide metriques + alertes + dashboards en un seul chart. Voir ADR-010.
+- Inclut : VMSingle, VMAgent, VMAlert, Alertmanager, Grafana, kube-state-metrics, node-exporter
+- VictoriaLogs remplace Loki pour les logs (victoria-logs-single + victoria-logs-collector)
+- Label `cluster=talos` injecte globalement (requis par dashboards grafana.com)
 
 **Livrable** : observabilite complete (metriques, logs, alertes, dashboards, UI live).
 
-- [x] VictoriaMetrics 0.32.0
-- [x] Loki 6.53.0 (single-binary, filesystem, gateway nginx)
-- [x] Alertmanager 1.33.1
-- [x] Alloy 1.6.1 (DaemonSet, scrape 9 cibles, logs file-based)
-- [x] Grafana 10.5.15 + Platform Overview dashboard + dashboards grafana.com
+- [x] victoria-metrics-k8s-stack 0.72.4 (VMSingle + VMAgent + VMAlert + Alertmanager + Grafana + kube-state-metrics + node-exporter)
+- [x] VictoriaLogs single 0.14.3 + collector 0.14.3 (remplace Loki + Alloy)
 - [x] Headlamp 0.40.0 (auto-open dans `make scaleway-up`)
-- [x] kube-state-metrics 5.30.1 (metriques kube_*)
-- [x] node-exporter 4.52.0 (metriques node_*, compatible Talos)
+- [x] Platform Overview dashboard (ConfigMap sidecar)
 
 ### Phase 1.5 — Securite & Scanning (S5-S6)
 
@@ -205,7 +171,7 @@
 
 **Livrable** : supply chain securisee, detection runtime, policies appliquees.
 
-- [x] Trivy Operator 0.32.0 (node-collector desactive — ADR-004 : `scanNodeCollectorLimit: 0`)
+- [x] Trivy Operator 0.32.0 (node-collector desactive — ADR-011 : `scanNodeCollectorLimit: 0`)
 - [x] Tetragon 1.6.0 (avec fix Talos tracefs)
 - [x] Kyverno 3.7.1
 - [x] Cosign verifyImages policy (Kyverno ClusterPolicy, mode audit, pret pour enforce)
@@ -229,7 +195,7 @@
     └── Target: Garage S3
 ```
 
-**Decision** : Garage seul (sans Longhorn) retenu. Voir ADR-001.
+**Decision** : Garage seul (sans Longhorn) retenu. Voir ADR-002 et ADR-003.
 - Rook-Ceph : bug parse_env Squid 19.2.3, ~30 pods, complexe
 - Piraeus/LINSTOR : module kernel DRBD, ~17 pods, performant mais plus lourd
 - Longhorn + Garage : ~30 pods total, ~2-3 GB RAM overhead, inutile car Garage replique deja
@@ -264,7 +230,7 @@
 ### Gate 1 — Criteres de passage
 
 - [x] Management cluster 6 noeuds Talos stable (3 CP + 3 workers)
-- [x] Pipeline CI/CD complet (Woodpecker + OpenTofu, 7 stages)
+- [x] Pipeline CI/CD complet (Woodpecker + OpenTofu, 6 stacks)
 - [x] Harbor registry (S3 Garage backend, Trivy scan integre)
 - [x] Observabilite complete (metriques + logs + alertes)
 - [x] Secrets & PKI (OpenBao infra/app + cert-manager + Root/Intermediate CA)
@@ -512,16 +478,26 @@ Phase 1.2 CI/CD & Registry (Gitea + Woodpecker + Harbor)          [DONE]
 
 | Composant | Choix initial | Choix final | Raison |
 |---|---|---|---|
-| Stockage distribue | Rook-Ceph → Piraeus/LINSTOR → Longhorn | Garage seul (ADR-001) | Longhorn inutile : Garage replique nativement (factor=3), ~20 pods et ~1.5 GB RAM economises |
+| CNI | Flannel | Cilium (ADR-001) | eBPF, kubeProxyReplacement, NetworkPolicy L7, Hubble, mTLS, support Talos |
+| Stockage bloc distribue | Rook-Ceph, Piraeus/LINSTOR, Longhorn | Aucun — local-path (ADR-002) | Trop lourd pour 6 noeuds. Garage replique nativement (factor=3) |
+| Stockage objet | Longhorn + SeaweedFS + Garage | Garage seul (ADR-003) | Longhorn inutile (~20 pods), SeaweedFS redondant. Garage replique deja |
+| GitOps/CD | FluxCD | Woodpecker + OpenTofu (ADR-004) | Flux = chicken-and-egg avec Cilium, 2 systemes de deploiement |
+| VM CI runtime | Docker Compose | Podman Quadlet (ADR-005) | systemd natif, daemonless, un seul runtime |
+| Flux auth Gitea | HTTPS basic auth | SSH ed25519 (ADR-006) | SSH CA OpenBao pret mais go-git incompatible certs |
+| Secrets manager | Vault BSL | OpenBao (ADR-007) | Apache 2.0, Linux Foundation, ESO et step-ca retires |
+| Gestion secrets | `secret.tfvars` manuels | `random_id` Terraform (ADR-008) | Zero intervention manuelle, secrets dans state chiffre |
+| State backend | Local tfstate | HTTP -> OpenBao KV v2 (ADR-009) | Chiffre Transit, locking, zero dependance cloud |
+| Observabilite | Prometheus + Loki + Alloy | vm-k8s-stack + VictoriaLogs (ADR-010) | Chart consolide, collecteurs natifs VM |
+| Trivy node-collector | Active | Desactive (ADR-011) | Incompatible Talos (no shell, no systemd). Talos durci par design |
+| Garage post-deploy | local-exec script | K8s Job (ADR-012) | In-cluster, idempotent, RBAC least-privilege |
+| Service mesh | Kuma | Differe (ADR-013) | Cilium mTLS + L7 couvre le besoin actuel |
+| IDP | Backstage | Differe (ADR-014) | Headlamp + Pomerium suffisent, Backstage Gate 3+ |
+| Tunnels chiffres | WireGuard IPv6 | Differe (ADR-015) | Pertinent multi-site Gate 3 |
+| DLP egress | Envoy ext_proc | Differe (ADR-016) | Pertinent quand IA deployee Gate 2+ |
+| PaaS self-service | — | Cozystack (ADR-017) | Planifie Gate 3, Phase 3.5 |
 | Runtime security | Falco | Tetragon | eBPF natif Cilium, mieux integre, fix Talos tracefs simple |
 | Identity/SSO | Keycloak | Ory Stack (Kratos+Hydra+Pomerium) | Plus leger, cloud-native, modulaire |
 | Policy engine | Pod Security Standards | Kyverno | Plus flexible, CRD-based, admission + mutation |
-| GitOps/CD | FluxCD | Woodpecker + OpenTofu (ADR-002) | Flux = chicken-and-egg avec Cilium, 2 systemes de deploiement. Woodpecker + tofu couvre le CD |
-| Object store S3 | SeaweedFS | Garage (ADR-003) | Garage deja deploye (phase 1.6), pas besoin de 2 object stores |
-| Trivy node-collector | Active (CIS benchmark nodes) | Desactive (ADR-004) | Incompatible Talos : filesystem read-only, pas de systemd/shell. Fix final : `operator.scanNodeCollectorLimit: 0` + `compliance.specs: []` (seul moyen effectif dans chart v0.32). Talos est durci par design (plus strict que CIS). Trivy continue scan images, configs K8s, RBAC, SBOM |
-| Gestion secrets | `secret.tfvars` manuels | `random_id` Terraform (ADR-005) | Zero intervention manuelle. Chaque deploy genere des secrets uniques via `random_id`. `.hex` pour tokens, `.b64_std` pour Pomerium (strict 32 bytes). Injectes via `templatefile()`, stockes dans state Terraform |
-| Collecte logs | loki.source.kubernetes (API) | loki.source.file (ADR-006) | API-based ne fonctionnait pas (aucun log ingere). File-based lit /var/log/pods directement via hostPath, pipeline CRI parsing extrait labels |
-| Metriques collecteur | Prometheus | Alloy DaemonSet (ADR-006) | Collecteur unifie metriques+logs. Relabeling global cluster=talos + instance=node name pour compatibilite dashboards grafana.com |
 
 ## Risques et mitigations
 
@@ -538,18 +514,18 @@ Phase 1.2 CI/CD & Registry (Gitea + Woodpecker + Harbor)          [DONE]
 ## Automatisation deploiement
 
 ```
-make scaleway-up (~12 minutes end-to-end)
+make k8s-up (~12 minutes end-to-end, parallelisme via make -j2)
 │
-├── 1. scaleway-apply      (~5 min) — Cluster Talos 3CP + 3W
-├── 2. wait-api             (~1 min) — Attente Kubernetes API ready
-├── 3. k8s-addons-apply     (~2 min) — Cilium, monitoring, Headlamp
-│       └── Headlamp s'ouvre automatiquement (token copie dans clipboard)
-│           └── L'utilisateur peut suivre les stacks restants en live
-├── 4. k8s-secrets-apply    (~1 min) — PKI + OpenBao x2 + Ory + cert-manager
+├── 1. k8s-cni-apply        (~30s)  — Cilium CNI
+├── 2. k8s-pki-apply        ─┬─ (~1 min) — PKI + OpenBao x2 + cert-manager
+│   k8s-monitoring-apply     ┘  (~2 min) — vm-k8s-stack + VictoriaLogs + Headlamp
+│                                          (parallele via make -j2)
+├── 3. openbao-init                 — Init + unseal OpenBao, Transit engine
+├── 4. k8s-identity-apply   (~1 min) — Kratos + Hydra + Pomerium
 │       └── Secrets auto-generes via random_id (zero tfvars)
-├── 5. k8s-security-apply   (~2 min) — Trivy + Tetragon + Kyverno + Cosign policy
-└── 6. k8s-storage-apply    (~2 min) — local-path + Garage + Velero + Harbor
-        └── Secrets Garage + Harbor auto-generes via random_id
+├── 5. k8s-security-apply   ─┬─ (~2 min) — Trivy + Tetragon + Kyverno + Cosign
+│   k8s-storage-apply        ┘  (~2 min) — local-path + Garage + Velero + Harbor
+│                                          (parallele via make -j2)
 
 Post-deploy (optionnel) :
 ├── make scaleway-oidc       — Configure apiServer OIDC (Hydra, talosctl patch)

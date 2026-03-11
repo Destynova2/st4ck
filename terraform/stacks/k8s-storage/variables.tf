@@ -1,24 +1,6 @@
-variable "kubernetes_host" {
-  description = "Kubernetes API server URL"
+variable "kubeconfig_path" {
+  description = "Path to kubeconfig file"
   type        = string
-}
-
-variable "kubernetes_client_certificate" {
-  description = "Base64-encoded client certificate"
-  type        = string
-  sensitive   = true
-}
-
-variable "kubernetes_client_key" {
-  description = "Base64-encoded client key"
-  type        = string
-  sensitive   = true
-}
-
-variable "kubernetes_ca_certificate" {
-  description = "Base64-encoded CA certificate"
-  type        = string
-  sensitive   = true
 }
 
 variable "local_path_provisioner_version" {
@@ -49,10 +31,4 @@ variable "harbor_version" {
   description = "Harbor Helm chart version"
   type        = string
   default     = "1.16.2"
-}
-
-variable "harbor_admin_password" {
-  description = "Harbor admin password"
-  type        = string
-  sensitive   = true
 }

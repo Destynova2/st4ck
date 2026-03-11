@@ -1,0 +1,15 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: hydra-tls
+  namespace: identity
+spec:
+  secretName: hydra-tls
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+  dnsNames:
+    - hydra-public
+    - hydra-public.identity
+    - hydra-public.identity.svc
+    - hydra-public.identity.svc.cluster.local

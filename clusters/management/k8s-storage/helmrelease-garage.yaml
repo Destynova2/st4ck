@@ -1,0 +1,30 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: garage
+  namespace: garage
+spec:
+  interval: 30m
+  dependsOn:
+    - name: local-path-provisioner
+      namespace: storage
+  chart:
+    spec:
+      chart: garage
+      version: "2.2.0"
+      sourceRef:
+        kind: GitRepository
+        name: management
+        namespace: flux-system
+      # Chart is vendored in configs/garage/chart/
+  install:
+    createNamespace: false
+  valuesFrom:
+    - kind: ConfigMap
+      name: garage-values
+      valuesKey: values.yaml
+      optional: false
+    - kind: Secret
+      name: garage-secrets
+      valuesKey: values.yaml
+      optional: false

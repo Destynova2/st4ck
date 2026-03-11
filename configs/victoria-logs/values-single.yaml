@@ -1,0 +1,17 @@
+# VictoriaLogs Single — log storage (replaces Loki)
+# Chart: victoria-logs-single from https://victoriametrics.github.io/helm-charts
+
+server:
+  fullnameOverride: "vlogs"
+  persistentVolume:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  extraArgs:
+    envflag.enable: "true"
+    envflag.prefix: VM_
+    retentionPeriod: 30d

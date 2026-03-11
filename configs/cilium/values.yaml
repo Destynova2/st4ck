@@ -45,9 +45,7 @@ hubble:
     serviceMonitor:
       enabled: false
     dashboards:
-      enabled: true
-      namespace: monitoring
-      label: grafana_dashboard
+      enabled: false
   relay:
     enabled: true
     prometheus:

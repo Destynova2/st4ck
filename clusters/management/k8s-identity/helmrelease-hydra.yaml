@@ -1,0 +1,28 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: hydra
+  namespace: identity
+spec:
+  interval: 30m
+  dependsOn:
+    - name: kratos
+  chart:
+    spec:
+      chart: hydra
+      version: "0.60.1"
+      sourceRef:
+        kind: HelmRepository
+        name: ory
+        namespace: flux-system
+  install:
+    createNamespace: false
+  valuesFrom:
+    - kind: ConfigMap
+      name: hydra-values
+      valuesKey: values.yaml
+      optional: false
+    - kind: Secret
+      name: hydra-secrets
+      valuesKey: values.yaml
+      optional: false

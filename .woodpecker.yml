@@ -10,28 +10,24 @@ variables:
       from_secret: scw_cluster_access_key
     SCW_SECRET_KEY:
       from_secret: scw_cluster_secret_key
-  - &cluster_secrets [scw_project_id, scw_cluster_access_key, scw_cluster_secret_key]
+    TF_HTTP_PASSWORD:
+      from_secret: vault_backend_token
+  - &cluster_secrets [scw_project_id, scw_cluster_access_key, scw_cluster_secret_key, vault_backend_token]
   - &deploy_only
     when:
       - event: push
         branch: main
 
-# Helper: extract k8s credentials from cluster outputs, then init+apply a stack.
-# Each deploy step cd's into the cluster env first to read outputs.
+# Helper: extract kubeconfig from cluster outputs, write to file, then init+apply a stack.
+# TF_HTTP_PASSWORD is set via environment (vault-backend token).
+# TF_HTTP_ADDRESS can be overridden for CI (default: localhost:8080).
   - &deploy_stack_commands |
-    apk add --no-cache kubectl >/dev/null 2>&1 || true
     cd terraform/envs/scaleway && tofu init -input=false >/dev/null
-    export K8S_HOST=$(tofu output -raw kubernetes_host)
-    export K8S_CERT=$(tofu output -raw kubernetes_client_certificate)
-    export K8S_KEY=$(tofu output -raw kubernetes_client_key)
-    export K8S_CA=$(tofu output -raw kubernetes_ca_certificate)
+    tofu output -raw kubeconfig > /tmp/kubeconfig
     cd ../../../terraform/stacks/${STACK}
     tofu init -input=false
     tofu apply -auto-approve \
-      -var="kubernetes_host=$${K8S_HOST}" \
-      -var="kubernetes_client_certificate=$${K8S_CERT}" \
-      -var="kubernetes_client_key=$${K8S_KEY}" \
-      -var="kubernetes_ca_certificate=$${K8S_CA}"
+      -var="kubeconfig_path=/tmp/kubeconfig"
 
 steps:
   # ─── Validate (PR + push) ─────────────────────────────────────────
@@ -43,10 +39,13 @@ steps:
           terraform/envs/scaleway/image \
           terraform/envs/scaleway \
           terraform/envs/scaleway/ci \
-          terraform/stacks/k8s-addons \
-          terraform/stacks/k8s-secrets \
+          terraform/stacks/k8s-cni \
+          terraform/stacks/k8s-monitoring \
+          terraform/stacks/k8s-pki \
+          terraform/stacks/k8s-identity \
           terraform/stacks/k8s-security \
-          terraform/stacks/k8s-storage; do
+          terraform/stacks/k8s-storage \
+          terraform/stacks/flux-bootstrap; do
           echo "--- validating $dir"
           cd "$dir" && tofu init -backend=false -input=false >/dev/null && tofu validate && cd /woodpecker/src
         done
@@ -100,31 +99,55 @@ steps:
     depends_on: [deploy-cluster]
     <<: *deploy_only
 
-  # ─── Stage 4: Cilium + monitoring (must be first) ─────────────────
-  - name: deploy-addons
+  # ─── Stage 4: Cilium CNI (must be first) ─────────────────────────
+  - name: deploy-cni
     image: *tofu_image
     environment:
       <<: *cluster_creds
-      STACK: k8s-addons
+      STACK: k8s-cni
     commands:
       - *deploy_stack_commands
     secrets: *cluster_secrets
     depends_on: [wait-api]
     <<: *deploy_only
 
-  # ─── Stage 5: PKI + secrets + identity ────────────────────────────
-  - name: deploy-secrets
+  # ─── Stage 5a: PKI + OpenBao + cert-manager (parallel with monitoring)
+  - name: deploy-pki
     image: *tofu_image
     environment:
       <<: *cluster_creds
-      STACK: k8s-secrets
+      STACK: k8s-pki
     commands:
       - *deploy_stack_commands
     secrets: *cluster_secrets
-    depends_on: [deploy-addons]
+    depends_on: [deploy-cni]
     <<: *deploy_only
 
-  # ─── Stage 6: Security (Tetragon + Kyverno + Trivy) ──────────────
+  # ─── Stage 5b: Monitoring (parallel with PKI) ─────────────────────
+  - name: deploy-monitoring
+    image: *tofu_image
+    environment:
+      <<: *cluster_creds
+      STACK: k8s-monitoring
+    commands:
+      - *deploy_stack_commands
+    secrets: *cluster_secrets
+    depends_on: [deploy-cni]
+    <<: *deploy_only
+
+  # ─── Stage 6: Identity (Ory Stack, after PKI) ─────────────────────
+  - name: deploy-identity
+    image: *tofu_image
+    environment:
+      <<: *cluster_creds
+      STACK: k8s-identity
+    commands:
+      - *deploy_stack_commands
+    secrets: *cluster_secrets
+    depends_on: [deploy-pki]
+    <<: *deploy_only
+
+  # ─── Stage 7a: Security (parallel with storage) ───────────────────
   - name: deploy-security
     image: *tofu_image
     environment:
@@ -133,31 +156,29 @@ steps:
     commands:
       - *deploy_stack_commands
     secrets: *cluster_secrets
-    depends_on: [deploy-addons]
+    depends_on: [deploy-identity]
     <<: *deploy_only
 
-  # ─── Stage 7: Storage (Garage + Velero + Harbor) ──────────────────
+  # ─── Stage 7b: Storage (parallel with security) ───────────────────
   - name: deploy-storage
     image: *tofu_image
-    environment: *cluster_creds
+    environment:
+      <<: *cluster_creds
+      STACK: k8s-storage
     commands:
-      - |
-        apk add --no-cache kubectl >/dev/null 2>&1 || true
-        cd terraform/envs/scaleway && tofu init -input=false >/dev/null
-        export K8S_HOST=$(tofu output -raw kubernetes_host)
-        export K8S_CERT=$(tofu output -raw kubernetes_client_certificate)
-        export K8S_KEY=$(tofu output -raw kubernetes_client_key)
-        export K8S_CA=$(tofu output -raw kubernetes_ca_certificate)
-        cd ../../../terraform/stacks/k8s-secrets && tofu init -input=false >/dev/null
-        export HARBOR_PW=$(tofu output -raw harbor_admin_password)
-        cd ../k8s-storage
-        tofu init -input=false
-        tofu apply -auto-approve \
-          -var="kubernetes_host=$${K8S_HOST}" \
-          -var="kubernetes_client_certificate=$${K8S_CERT}" \
-          -var="kubernetes_client_key=$${K8S_KEY}" \
-          -var="kubernetes_ca_certificate=$${K8S_CA}" \
-          -var="harbor_admin_password=$${HARBOR_PW}"
+      - *deploy_stack_commands
     secrets: *cluster_secrets
-    depends_on: [deploy-secrets]
+    depends_on: [deploy-identity]
+    <<: *deploy_only
+
+  # ─── Stage 8: Flux bootstrap (after all stacks) ───────────────────
+  - name: deploy-flux
+    image: *tofu_image
+    environment:
+      <<: *cluster_creds
+      STACK: flux-bootstrap
+    commands:
+      - *deploy_stack_commands
+    secrets: *cluster_secrets
+    depends_on: [deploy-security, deploy-storage]
     <<: *deploy_only
