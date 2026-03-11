@@ -1,0 +1,53 @@
+# Talos Linux Multi-Environment Deployment Platform
+
+> Sovereign air-gapped Kubernetes platform built on Talos Linux v1.12. Deploys a management cluster with full observability, PKI, identity (OIDC), security scanning, S3 storage, and GitOps across Scaleway, libvirt/KVM, Outscale, and VMware airgap environments. Uses OpenTofu for infrastructure, Flux v2 for day-2 GitOps, and OpenBao for secrets and state storage.
+
+## Project Context
+- [CLAUDE.md](CLAUDE.md): Comprehensive project context (architecture, commands, debugging)
+- [AGENTS.md](AGENTS.md): AI agent context file (stack, patterns, gotchas)
+
+## Architecture & Decisions
+- [Roadmap](docs/roadmap.md): 3-gate implementation roadmap with dependency graph
+- [Technology Stack](docs/techno.md): Complete component inventory with versions
+- [ADR-001: Cilium CNI](docs/adr/001-cilium-cni.md): Why Cilium over Flannel
+- [ADR-002: Block Storage](docs/adr/002-block-storage-evaluation.md): Why no distributed block storage
+- [ADR-003: Garage S3](docs/adr/003-garage-sole-s3.md): Garage as sole S3 provider
+- [ADR-004: Woodpecker CI/CD](docs/adr/004-woodpecker-cicd.md): Why Woodpecker over FluxCD
+- [ADR-007: OpenBao](docs/adr/007-openbao-secrets-manager.md): OpenBao as secrets manager
+- [ADR-009: State Backend](docs/adr/009-state-backend-openbao.md): HTTP state backend via OpenBao
+- [ADR-010: VictoriaMetrics](docs/adr/010-victoriametrics-observability.md): Observability stack choice
+
+## Documentation
+- [Getting Started](docs/tutorials/getting-started.md): Prerequisites and first deployment
+- [VMware Airgap Guide](docs/vmware-deploy-instructions.txt): Air-gapped VMware deployment
+
+## Infrastructure
+- [Makefile](Makefile): Root orchestration with all deployment targets
+- [vars.mk](vars.mk): Version pinning (Talos, Kubernetes, Cilium)
+- [Talos Cluster Module](terraform/modules/talos-cluster/main.tf): Shared machine secrets and configs
+- [Scaleway Environment](terraform/envs/scaleway/main.tf): Scaleway cluster infrastructure
+- [CI Pipeline](.woodpecker.yml): Woodpecker CI pipeline (8 stages)
+
+## Kubernetes Stacks
+- [k8s-cni](terraform/stacks/k8s-cni/main.tf): Cilium CNI deployment
+- [k8s-pki](terraform/stacks/k8s-pki/main.tf): OpenBao + cert-manager + CA secrets
+- [k8s-monitoring](terraform/stacks/k8s-monitoring/): VictoriaMetrics + VictoriaLogs + Headlamp
+- [k8s-identity](terraform/stacks/k8s-identity/): Kratos + Hydra + Pomerium
+- [k8s-security](terraform/stacks/k8s-security/): Trivy + Tetragon + Kyverno
+- [k8s-storage](terraform/stacks/k8s-storage/): local-path + Garage + Velero + Harbor
+- [flux-bootstrap](terraform/stacks/flux-bootstrap/): Flux v2 GitOps
+
+## GitOps Manifests
+- [Flux Root Kustomization](clusters/management/kustomization.yaml): Day-2 reconciliation entry point
+
+## Scripts
+- [KMS Bootstrap](scripts/openbao-kms-bootstrap.sh): PKI CA chain + vault-backend setup
+- [OpenBao Init](scripts/openbao-cluster-init.sh): In-cluster OpenBao initialization
+- [OIDC Setup](scripts/setup-oidc.sh): Kubernetes apiServer OIDC configuration
+- [Velero Test](scripts/velero-test.sh): Backup/restore validation
+
+## Configuration
+- [Cilium Values](configs/cilium/values.yaml): Cilium Helm values
+- [Garage Values](configs/garage/values.yaml): Garage S3 Helm values
+- [Harbor Values](configs/harbor/values.yaml): Harbor registry Helm values
+- [OpenBao KMS Pod](configs/openbao/kms-pod.yaml): Local KMS pod manifest
