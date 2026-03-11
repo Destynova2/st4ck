@@ -88,7 +88,7 @@ This runs the full pipeline:
 1. `scaleway-apply` -- Creates VMs, load balancer, private network
 2. `scaleway-wait` -- Waits for Kubernetes API server (up to 5 minutes)
 3. `scaleway-kubeconfig` -- Writes kubeconfig to `~/.kube/talos-scaleway`
-4. `k8s-up` -- Deploys all 7 stacks in correct order (~12 minutes)
+4. `k8s-up` -- Deploys all 8 stacks sequentially (~15 minutes)
 
 ### Option B: Local (libvirt/KVM)
 

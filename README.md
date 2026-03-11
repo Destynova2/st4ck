@@ -12,7 +12,7 @@ Automates the deployment of a hardened Kubernetes platform across multiple envir
 - eBPF networking: Cilium replaces kube-proxy, provides L7 policies and mTLS
 - PKI: 3-tier CA hierarchy with cert-manager ClusterIssuer
 - Zero-trust identity: Ory Kratos + Hydra + Pomerium (OIDC/SSO)
-- Secrets: OpenBao (2 instances) + External Secrets Operator, zero secrets in Git
+- Secrets: OpenBao (2 instances), auto-generated via `random_id` Terraform, zero secrets in Git
 - Monitoring: VictoriaMetrics + VictoriaLogs + Grafana + Headlamp
 - Security: Trivy + Tetragon + Kyverno + Cosign image verification
 - Storage: Garage S3 + Velero backup + Harbor registry
@@ -48,15 +48,18 @@ make scaleway-harbor    # Container registry
 
 ## Architecture
 
-Two-phase deployment: OpenTofu bootstraps infrastructure and 7 Kubernetes stacks in dependency order, then Flux v2 takes over day-2 GitOps reconciliation.
+Two-phase deployment: OpenTofu bootstraps infrastructure and 8 Kubernetes stacks in strict sequential order, then Flux v2 takes over day-2 GitOps reconciliation.
 
-```
-kms-bootstrap (local)  -->  env-apply  -->  k8s stacks (7)  -->  Flux day-2
-  PKI CA chain                cluster         in order            GitOps
-  State backend               kubeconfig      ~12 min             self-healing
+```mermaid
+graph LR
+    KMS[kms-bootstrap<br/>local Podman] --> ENV[env-apply<br/>cluster 6 noeuds]
+    ENV --> STACKS[8 stacks K8s<br/>sequentiel ~15min]
+    STACKS --> FLUX[Flux day-2<br/>GitOps]
 ```
 
 All Terraform states stored in OpenBao KV v2 via vault-backend. No cloud state backend dependency.
+
+See [Bootstrap mechanics](docs/explanation/bootstrap.md) for the chicken-and-egg resolution strategies.
 
 ## Documentation
 
@@ -66,6 +69,7 @@ All Terraform states stored in OpenBao KV v2 via vault-backend. No cloud state b
 | Deploy to a specific environment | [How to Deploy](docs/how-to/deploy.md) |
 | All Makefile targets and options | [Command Reference](docs/reference/commands.md) |
 | Architecture deep dive | [Architecture](docs/explanation/architecture.md) |
+| Bootstrap chicken-and-egg problems | [Bootstrap Mechanics](docs/explanation/bootstrap.md) |
 | Troubleshoot a problem | [Troubleshooting](docs/how-to/troubleshoot.md) |
 | Full component inventory | [Technology Stack](docs/techno.md) |
 | Architecture decisions (ADRs) | [docs/adr/](docs/adr/) |

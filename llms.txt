@@ -28,6 +28,9 @@
 - [ADR-015: WireGuard](docs/adr/015-wireguard-ipv6-deferred.md): WireGuard + IPv6 deferred
 - [ADR-016: Envoy DLP](docs/adr/016-envoy-dlp-deferred.md): Data loss prevention deferred
 - [ADR-017: CozyStack](docs/adr/017-cozystack-paas-gate3.md): PaaS layer for Gate 3
+- [ADR-018: Tetragon](docs/adr/018-tetragon-over-falco.md): Why Tetragon over Falco
+- [ADR-019: Matchbox](docs/adr/019-matchbox-bare-metal.md): Bare metal/degraded VM provisioning
+- [ADR-020: Kamaji](docs/adr/020-kamaji-kaas.md): KaaS alternative to Cozystack
 
 ## Documentation (Diataxis)
 - [Landing Page](docs/index.md): What this is and where to go
@@ -35,7 +38,8 @@
 - [How to Deploy](docs/how-to/deploy.md): Deploy to any supported environment
 - [How to Troubleshoot](docs/how-to/troubleshoot.md): Symptom/cause/fix table + health checks
 - [Command Reference](docs/reference/commands.md): All Makefile targets, variables, env vars
-- [Architecture](docs/explanation/architecture.md): Two-phase model, state, secrets, PKI, CAPI
+- [Architecture](docs/explanation/architecture.md): Two-phase model, state, secrets, PKI, CAPI (Mermaid diagrams)
+- [Bootstrap Mechanics](docs/explanation/bootstrap.md): 5 chicken-and-egg problems and their solutions (Mermaid diagrams)
 - [VMware Airgap Guide](docs/vmware-deploy-instructions.txt): Air-gapped VMware deployment
 
 ## Infrastructure

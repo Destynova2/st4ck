@@ -49,7 +49,7 @@ Each stack has `-init`, `-apply`, and `-destroy` targets:
 | Command | Description |
 |---------|-------------|
 | `make k8s-init` | `tofu init` all K8s stacks |
-| `make k8s-up` | Deploy all stacks in correct order with parallelism |
+| `make k8s-up` | Deploy all 8 stacks sequentially (strict dependency order) |
 | `make k8s-down` | Destroy all stacks in reverse order |
 
 ## Scaleway

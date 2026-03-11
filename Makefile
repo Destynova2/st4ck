@@ -49,8 +49,8 @@ help: ## Show this help
 #
 # Dependency graph:
 #   Prerequisites: kms-bootstrap (local, once)
-#   Create:  cni (Cilium) → {pki, monitoring} in parallel → openbao-init → identity → {security, storage}
-#   Destroy: {storage, security} → identity → {pki, monitoring} → cni (Cilium last)
+#   Create:  cni → pki → monitoring → openbao-init → identity → security → storage → flux
+#   Destroy: storage → security → identity → monitoring → pki → cni
 # ═══════════════════════════════════════════════════════════════════════
 
 # ─── k8s-cni (Cilium — fast, ~30s) ───────────────────────────────────
@@ -70,7 +70,7 @@ k8s-cni-destroy:
 		-var="kubeconfig_path=$(KC_FILE)"
 
 # ─── k8s-monitoring (vm-k8s-stack + VictoriaLogs + Headlamp) ─────────
-# Requires: Cilium (cni). Runs in parallel with k8s-pki.
+# Requires: Cilium (cni) + k8s-pki (cert-manager for TLS).
 
 .PHONY: k8s-monitoring-init k8s-monitoring-apply k8s-monitoring-destroy
 
@@ -87,7 +87,6 @@ k8s-monitoring-destroy:
 
 # ─── k8s-pki (OpenBao + cert-manager + CA secrets) ────────────────────
 # Requires: Cilium (cni) + kms-bootstrap (local, once)
-# Runs in parallel with k8s-monitoring.
 
 .PHONY: k8s-pki-init k8s-pki-apply k8s-pki-destroy
 
@@ -176,11 +175,13 @@ flux-bootstrap-destroy:
 
 k8s-init: k8s-cni-init k8s-monitoring-init k8s-pki-init k8s-identity-init k8s-security-init k8s-storage-init flux-bootstrap-init ## terraform init all k8s stacks
 
-k8s-up: k8s-cni-apply ## Deploy all k8s stacks (correct order)
-	$(MAKE) -j2 k8s-pki-apply k8s-monitoring-apply
+k8s-up: k8s-cni-apply ## Deploy all k8s stacks (sequential — parallel caused PVC/webhook races)
+	$(MAKE) k8s-pki-apply
+	$(MAKE) k8s-monitoring-apply
 	$(MAKE) openbao-init
 	$(MAKE) k8s-identity-apply
-	$(MAKE) -j2 k8s-security-apply k8s-storage-apply
+	$(MAKE) k8s-security-apply
+	$(MAKE) k8s-storage-apply
 	$(MAKE) flux-bootstrap-apply
 
 k8s-down: ## Destroy all k8s stacks (correct order)
@@ -190,7 +191,8 @@ k8s-down: ## Destroy all k8s stacks (correct order)
 	-$(MAKE) k8s-storage-destroy
 	-$(MAKE) k8s-security-destroy
 	-$(MAKE) k8s-identity-destroy
-	-$(MAKE) -j2 k8s-pki-destroy k8s-monitoring-destroy
+	-$(MAKE) k8s-monitoring-destroy
+	-$(MAKE) k8s-pki-destroy
 	-$(MAKE) k8s-cni-destroy
 	@for stack in k8s-cni k8s-monitoring k8s-pki k8s-identity k8s-security k8s-storage; do \
 		rm -f terraform/stacks/$$stack/terraform.tfstate.backup; \

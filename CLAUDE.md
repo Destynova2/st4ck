@@ -54,8 +54,8 @@ talos/
   in OpenBao with locking + versioning. No local tfstate files.
 - **Day-2 management**: Flux reconciles all stacks after initial bootstrap.
   OpenTofu handles first deploy, then hands off to Flux via `tofu state rm`.
-- **Secrets**: ESO (External Secrets Operator) syncs secrets from OpenBao KV v2
-  to K8s Secrets. No SOPS, no secrets in Git.
+- **Secrets**: auto-generated via `random_id` Terraform, stored in encrypted state.
+  No SOPS, no secrets in Git.
 - **VMware airgap**: no Terraform. Shell scripts build OVA + generate per-node configs.
 
 ## Key Conventions
@@ -96,7 +96,7 @@ make scaleway-down                  # Destroy all (correct order)
 make kms-stop                       # Stop OpenBao KMS + vault-backend
 ```
 
-## Deployment Pipeline
+## Deployment Pipeline (sequential)
 
 ```
 kms-bootstrap (once, podman)
@@ -107,28 +107,30 @@ kms-bootstrap (once, podman)
 env-apply (scaleway/local/outscale)
     │ → kubeconfig → ~/.kube/talos-$(ENV)
     │
-k8s-cni         ← Cilium MUST be first (~30s)
+k8s-cni          ← Cilium MUST be first (~30s)
     │
-    ├──── parallel (make -j2) ────┐
-    │                             │
-k8s-pki                       k8s-monitoring
-    │                             │
-openbao-init                      │
-    │                             │
-k8s-identity                      │
-    │                             │
-    ├──── parallel (make -j2) ────┤
-    │                             │
-k8s-security                  k8s-storage
-    │                             │
-    └──── flux-bootstrap ─────────┘
-              │
-              ▼
-         Flux day-2 (GitOps reconciliation)
-         ├── ESO → OpenBao secrets → K8s Secrets
-         ├── HelmReleases (drift detection, self-healing)
-         └── Kustomize overlays (per-environment)
+k8s-pki          ← OpenBao + cert-manager (~1min)
+    │
+k8s-monitoring   ← VictoriaMetrics + Headlamp (~2min)
+    │
+openbao-init     ← Transit + SSH CA
+    │
+k8s-identity     ← Kratos + Hydra + Pomerium (~1min)
+    │
+k8s-security     ← Trivy + Tetragon + Kyverno (~2min)
+    │
+k8s-storage      ← Garage + Velero + Harbor (~2min)
+    │
+flux-bootstrap   ← Flux SSH + GitRepository (~30s)
+    │
+    ▼
+Flux day-2 (GitOps reconciliation)
+├── HelmReleases (drift detection, self-healing)
+└── Kustomize overlays (per-environment)
 ```
+
+Note: pipeline was initially parallel (make -j2) but race conditions
+(VMSingle PVC Pending, Kyverno webhooks) imposed sequential mode.
 
 ## Stack Boundaries
 

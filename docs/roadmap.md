@@ -496,6 +496,8 @@ Phase 1.2 CI/CD & Registry (Gitea + Woodpecker + Harbor)          [DONE]
 | DLP egress | Envoy ext_proc | Differe (ADR-016) | Pertinent quand IA deployee Gate 2+ |
 | PaaS self-service | — | Cozystack (ADR-017) | Planifie Gate 3, Phase 3.5 |
 | Runtime security | Falco | Tetragon (ADR-018) | eBPF natif Cilium, un seul plan eBPF, enforcement temps reel, fix Talos tracefs simple |
+| Provisioning bare metal | Scripts manuels | Matchbox (ADR-019) | PXE zero-touch, scale >10 noeuds, VM degradees sans API vSphere |
+| KaaS multi-tenant | — | Kamaji (ADR-020) | Control planes mutualises, overhead ~0, alternative legere a Cozystack |
 | Identity/SSO | Keycloak | Ory Stack (Kratos+Hydra+Pomerium) | Plus leger, cloud-native, modulaire |
 | Policy engine | Pod Security Standards | Kyverno | Plus flexible, CRD-based, admission + mutation |
 
@@ -514,18 +516,17 @@ Phase 1.2 CI/CD & Registry (Gitea + Woodpecker + Harbor)          [DONE]
 ## Automatisation deploiement
 
 ```
-make k8s-up (~12 minutes end-to-end, parallelisme via make -j2)
+make k8s-up (~15 minutes end-to-end, sequentiel strict)
 │
 ├── 1. k8s-cni-apply        (~30s)  — Cilium CNI
-├── 2. k8s-pki-apply        ─┬─ (~1 min) — PKI + OpenBao x2 + cert-manager
-│   k8s-monitoring-apply     ┘  (~2 min) — vm-k8s-stack + VictoriaLogs + Headlamp
-│                                          (parallele via make -j2)
-├── 3. openbao-init                 — Init + unseal OpenBao, Transit engine
-├── 4. k8s-identity-apply   (~1 min) — Kratos + Hydra + Pomerium
+├── 2. k8s-pki-apply        (~1 min) — PKI + OpenBao x2 + cert-manager
+├── 3. k8s-monitoring-apply (~2 min) — vm-k8s-stack + VictoriaLogs + Headlamp
+├── 4. openbao-init                  — Init + unseal OpenBao, Transit engine
+├── 5. k8s-identity-apply   (~1 min) — Kratos + Hydra + Pomerium
 │       └── Secrets auto-generes via random_id (zero tfvars)
-├── 5. k8s-security-apply   ─┬─ (~2 min) — Trivy + Tetragon + Kyverno + Cosign
-│   k8s-storage-apply        ┘  (~2 min) — local-path + Garage + Velero + Harbor
-│                                          (parallele via make -j2)
+├── 6. k8s-security-apply   (~2 min) — Trivy + Tetragon + Kyverno + Cosign
+├── 7. k8s-storage-apply    (~2 min) — local-path + Garage + Velero + Harbor
+└── 8. flux-bootstrap-apply (~30s)   — Flux SSH + GitRepository
 
 Post-deploy (optionnel) :
 ├── make scaleway-oidc       — Configure apiServer OIDC (Hydra, talosctl patch)
@@ -534,4 +535,9 @@ Post-deploy (optionnel) :
 └── make scaleway-grafana    — Ouvre Grafana UI
 ```
 
-*Document de reference — Mis a jour 2026-03-10 — Gate 1 : 10/12 criteres valides*
+Note : le pipeline etait initialement parallele (make -j2 pour pki+monitoring et
+security+storage) mais les race conditions (VMSingle PVC Pending sans StorageClass,
+Kyverno webhooks bloquant des pods en cours de creation) rendaient le deploy fragile.
+Le mode sequentiel ajoute ~3 minutes mais garantit un deploy fiable a chaque run.
+
+*Document de reference — Mis a jour 2026-03-11 — Gate 1 : 10/12 criteres valides*

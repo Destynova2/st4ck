@@ -14,13 +14,11 @@ Deploying a hardened Kubernetes platform in defense/sovereign contexts requires 
 
 ## How it works
 
-```
-kms-bootstrap (local podman)     OpenTofu deploys 7 stacks    Flux takes over day-2
-  PKI CA chain                     in dependency order           GitOps reconciliation
-  State backend (OpenBao)          ~12 minutes end-to-end       HelmReleases + Kustomize
-       |                                  |                            |
-       v                                  v                            v
-   [Prerequisites]  -->  [Infrastructure + K8s Stacks]  -->  [Self-healing GitOps]
+```mermaid
+graph LR
+    KMS[kms-bootstrap<br/>PKI + state backend] --> INFRA[Infrastructure<br/>cluster 6 noeuds]
+    INFRA --> STACKS[8 stacks K8s<br/>sequentiel ~15min]
+    STACKS --> FLUX[Flux day-2<br/>GitOps self-healing]
 ```
 
 ## Supported environments
@@ -56,6 +54,7 @@ See [Getting Started](tutorials/getting-started.md) for a detailed walkthrough.
 | First deployment, step by step | [Getting Started](tutorials/getting-started.md) |
 | Deploy to a specific environment | [How to Deploy](how-to/deploy.md) |
 | Understand the architecture | [Architecture](explanation/architecture.md) |
+| Bootstrap chicken-and-egg | [Bootstrap Mechanics](explanation/bootstrap.md) |
 | All Makefile targets and config options | [Command Reference](reference/commands.md) |
 | Troubleshoot a problem | [Troubleshooting](how-to/troubleshoot.md) |
 | Why a specific technology was chosen | [ADRs](adr/) |
