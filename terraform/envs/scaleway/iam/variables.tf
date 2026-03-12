@@ -32,3 +32,9 @@ variable "prefix" {
   type        = string
   default     = "talos"
 }
+
+variable "ssh_public_key_path" {
+  description = "Path to SSH public key for VM access"
+  type        = string
+  default     = "~/.ssh/id_rsa.pub"
+}

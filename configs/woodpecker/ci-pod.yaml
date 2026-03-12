@@ -10,9 +10,9 @@ spec:
     - name: gitea
       image: docker.io/gitea/gitea:1
       ports:
-        - containerPort: 3000
+        - containerPort: 3001
           hostPort: 3000
-        - containerPort: 22
+        - containerPort: 2222
           hostPort: 2222
       volumeMounts:
         - name: gitea-data
@@ -22,19 +22,25 @@ spec:
           value: "PLACEHOLDER_GITEA_URL"
         - name: GITEA__server__DOMAIN
           value: "PLACEHOLDER_DOMAIN"
+        - name: GITEA__server__HTTP_PORT
+          value: "3001"
         - name: GITEA__server__SSH_PORT
           value: "2222"
         - name: GITEA__server__SSH_LISTEN_PORT
-          value: "22"
+          value: "2222"
         - name: GITEA__webhook__ALLOWED_HOST_LIST
           value: "private"
+        - name: GITEA__security__INSTALL_LOCK
+          value: "true"
+        - name: GITEA__database__DB_TYPE
+          value: "sqlite3"
 
     - name: woodpecker-server
-      image: docker.io/woodpeckerci/woodpecker-server:v2
+      image: docker.io/woodpeckerci/woodpecker-server:latest
       ports:
-        - containerPort: 8000
+        - containerPort: 8001
           hostPort: 8000
-        - containerPort: 9000
+        - containerPort: 9001
           hostPort: 9000
       volumeMounts:
         - name: woodpecker-data
@@ -42,6 +48,10 @@ spec:
       env:
         - name: WOODPECKER_HOST
           value: "PLACEHOLDER_WP_HOST"
+        - name: WOODPECKER_SERVER_ADDR
+          value: ":8001"
+        - name: WOODPECKER_GRPC_ADDR
+          value: ":9001"
         - name: WOODPECKER_OPEN
           value: "true"
         - name: WOODPECKER_ADMIN
@@ -58,7 +68,7 @@ spec:
           value: "PLACEHOLDER_AGENT_SECRET"
 
     - name: woodpecker-agent
-      image: docker.io/woodpeckerci/woodpecker-agent:v2
+      image: docker.io/woodpeckerci/woodpecker-agent:latest
       securityContext:
         privileged: true
       volumeMounts:
@@ -66,11 +76,15 @@ spec:
           mountPath: /var/run/docker.sock
       env:
         - name: WOODPECKER_SERVER
-          value: "localhost:9000"
+          value: "localhost:9001"
         - name: WOODPECKER_BACKEND
           value: "docker"
         - name: WOODPECKER_AGENT_SECRET
           value: "PLACEHOLDER_AGENT_SECRET"
+        - name: WOODPECKER_BACKEND_DOCKER_NETWORK
+          value: "host"
+        - name: WOODPECKER_BACKEND_DOCKER_VOLUMES
+          value: "/opt/talos/kms-output:/woodpecker/src/kms-output"
 
   volumes:
     - name: gitea-data

@@ -118,7 +118,7 @@ spec:
           mountPath: /bao/data
 
     - name: vault-backend
-      image: gherynos/vault-backend:latest
+      image: docker.io/gherynos/vault-backend:latest
       ports:
         - containerPort: 8080
           hostPort: 8080

@@ -54,11 +54,16 @@ wait_for() {
   return 1
 }
 
-# ─── 1. Start the pod ──────────────────────────────────────────────────
+# ─── 1. Start the pod (if not already running via Quadlet) ────────────
 
 echo "=== Starting OpenBao KMS cluster (3 nodes) ==="
 if ! podman pod exists openbao-kms 2>/dev/null; then
-  podman play kube configs/openbao/kms-pod.yaml
+  # Find kms-pod.yaml relative to this script or in common locations
+  KMS_YAML="${KMS_POD_YAML:-configs/openbao/kms-pod.yaml}"
+  if [ ! -f "$KMS_YAML" ]; then
+    KMS_YAML="$(dirname "$0")/../configs/openbao/kms-pod.yaml"
+  fi
+  podman play kube "$KMS_YAML"
 fi
 wait_for "$NODE0"
 

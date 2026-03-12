@@ -38,7 +38,7 @@ variable "root_disk_size" {
 variable "git_repo_url" {
   description = "Public Git repository URL to clone and mirror into Gitea"
   type        = string
-  default     = "https://github.com/yourorg/talos.git"
+  default     = "https://github.com/Destynova2/talos.git"
 }
 
 # ─── Gitea ────────────────────────────────────────────────────────────
@@ -53,6 +53,20 @@ variable "gitea_admin_email" {
   description = "Gitea admin email"
   type        = string
   default     = "admin@talos.local"
+}
+
+# ─── SSH ─────────────────────────────────────────────────────────────
+
+variable "ssh_public_key_path" {
+  description = "Path to SSH public key for VM access"
+  type        = string
+  default     = "~/.ssh/id_rsa.pub"
+}
+
+variable "ssh_private_key_path" {
+  description = "Path to SSH private key for provisioners"
+  type        = string
+  default     = "~/.ssh/id_rsa"
 }
 
 # ─── Scaleway credentials for Woodpecker secrets ─────────────────────

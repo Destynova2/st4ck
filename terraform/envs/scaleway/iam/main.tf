@@ -109,6 +109,7 @@ resource "scaleway_iam_policy" "ci" {
     project_ids          = [scaleway_account_project.talos.id]
     permission_set_names = [
       "InstancesFullAccess",
+      "BlockStorageFullAccess",
       "VPCFullAccess",
       "ObjectStorageFullAccess",
     ]
@@ -119,6 +120,14 @@ resource "scaleway_iam_api_key" "ci" {
   application_id     = scaleway_iam_application.ci.id
   description        = "Terraform - CI VM"
   default_project_id = scaleway_account_project.talos.id
+}
+
+# ─── SSH Key (org-level, used by all VMs) ──────────────────────────────
+
+resource "scaleway_account_ssh_key" "deploy" {
+  name       = "${var.prefix}-deploy"
+  public_key = trimspace(file(pathexpand(var.ssh_public_key_path)))
+  project_id = scaleway_account_project.talos.id
 }
 
 # ─── Velero Backup Bucket ──────────────────────────────────────────────

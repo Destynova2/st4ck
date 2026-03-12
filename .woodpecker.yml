@@ -5,23 +5,16 @@ when:
 variables:
   - &tofu_image ghcr.io/opentofu/opentofu:1.9
   - &kubectl_image bitnami/kubectl:1.35
-  - &cluster_creds
-    SCW_ACCESS_KEY:
-      from_secret: scw_cluster_access_key
-    SCW_SECRET_KEY:
-      from_secret: scw_cluster_secret_key
-    TF_HTTP_PASSWORD:
-      from_secret: vault_backend_token
-  - &cluster_secrets [scw_project_id, scw_cluster_access_key, scw_cluster_secret_key, vault_backend_token]
+  - &secrets_dir /woodpecker/src/kms-output
   - &deploy_only
     when:
       - event: push
         branch: main
 
-# Helper: extract kubeconfig from cluster outputs, write to file, then init+apply a stack.
-# TF_HTTP_PASSWORD is set via environment (vault-backend token).
-# TF_HTTP_ADDRESS can be overridden for CI (default: localhost:8080).
+  # Helper: load cluster secrets, extract kubeconfig, then init+apply a stack.
+  # Secrets are read from files mounted via WOODPECKER_BACKEND_DOCKER_VOLUMES.
   - &deploy_stack_commands |
+    . /woodpecker/src/kms-output/load-cluster-env.sh
     cd terraform/envs/scaleway && tofu init -input=false >/dev/null
     tofu output -raw kubeconfig > /tmp/kubeconfig
     cd ../../../terraform/stacks/${STACK}
@@ -53,39 +46,33 @@ steps:
   # ─── Build image (push only) ──────────────────────────────────────
   - name: build-image
     image: *tofu_image
-    environment:
-      SCW_ACCESS_KEY:
-        from_secret: scw_image_access_key
-      SCW_SECRET_KEY:
-        from_secret: scw_image_secret_key
     commands:
+      - . /woodpecker/src/kms-output/load-image-env.sh
       - cd terraform/envs/scaleway/image
       - tofu init -input=false
       - tofu apply -auto-approve
         -var="project_id=$${SCW_PROJECT_ID}"
         -var="scw_access_key=$${SCW_ACCESS_KEY}"
         -var="scw_secret_key=$${SCW_SECRET_KEY}"
-    secrets: [scw_project_id, scw_image_access_key, scw_image_secret_key]
     <<: *deploy_only
 
   # ─── Deploy cluster ───────────────────────────────────────────────
   - name: deploy-cluster
     image: *tofu_image
-    environment: *cluster_creds
     commands:
+      - . /woodpecker/src/kms-output/load-cluster-env.sh
       - cd terraform/envs/scaleway
       - tofu init -input=false
       - tofu apply -auto-approve
         -var="project_id=$${SCW_PROJECT_ID}"
-    secrets: *cluster_secrets
     depends_on: [build-image]
     <<: *deploy_only
 
   # ─── Wait for API server ──────────────────────────────────────────
   - name: wait-api
     image: *tofu_image
-    environment: *cluster_creds
     commands:
+      - . /woodpecker/src/kms-output/load-cluster-env.sh
       - apk add --no-cache kubectl >/dev/null 2>&1 || true
       - cd terraform/envs/scaleway && tofu init -input=false >/dev/null
       - |
@@ -95,7 +82,6 @@ steps:
           echo "  attempt $i/30..." && sleep 10
         done
         echo "API server ready."
-    secrets: *cluster_secrets
     depends_on: [deploy-cluster]
     <<: *deploy_only
 
@@ -103,82 +89,68 @@ steps:
   - name: deploy-cni
     image: *tofu_image
     environment:
-      <<: *cluster_creds
       STACK: k8s-cni
     commands:
       - *deploy_stack_commands
-    secrets: *cluster_secrets
     depends_on: [wait-api]
     <<: *deploy_only
 
-  # ─── Stage 5a: PKI + OpenBao + cert-manager (parallel with monitoring)
+  # ─── Stage 5: PKI + OpenBao + cert-manager ───────────────────────
   - name: deploy-pki
     image: *tofu_image
     environment:
-      <<: *cluster_creds
       STACK: k8s-pki
     commands:
       - *deploy_stack_commands
-    secrets: *cluster_secrets
     depends_on: [deploy-cni]
     <<: *deploy_only
 
-  # ─── Stage 5b: Monitoring (parallel with PKI) ─────────────────────
+  # ─── Stage 6: Monitoring (after PKI — needs cert-manager) ─────────
   - name: deploy-monitoring
     image: *tofu_image
     environment:
-      <<: *cluster_creds
       STACK: k8s-monitoring
     commands:
       - *deploy_stack_commands
-    secrets: *cluster_secrets
-    depends_on: [deploy-cni]
-    <<: *deploy_only
-
-  # ─── Stage 6: Identity (Ory Stack, after PKI) ─────────────────────
-  - name: deploy-identity
-    image: *tofu_image
-    environment:
-      <<: *cluster_creds
-      STACK: k8s-identity
-    commands:
-      - *deploy_stack_commands
-    secrets: *cluster_secrets
     depends_on: [deploy-pki]
     <<: *deploy_only
 
-  # ─── Stage 7a: Security (parallel with storage) ───────────────────
+  # ─── Stage 7: Identity (Ory Stack, after monitoring) ───────────────
+  - name: deploy-identity
+    image: *tofu_image
+    environment:
+      STACK: k8s-identity
+    commands:
+      - *deploy_stack_commands
+    depends_on: [deploy-monitoring]
+    <<: *deploy_only
+
+  # ─── Stage 8: Security (after identity) ────────────────────────────
   - name: deploy-security
     image: *tofu_image
     environment:
-      <<: *cluster_creds
       STACK: k8s-security
     commands:
       - *deploy_stack_commands
-    secrets: *cluster_secrets
     depends_on: [deploy-identity]
     <<: *deploy_only
 
-  # ─── Stage 7b: Storage (parallel with security) ───────────────────
+  # ─── Stage 9: Storage (after security) ─────────────────────────────
   - name: deploy-storage
     image: *tofu_image
     environment:
-      <<: *cluster_creds
       STACK: k8s-storage
     commands:
       - *deploy_stack_commands
-    secrets: *cluster_secrets
-    depends_on: [deploy-identity]
+    depends_on: [deploy-security]
     <<: *deploy_only
 
-  # ─── Stage 8: Flux bootstrap (after all stacks) ───────────────────
+  # ─── Stage 10: Flux bootstrap (after all stacks) ───────────────────
   - name: deploy-flux
     image: *tofu_image
     environment:
-      <<: *cluster_creds
       STACK: flux-bootstrap
     commands:
       - *deploy_stack_commands
-    secrets: *cluster_secrets
-    depends_on: [deploy-security, deploy-storage]
+    depends_on: [deploy-storage]
     <<: *deploy_only
