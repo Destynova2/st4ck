@@ -4,26 +4,13 @@ when:
 
 variables:
   - &tofu_image ghcr.io/opentofu/opentofu:1.9
-  - &kubectl_image bitnami/kubectl:1.35
-  - &secrets_dir /woodpecker/src/kms-output
   - &deploy_only
     when:
       - event: push
         branch: main
 
-  # Helper: load cluster secrets, extract kubeconfig, then init+apply a stack.
-  # Secrets are read from files mounted via WOODPECKER_BACKEND_DOCKER_VOLUMES.
-  - &deploy_stack_commands |
-    . /woodpecker/src/kms-output/load-cluster-env.sh
-    cd terraform/envs/scaleway && tofu init -input=false >/dev/null
-    tofu output -raw kubeconfig > /tmp/kubeconfig
-    cd ../../../terraform/stacks/${STACK}
-    tofu init -input=false
-    tofu apply -auto-approve \
-      -var="kubeconfig_path=/tmp/kubeconfig"
-
 steps:
-  # ─── Validate (PR + push) ─────────────────────────────────────────
+  # ─── Validate (PR + push) — no secrets needed ─────────────────────
   - name: validate
     image: *tofu_image
     commands:
@@ -43,11 +30,17 @@ steps:
           cd "$dir" && tofu init -backend=false -input=false >/dev/null && tofu validate && cd /woodpecker/src
         done
 
-  # ─── Build image (push only) ──────────────────────────────────────
+  # ─── Build image ───────────────────────────────────────────────────
   - name: build-image
     image: *tofu_image
+    secrets:
+      - scw_project_id
+      - tf_http_password
+      - source: scw_image_access_key
+        target: scw_access_key
+      - source: scw_image_secret_key
+        target: scw_secret_key
     commands:
-      - . /woodpecker/src/kms-output/load-image-env.sh
       - cd terraform/envs/scaleway/image
       - tofu init -input=false
       - tofu apply -auto-approve
@@ -59,8 +52,14 @@ steps:
   # ─── Deploy cluster ───────────────────────────────────────────────
   - name: deploy-cluster
     image: *tofu_image
+    secrets:
+      - scw_project_id
+      - tf_http_password
+      - source: scw_cluster_access_key
+        target: scw_access_key
+      - source: scw_cluster_secret_key
+        target: scw_secret_key
     commands:
-      - . /woodpecker/src/kms-output/load-cluster-env.sh
       - cd terraform/envs/scaleway
       - tofu init -input=false
       - tofu apply -auto-approve
@@ -71,8 +70,8 @@ steps:
   # ─── Wait for API server ──────────────────────────────────────────
   - name: wait-api
     image: *tofu_image
+    secrets: [tf_http_password]
     commands:
-      - . /woodpecker/src/kms-output/load-cluster-env.sh
       - apk add --no-cache kubectl >/dev/null 2>&1 || true
       - cd terraform/envs/scaleway && tofu init -input=false >/dev/null
       - |
@@ -85,72 +84,71 @@ steps:
     depends_on: [deploy-cluster]
     <<: *deploy_only
 
-  # ─── Stage 4: Cilium CNI (must be first) ─────────────────────────
+  # ─── Deploy stacks (all use kubeconfig from scaleway state) ────────
   - name: deploy-cni
     image: *tofu_image
+    secrets: [tf_http_password]
+    commands: &deploy_stack
+      - cd terraform/envs/scaleway && tofu init -input=false >/dev/null
+      - tofu output -raw kubeconfig > /tmp/kubeconfig
+      - cd /woodpecker/src/terraform/stacks/$${STACK}
+      - tofu init -input=false
+      - tofu apply -auto-approve -var="kubeconfig_path=/tmp/kubeconfig"
     environment:
       STACK: k8s-cni
-    commands:
-      - *deploy_stack_commands
     depends_on: [wait-api]
     <<: *deploy_only
 
-  # ─── Stage 5: PKI + OpenBao + cert-manager ───────────────────────
   - name: deploy-pki
     image: *tofu_image
+    secrets: [tf_http_password]
+    commands: *deploy_stack
     environment:
       STACK: k8s-pki
-    commands:
-      - *deploy_stack_commands
     depends_on: [deploy-cni]
     <<: *deploy_only
 
-  # ─── Stage 6: Monitoring (after PKI — needs cert-manager) ─────────
   - name: deploy-monitoring
     image: *tofu_image
+    secrets: [tf_http_password]
+    commands: *deploy_stack
     environment:
       STACK: k8s-monitoring
-    commands:
-      - *deploy_stack_commands
     depends_on: [deploy-pki]
     <<: *deploy_only
 
-  # ─── Stage 7: Identity (Ory Stack, after monitoring) ───────────────
   - name: deploy-identity
     image: *tofu_image
+    secrets: [tf_http_password]
+    commands: *deploy_stack
     environment:
       STACK: k8s-identity
-    commands:
-      - *deploy_stack_commands
     depends_on: [deploy-monitoring]
     <<: *deploy_only
 
-  # ─── Stage 8: Security (after identity) ────────────────────────────
   - name: deploy-security
     image: *tofu_image
+    secrets: [tf_http_password]
+    commands: *deploy_stack
     environment:
       STACK: k8s-security
-    commands:
-      - *deploy_stack_commands
     depends_on: [deploy-identity]
     <<: *deploy_only
 
-  # ─── Stage 9: Storage (after security) ─────────────────────────────
   - name: deploy-storage
     image: *tofu_image
+    secrets: [tf_http_password]
+    commands: *deploy_stack
     environment:
       STACK: k8s-storage
-    commands:
-      - *deploy_stack_commands
     depends_on: [deploy-security]
     <<: *deploy_only
 
-  # ─── Stage 10: Flux bootstrap (after all stacks) ───────────────────
   - name: deploy-flux
     image: *tofu_image
+    secrets: [tf_http_password]
+    commands: *deploy_stack
     environment:
       STACK: flux-bootstrap
-    commands:
-      - *deploy_stack_commands
     depends_on: [deploy-storage]
     <<: *deploy_only

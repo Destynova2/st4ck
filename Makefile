@@ -510,15 +510,12 @@ capi-destroy: scaleway-kubeconfig ## Remove CAPI providers from management clust
 
 .PHONY: kms-bootstrap kms-stop openbao-init state-snapshot state-restore
 
-kms-bootstrap: ## Generate PKI CA chain + start vault-backend (state storage)
+kms-bootstrap: ## Start platform pod (KMS + CI) — sidecar handles everything
 	@command -v podman >/dev/null 2>&1 || { echo "Error: podman required"; exit 1; }
-	@bash scripts/openbao-kms-bootstrap.sh
-	@echo ""
-	@echo "vault-backend ready on http://localhost:8080"
-	@echo "Token: $(VB_TOKEN_FILE)"
+	@bash scripts/ci-local-test.sh
 
-kms-stop: ## Stop the local OpenBao KMS cluster + vault-backend
-	@podman play kube --down configs/openbao/kms-pod.yaml
+kms-stop: ## Stop the platform pod
+	@podman play kube --down /tmp/platform-local/platform-pod.yaml 2>/dev/null || true
 
 state-snapshot: ## Backup OpenBao Raft snapshot (all states)
 	@ROOT_TOKEN=$$(cat $(KMS_OUTPUT)/root-token.txt) && \
