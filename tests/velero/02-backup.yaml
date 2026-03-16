@@ -1,0 +1,10 @@
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: chainsaw-test-backup
+  namespace: storage
+spec:
+  includedNamespaces:
+    - velero-chainsaw-test
+  storageLocation: default
+  ttl: 1h0m0s

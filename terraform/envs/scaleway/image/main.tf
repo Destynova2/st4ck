@@ -25,6 +25,11 @@ resource "scaleway_object_bucket" "talos_image" {
 # Ephemeral Ubuntu instance that downloads the Talos image from
 # factory.talos.dev, converts it to QCOW2, and uploads it to the S3
 # bucket — all inside Scaleway's network (fast, no local bandwidth).
+#
+# Two-phase apply:
+#   1. `tofu apply -target=scaleway_instance_server.builder` → starts build
+#   2. Wait for S3 upload (CI gate or `make scaleway-image-wait`)
+#   3. `tofu apply` → imports snapshots + creates images
 
 resource "scaleway_instance_ip" "builder" {}
 
@@ -48,21 +53,8 @@ resource "scaleway_instance_server" "builder" {
   tags = ["talos", "builder", "ephemeral"]
 }
 
-# ─── Wait for cloud-init to finish uploading ─────────────────────────────
-
-resource "terraform_data" "wait_for_upload" {
-  depends_on = [scaleway_instance_server.builder]
-
-  provisioner "local-exec" {
-    command     = "bash ${path.module}/wait-for-upload.sh"
-    environment = {
-      BUCKET_NAME = scaleway_object_bucket.talos_image.name
-      REGION      = var.region
-    }
-  }
-}
-
 # ─── Snapshot imported from S3 ───────────────────────────────────────────
+# Requires: S3 upload complete (ensured by CI gate between the two applies)
 
 resource "scaleway_instance_snapshot" "talos" {
   name = "talos-${var.talos_version}"
@@ -73,7 +65,7 @@ resource "scaleway_instance_snapshot" "talos" {
     key    = "scaleway-amd64.qcow2"
   }
 
-  depends_on = [terraform_data.wait_for_upload]
+  depends_on = [scaleway_instance_server.builder]
 }
 
 # ─── Bootable image from snapshot (local SSD — DEV1, GP1, etc.) ─────────
@@ -85,21 +77,21 @@ resource "scaleway_instance_image" "talos" {
 }
 
 # ─── Block snapshot from S3 (for GPU instances: L4, H100, etc.) ─────────
-# The Terraform provider doesn't support scaleway_block_volume import yet,
-# so we use the CLI to import the QCOW2 as a block snapshot directly.
 
-resource "terraform_data" "block_snapshot" {
-  depends_on = [terraform_data.wait_for_upload]
+resource "scaleway_block_snapshot" "talos" {
+  name = "talos-${var.talos_version}-block"
+  zone = var.zone
 
-  provisioner "local-exec" {
-    command = "bash ${path.module}/create-block-image.sh"
-    environment = {
-      SCW_ACCESS_KEY         = var.scw_access_key
-      SCW_SECRET_KEY         = var.scw_secret_key
-      SCW_DEFAULT_PROJECT_ID = var.project_id
-      SCW_DEFAULT_ZONE       = var.zone
-      BUCKET_NAME            = scaleway_object_bucket.talos_image.name
-      TALOS_VERSION          = var.talos_version
-    }
+  import {
+    bucket = scaleway_object_bucket.talos_image.name
+    key    = "scaleway-amd64.qcow2"
   }
+
+  depends_on = [scaleway_instance_server.builder]
+}
+
+resource "scaleway_instance_image" "talos_block" {
+  name           = "talos-${var.talos_version}-block"
+  root_volume_id = scaleway_block_snapshot.talos.id
+  architecture   = "x86_64"
 }

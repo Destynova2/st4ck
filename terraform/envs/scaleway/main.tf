@@ -42,6 +42,10 @@ locals {
 
   # Scaleway: EPHEMERAL must go to /dev/vdb
   volume_config_patch = file("${path.module}/volume-config-patch.yaml")
+
+  # OIDC: baked into machine config from the start.
+  # apiServer tolerates unreachable issuer — OIDC works once k8s-identity is deployed.
+  oidc_ca_pem = file("${path.module}/../../../kms-output/root-ca.pem")
 }
 
 # ─── Talos Cluster Module ──────────────────────────────────────────────────
@@ -61,6 +65,35 @@ module "talos" {
     local.cilium_patch,
     local.registry_mirror_patch,
     local.volume_config_patch,
+  ]
+
+  controlplane_config_patches = [
+    yamlencode({
+      machine = {
+        files = [{
+          content     = local.oidc_ca_pem
+          permissions = "0644"
+          path        = "/var/etc/kubernetes/oidc-ca.pem"
+          op          = "create"
+        }]
+      }
+      cluster = {
+        apiServer = {
+          extraArgs = {
+            "oidc-issuer-url"    = "https://hydra-public.identity.svc:4444/"
+            "oidc-client-id"     = "kubernetes"
+            "oidc-username-claim" = "sub"
+            "oidc-groups-claim"   = "groups"
+            "oidc-ca-file"       = "/var/etc/kubernetes/oidc-ca.pem"
+          }
+          extraVolumes = [{
+            hostPath  = "/var/etc/kubernetes"
+            mountPath = "/var/etc/kubernetes"
+            readOnly  = true
+          }]
+        }
+      }
+    }),
   ]
 }
 

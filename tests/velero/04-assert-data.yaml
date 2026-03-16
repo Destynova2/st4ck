@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-data
+  namespace: velero-chainsaw-test
+data:
+  key1: value1
+  key2: value2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-test
+  namespace: velero-chainsaw-test

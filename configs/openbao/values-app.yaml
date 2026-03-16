@@ -1,7 +1,6 @@
 # OpenBao App — application secrets
-# Standalone mode with file storage (init required after first deploy)
-#
-# After deploy: make openbao-init
+# Standalone mode with file storage
+# Init handled automatically by openbao-init K8s Job (in k8s-pki stack)
 
 server:
   dev:

@@ -7,6 +7,10 @@ talos/
 ├── Makefile                            # Root orchestration (make help)
 ├── vars.mk                             # Shared version variables
 │
+├── bootstrap/                          # Platform pod (podman) — runs BEFORE cluster
+│   ├── platform-pod.yaml               # Single pod: OpenBao 3-node + vault-backend + Gitea + WP
+│   └── local-test.sh                   # One-command local bootstrap (no cloud needed)
+│
 ├── terraform/
 │   ├── modules/
 │   │   └── talos-cluster/              # Common module: secrets, machine configs
@@ -17,7 +21,7 @@ talos/
 │   │       ├── iam/                    # Stage 0: scoped IAM apps
 │   │       ├── image/                  # Stage 1: Talos image builder
 │   │       ├── main.tf                 # Stage 2: cluster infra
-│   │       └── ci/                     # Stage 3: Gitea + Woodpecker
+│   │       └── ci/                     # Stage 3: CI VM (deploys platform pod)
 │   └── stacks/                         # K8s application layer (provider-agnostic)
 │       ├── k8s-cni/                    # Cilium CNI (fast, ~30s, MUST be first)
 │       ├── k8s-monitoring/             # vm-k8s-stack + VictoriaLogs + Headlamp
@@ -38,7 +42,7 @@ talos/
 │   └── k8s-storage/                    # HelmReleases Garage, Velero, Harbor + ExternalSecrets
 │
 ├── configs/                            # Helm values + patches per component
-├── scripts/                            # Shared scripts (bootstrap, setup, validation)
+├── scripts/                            # Day-2 + validation scripts
 ├── envs/vmware-airgap/                 # Non-Terraform: shell scripts pipeline
 └── docs/
 ```
@@ -71,8 +75,8 @@ talos/
 ## Common Commands
 
 ```bash
-# Prerequisites (one-shot)
-make kms-bootstrap                  # PKI CA chain + vault-backend + KV v2
+# Bootstrap (one-shot, needs podman)
+make bootstrap                      # Platform pod: OpenBao KMS + Gitea + Woodpecker
 
 # Full deploy (any provider)
 make scaleway-up                    # Scaleway: infra + all k8s stacks + Flux
@@ -93,30 +97,28 @@ make state-restore SNAPSHOT=f.snap  # Restore from snapshot
 
 # Teardown
 make scaleway-down                  # Destroy all (correct order)
-make kms-stop                       # Stop OpenBao KMS + vault-backend
+make bootstrap-stop                 # Stop platform pod
 ```
 
 ## Deployment Pipeline (sequential)
 
 ```
-kms-bootstrap (once, podman)
-    │ → OpenBao KMS 3-node Raft
-    │ → vault-backend :8080 (state storage)
-    │ → PKI Root CA + Sub-CAs
+bootstrap (once, podman)
+    │ → Platform pod: OpenBao 3-node Raft + vault-backend + Gitea + Woodpecker
+    │ → PKI Root CA + Sub-CAs (kms-output/)
+    │ → tfstate backend :8080 (via vault-backend → OpenBao KV v2)
     │
 env-apply (scaleway/local/outscale)
     │ → kubeconfig → ~/.kube/talos-$(ENV)
     │
 k8s-cni          ← Cilium MUST be first (~30s)
     │
-k8s-pki          ← OpenBao + cert-manager (~1min)
+k8s-pki          ← OpenBao in-cluster + cert-manager + auto-init (~2min)
     │
 k8s-monitoring   ← VictoriaMetrics + Headlamp (~2min)
     │
-openbao-init     ← Transit + SSH CA
-    │
 k8s-identity     ← Kratos + Hydra + Pomerium (~1min)
-    │
+    │                 (all secrets: random_id Terraform)
 k8s-security     ← Trivy + Tetragon + Kyverno (~2min)
     │
 k8s-storage      ← Garage + Velero + Harbor (~2min)
@@ -124,9 +126,9 @@ k8s-storage      ← Garage + Velero + Harbor (~2min)
 flux-bootstrap   ← Flux SSH + GitRepository (~30s)
     │
     ▼
-Flux day-2 (GitOps reconciliation)
-├── HelmReleases (drift detection, self-healing)
-└── Kustomize overlays (per-environment)
+Day-2 (optional)
+├── Flux GitOps reconciliation (HelmReleases, Kustomize overlays)
+└── scaleway-oidc ← Configure apiServer OIDC (Hydra → K8s)
 ```
 
 Note: pipeline was initially parallel (make -j2) but race conditions
@@ -166,11 +168,17 @@ OpenTofu ──HTTP──→ vault-backend (:8080) ──→ OpenBao KV v2 (:820
 - **Encryption**: Raft at-rest (native OpenBao)
 - **Locking**: vault-backend creates `-lock` secrets in KV v2
 - **DR**: `make state-snapshot` → Raft snapshot file (backup all states at once)
-- **Bootstrap OpenBao does NOT stop automatically** — `make kms-stop` to shut down
+- **Platform pod does NOT auto-stop** — `make bootstrap-stop` to shut down
 
-## Secrets Management (ESO + OpenBao)
+## Secrets Management
 
-Secrets flow: OpenBao KV v2 → ESO ClusterSecretStore → ExternalSecret → K8s Secret
+### Initial deploy (random_id)
+All secrets are auto-generated via `random_id` Terraform resources.
+Stored in encrypted tfstate (via vault-backend → OpenBao KV v2). Zero manual input.
+
+### Day-2 (ESO + in-cluster OpenBao)
+After k8s-pki deploys (auto-init Job), ESO can sync secrets from in-cluster OpenBao:
+OpenBao KV v2 → ESO ClusterSecretStore → ExternalSecret → K8s Secret
 
 | Secret | OpenBao path | K8s Secret | Namespace |
 |--------|-------------|------------|-----------|
@@ -179,7 +187,7 @@ Secrets flow: OpenBao KV v2 → ESO ClusterSecretStore → ExternalSecret → K8
 | Garage RPC + admin token | secret/storage/garage | garage-secrets | garage |
 | Harbor admin password | secret/storage/harbor | harbor-secrets | storage |
 
-No SOPS. No secrets in Git. ESO refreshes every 1h from OpenBao.
+No SOPS. No secrets in Git.
 
 ## Debugging Guide
 
@@ -188,10 +196,10 @@ No SOPS. No secrets in Git. ESO refreshes every 1h from OpenBao.
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | Pods stuck in `ContainerCreating` | Cilium CNI not ready | `make k8s-cni-apply` must complete first |
-| `k8s-pki-apply` fails: file not found | `kms-output/` missing | Run `make kms-bootstrap` (one-shot, needs podman) |
-| `tofu init` fails: connection refused | vault-backend not running | `make kms-bootstrap` or restart: `podman pod start openbao-kms` |
+| `k8s-pki-apply` fails: file not found | `kms-output/` missing | Run `make bootstrap` (one-shot, needs podman) |
+| `tofu init` fails: connection refused | vault-backend not running | `make bootstrap` or restart: `podman pod start platform` |
 | Kyverno webhooks block deletions | Webhooks persist after pods gone | `make k8s-down` handles this (deletes webhooks first) |
-| OpenBao returns `sealed` | Standalone mode, not initialized | `make openbao-init` (after k8s-pki-apply) |
+| OpenBao returns `sealed` | Pod restarted, auto-init didn't unseal | Check `openbao-init` Job logs in secrets namespace |
 | `k8s-storage-init` fails | Garage Helm chart not fetched | Auto-handled: `k8s-storage-init` depends on `garage-chart` |
 | Port-forward zombie processes | Previous session not cleaned | `pkill -f 'kubectl port-forward'` (included in k8s-down) |
 | Hydra TLS cert not issued | ClusterIssuer not ready | k8s-pki must be applied before k8s-identity |
@@ -203,11 +211,11 @@ No SOPS. No secrets in Git. ESO refreshes every 1h from OpenBao.
 - Cilium MUST be deployed before any other k8s stack (it's the CNI)
 - Cilium MUST be destroyed LAST (removing it breaks pod eviction)
 - k8s-pki MUST be deployed before k8s-identity (ClusterIssuer dependency)
-- openbao-init MUST run after k8s-pki deploy (pods must be running)
+- In-cluster OpenBao is auto-initialized by k8s-pki (K8s Job, tokens in K8s Secrets)
 - k8s-storage is self-contained (generates its own harbor_admin_password)
 - Stacks are provider-agnostic: they only need a kubeconfig path
 - vault-backend (podman) must be running for any tofu command
-- Bootstrap OpenBao does NOT auto-stop — use `make kms-stop`
+- Platform pod does NOT auto-stop — use `make bootstrap-stop`
 
 ### Checking Stack Health
 

@@ -1,11 +1,11 @@
 output "harbor_admin_password" {
   description = "Harbor admin password"
-  value       = random_id.harbor_admin_password.hex
+  value       = local.secrets["harbor_admin_password"]
   sensitive   = true
 }
 
 output "garage_admin_token" {
   description = "Garage admin API token"
-  value       = random_id.garage_admin_token.hex
+  value       = local.secrets["garage_admin_token"]
   sensitive   = true
 }

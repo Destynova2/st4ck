@@ -106,7 +106,7 @@ resource "null_resource" "ci_bootstrap" {
 
   # Copy platform pod YAML
   provisioner "file" {
-    source      = "${path.module}/../../../../configs/platform-pod.yaml"
+    source      = "${path.module}/../../../../bootstrap/platform-pod.yaml"
     destination = "/opt/woodpecker/platform-pod.yaml"
   }
 

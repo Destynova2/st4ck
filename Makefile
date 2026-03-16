@@ -11,11 +11,13 @@ TF := tofu
 ENV     ?= scaleway
 KC_FILE := $(HOME)/.kube/talos-$(ENV)
 
-# ─── State backend (vault-backend → OpenBao KV v2) ──────────────────
-# Token from kms-bootstrap. All tofu commands inherit TF_HTTP_PASSWORD.
-KMS_OUTPUT       := kms-output
-VB_TOKEN_FILE    := $(KMS_OUTPUT)/vault-backend-token.txt
+# ─── Bootstrap OpenBao (vault-backend → KV v2) ──────────────────────
+# Tokens from platform-kms-output volume. Copied to kms-output/ for local use.
+KMS_OUTPUT         := kms-output
+VB_TOKEN_FILE      := $(KMS_OUTPUT)/vault-backend-token.txt
+CS_TOKEN_FILE      := $(KMS_OUTPUT)/cluster-secrets-token.txt
 export TF_HTTP_PASSWORD := $(shell cat $(VB_TOKEN_FILE) 2>/dev/null)
+VAULT_TOKEN        := $(shell cat $(CS_TOKEN_FILE) 2>/dev/null)
 
 # ─── Stack paths ─────────────────────────────────────────────────────
 
@@ -48,9 +50,10 @@ help: ## Show this help
 # K8s Stacks (provider-agnostic — uses kubeconfig at $(KC_FILE))
 #
 # Dependency graph:
-#   Prerequisites: kms-bootstrap (local, once)
-#   Create:  cni → pki → monitoring → openbao-init → identity → security → storage → flux
+#   Prerequisites: kms-bootstrap (bootstrap/, once)
+#   Create:  cni → pki → monitoring → identity → security → storage → flux
 #   Destroy: storage → security → identity → monitoring → pki → cni
+#   Note:    in-cluster OpenBao init is handled by k8s-pki (K8s Job)
 # ═══════════════════════════════════════════════════════════════════════
 
 # ─── k8s-cni (Cilium — fast, ~30s) ───────────────────────────────────
@@ -111,11 +114,13 @@ k8s-identity-init: ## terraform init for k8s-identity
 
 k8s-identity-apply: ## Deploy Kratos + Hydra + Pomerium
 	$(TF) -chdir=$(TF_K8S_IDENTITY) apply -auto-approve \
-		-var="kubeconfig_path=$(KC_FILE)"
+		-var="kubeconfig_path=$(KC_FILE)" \
+		-var="vault_token=$(VAULT_TOKEN)"
 
 k8s-identity-destroy:
 	$(TF) -chdir=$(TF_K8S_IDENTITY) destroy -auto-approve \
-		-var="kubeconfig_path=$(KC_FILE)"
+		-var="kubeconfig_path=$(KC_FILE)" \
+		-var="vault_token=$(VAULT_TOKEN)"
 
 # ─── k8s-security (Trivy + Tetragon + Kyverno) ────────────────────────
 
@@ -148,11 +153,13 @@ k8s-storage-init: garage-chart ## terraform init for k8s-storage (fetches Garage
 
 k8s-storage-apply: ## Deploy local-path + Garage + Velero + Harbor
 	$(TF) -chdir=$(TF_K8S_STORAGE) apply -auto-approve \
-		-var="kubeconfig_path=$(KC_FILE)"
+		-var="kubeconfig_path=$(KC_FILE)" \
+		-var="vault_token=$(VAULT_TOKEN)"
 
 k8s-storage-destroy:
 	$(TF) -chdir=$(TF_K8S_STORAGE) destroy -auto-approve \
-		-var="kubeconfig_path=$(KC_FILE)"
+		-var="kubeconfig_path=$(KC_FILE)" \
+		-var="vault_token=$(VAULT_TOKEN)"
 
 # ─── Flux bootstrap (installs Flux + GitRepository + root Kustomization) ──
 
@@ -178,7 +185,6 @@ k8s-init: k8s-cni-init k8s-monitoring-init k8s-pki-init k8s-identity-init k8s-se
 k8s-up: k8s-cni-apply ## Deploy all k8s stacks (sequential — parallel caused PVC/webhook races)
 	$(MAKE) k8s-pki-apply
 	$(MAKE) k8s-monitoring-apply
-	$(MAKE) openbao-init
 	$(MAKE) k8s-identity-apply
 	$(MAKE) k8s-security-apply
 	$(MAKE) k8s-storage-apply
@@ -262,7 +268,7 @@ outscale-down: ## Destroy Outscale k8s stacks + cluster
 
 .PHONY: scaleway-bootstrap scaleway-iam-init scaleway-iam-apply scaleway-iam-destroy
 
-scaleway-bootstrap: scaleway-iam-init scaleway-iam-apply scaleway-ci-init scaleway-ci-apply ## Bootstrap complet: IAM + Gitea + Woodpecker CI
+scaleway-bootstrap: scaleway-iam-init scaleway-iam-apply scaleway-ci-init scaleway-ci-apply ## Bootstrap complet: IAM + CI VM (platform pod)
 
 scaleway-iam-init: ## terraform init for Scaleway IAM
 	$(TF) -chdir=$(TF_SCW_IAM) init
@@ -273,38 +279,54 @@ scaleway-iam-apply: ## Create IAM apps + API keys (requires secret.tfvars)
 scaleway-iam-destroy: ## Destroy Scaleway IAM apps
 	$(TF) -chdir=$(TF_SCW_IAM) destroy -auto-approve -var-file=secret.tfvars
 
-# ─── Scaleway — Image (stage 1) ──────────────────────────────────────
+# ─── Scaleway — Image (stage 1: two-phase apply) ─────────────────────
+# Phase 1: start builder VM (cloud-init builds + uploads image to S3)
+# Gate:    wait for S3 upload to complete
+# Phase 2: import snapshots + create bootable images
 
-.PHONY: scaleway-image-init scaleway-image-apply scaleway-image-destroy
+.PHONY: scaleway-image-init scaleway-image-build scaleway-image-wait scaleway-image-apply scaleway-image-destroy
+
+SCW_IMAGE_VARS = \
+	-var="project_id=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw project_id)" \
+	-var="scw_access_key=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw image_builder_access_key)" \
+	-var="scw_secret_key=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw image_builder_secret_key)"
+
+SCW_IMAGE_ENV = \
+	SCW_ACCESS_KEY=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw image_builder_access_key) \
+	SCW_SECRET_KEY=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw image_builder_secret_key)
 
 scaleway-image-init: ## terraform init for Scaleway image builder
 	$(TF) -chdir=$(TF_SCW_IMAGE) init
 
-scaleway-image-apply: ## Build Talos image on Scaleway (builder VM + S3 + snapshot)
-	SCW_ACCESS_KEY=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw image_builder_access_key) \
-	SCW_SECRET_KEY=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw image_builder_secret_key) \
-	$(TF) -chdir=$(TF_SCW_IMAGE) apply -auto-approve \
-		-var="project_id=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw project_id)" \
-		-var="scw_access_key=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw image_builder_access_key)" \
-		-var="scw_secret_key=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw image_builder_secret_key)"
+scaleway-image-build: ## Phase 1: start builder VM
+	$(SCW_IMAGE_ENV) $(TF) -chdir=$(TF_SCW_IMAGE) apply -auto-approve \
+		-target=scaleway_object_bucket.talos_image \
+		-target=scaleway_instance_ip.builder \
+		-target=scaleway_instance_server.builder \
+		$(SCW_IMAGE_VARS)
 
-scaleway-image-destroy: ## Destroy builder VM + bucket (keeps image & snapshot)
+scaleway-image-wait: ## Gate: wait for S3 upload (~15 min)
+	@BUCKET="talos-image-$$($(TF) -chdir=$(TF_SCW_IAM) output -raw project_id)" && \
+		ENDPOINT="https://$$BUCKET.s3.fr-par.scw.cloud/.upload-complete" && \
+		echo "Waiting for image upload (polling $$ENDPOINT)..." && \
+		for i in $$(seq 1 60); do \
+			STATUS=$$(curl -s -o /dev/null -w "%{http_code}" "$$ENDPOINT" 2>/dev/null || echo "000"); \
+			[ "$$STATUS" = "200" ] && echo "Upload complete!" && exit 0; \
+			echo "  attempt $$i/60 (HTTP $$STATUS)"; sleep 15; \
+		done; echo "ERROR: Timeout" && exit 1
+
+scaleway-image-apply: scaleway-image-build scaleway-image-wait ## Build Talos image (full: VM + wait + snapshots)
+	$(SCW_IMAGE_ENV) $(TF) -chdir=$(TF_SCW_IMAGE) apply -auto-approve $(SCW_IMAGE_VARS)
+
+scaleway-image-destroy: ## Destroy builder VM + bucket (keeps images & snapshots)
 	$(TF) -chdir=$(TF_SCW_IMAGE) state rm scaleway_instance_image.talos 2>/dev/null || true
 	$(TF) -chdir=$(TF_SCW_IMAGE) state rm scaleway_instance_snapshot.talos 2>/dev/null || true
-	SCW_ACCESS_KEY=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw image_builder_access_key) \
-	SCW_SECRET_KEY=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw image_builder_secret_key) \
-	$(TF) -chdir=$(TF_SCW_IMAGE) destroy -auto-approve \
-		-var="project_id=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw project_id)" \
-		-var="scw_access_key=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw image_builder_access_key)" \
-		-var="scw_secret_key=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw image_builder_secret_key)"
+	$(TF) -chdir=$(TF_SCW_IMAGE) state rm scaleway_instance_image.talos_block 2>/dev/null || true
+	$(TF) -chdir=$(TF_SCW_IMAGE) state rm scaleway_block_snapshot.talos 2>/dev/null || true
+	$(SCW_IMAGE_ENV) $(TF) -chdir=$(TF_SCW_IMAGE) destroy -auto-approve $(SCW_IMAGE_VARS)
 
-scaleway-image-clean: ## Destroy ALL image resources (VM + snapshot + image + bucket)
-	SCW_ACCESS_KEY=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw image_builder_access_key) \
-	SCW_SECRET_KEY=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw image_builder_secret_key) \
-	$(TF) -chdir=$(TF_SCW_IMAGE) destroy -auto-approve \
-		-var="project_id=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw project_id)" \
-		-var="scw_access_key=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw image_builder_access_key)" \
-		-var="scw_secret_key=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw image_builder_secret_key)"
+scaleway-image-clean: ## Destroy ALL image resources (VM + snapshots + images + bucket)
+	$(SCW_IMAGE_ENV) $(TF) -chdir=$(TF_SCW_IMAGE) destroy -auto-approve $(SCW_IMAGE_VARS)
 
 # ─── Scaleway — Cluster (stage 2) ────────────────────────────────────
 
@@ -373,6 +395,7 @@ scaleway-demo: ## Full demo: deploy cluster + open Headlamp & Grafana live
 	$(MAKE) scaleway-apply
 	$(MAKE) scaleway-wait
 	$(MAKE) k8s-cni-apply
+	$(MAKE) k8s-pki-apply
 	$(MAKE) k8s-monitoring-apply
 	@$(KUBECONFIG_CMD) > $(KC_FILE) 2>/dev/null
 	@KUBECONFIG=$(KC_FILE) kubectl create serviceaccount headlamp-admin -n kube-system 2>/dev/null || true
@@ -385,11 +408,10 @@ scaleway-demo: ## Full demo: deploy cluster + open Headlamp & Grafana live
 		KUBECONFIG=$(KC_FILE) kubectl port-forward -n monitoring svc/headlamp 4466:80 >/dev/null 2>&1 &
 	@sleep 2 && open http://localhost:4466
 	@echo "Deploying remaining stacks (watch progress in Headlamp)..."
-	$(MAKE) k8s-pki-apply
-	$(MAKE) openbao-init
 	$(MAKE) k8s-identity-apply
 	$(MAKE) k8s-security-apply
 	$(MAKE) k8s-storage-apply
+	$(MAKE) flux-bootstrap-apply
 	@KUBECONFIG=$(KC_FILE) kubectl port-forward -n monitoring svc/grafana 3000:80 >/dev/null 2>&1 &
 	@GRAFANA_PASS=$$(KUBECONFIG=$(KC_FILE) kubectl get secret grafana -n monitoring -o jsonpath='{.data.admin-password}' | base64 -d) && \
 		echo "$$GRAFANA_PASS" | pbcopy && \
@@ -502,20 +524,79 @@ capi-destroy: scaleway-kubeconfig ## Remove CAPI providers from management clust
 	@echo "CAPI providers removed."
 
 # ═══════════════════════════════════════════════════════════════════════
-# OpenBao KMS bootstrap (podman -- local CA authority)
-# Emulates an external PKI team: generates Root CA + 2 sub-CAs (infra + app)
-# locally via podman, then sub-CA certs/keys are injected into the cloud cluster.
-# Must run BEFORE k8s-pki-apply.
+# Bootstrap (podman platform pod — OpenBao KMS + Gitea + Woodpecker)
+#
+# Single pod: OpenBao 3-node Raft (tfstate + PKI CA chain) +
+#             vault-backend (HTTP proxy) + Gitea + Woodpecker.
+# Setup sidecar auto-handles: KMS init, CI setup, repo push, WP secrets.
+# Must run BEFORE any tofu command (provides state backend + CA certs).
+# Source: bootstrap/
 # ═══════════════════════════════════════════════════════════════════════
 
-.PHONY: kms-bootstrap kms-stop openbao-init state-snapshot state-restore
+.PHONY: bootstrap bootstrap-stop kms-bootstrap kms-stop state-snapshot state-restore
 
-kms-bootstrap: ## Start platform pod (KMS + CI) — sidecar handles everything
+# Aliases (backward compat)
+kms-bootstrap: bootstrap
+kms-stop: bootstrap-stop
+
+# ─── Bootstrap defaults (override: make bootstrap CI_ADMIN=myuser) ───
+
+BOOTSTRAP_DIR      ?= /tmp/platform-local
+CI_GITEA_URL       ?= http://host.containers.internal:3000
+CI_OAUTH_URL       ?= http://127.0.0.1:3000
+CI_DOMAIN          ?= 127.0.0.1
+CI_WP_HOST         ?= http://127.0.0.1:8000
+CI_ADMIN           ?= talos
+CI_PASSWORD        ?= localpass123
+CI_GIT_REPO_URL    ?= file:///source
+CI_SECRETS_JSON    ?= {"data":{}}
+
+bootstrap: ## Start platform pod (everything auto-initializes inside)
 	@command -v podman >/dev/null 2>&1 || { echo "Error: podman required"; exit 1; }
-	@bash scripts/ci-local-test.sh
+	@podman pod rm -f platform 2>/dev/null || true
+	@mkdir -p $(BOOTSTRAP_DIR)
+	@# Generate ConfigMaps
+	@printf '%s\n' \
+		'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: platform-config' 'data:' \
+		'  CI_GITEA_URL: "$(CI_GITEA_URL)"' '  CI_OAUTH_URL: "$(CI_OAUTH_URL)"' \
+		'  CI_DOMAIN: "$(CI_DOMAIN)"' '  CI_WP_HOST: "$(CI_WP_HOST)"' \
+		'  CI_ADMIN: "$(CI_ADMIN)"' '  CI_PASSWORD: "$(CI_PASSWORD)"' \
+		"  CI_AGENT_SECRET: \"$$(openssl rand -hex 32)\"" \
+		'  CI_GIT_REPO_URL: "$(CI_GIT_REPO_URL)"' \
+		'  CI_SCW_PROJECT_ID: "dummy"' '  CI_SCW_IMAGE_ACCESS_KEY: "dummy"' \
+		'  CI_SCW_IMAGE_SECRET_KEY: "dummy"' '  CI_SCW_CLUSTER_ACCESS_KEY: "dummy"' \
+		'  CI_SCW_CLUSTER_SECRET_KEY: "dummy"' \
+		> $(BOOTSTRAP_DIR)/configmap.yaml
+	@printf '%s\n' '---' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: setup-script' 'data:' '  setup.sh: |' \
+		>> $(BOOTSTRAP_DIR)/configmap.yaml
+	@sed 's/^/    /' bootstrap/setup.sh >> $(BOOTSTRAP_DIR)/configmap.yaml
+	@# Start pod (kms-init + ci-setup run as sidecars)
+	@sed 's|__SOURCE_DIR__|$(CURDIR)|g' bootstrap/platform-pod.yaml > $(BOOTSTRAP_DIR)/platform-pod.yaml
+	@podman play kube $(BOOTSTRAP_DIR)/platform-pod.yaml \
+		--configmap=$(BOOTSTRAP_DIR)/configmap.yaml 2>&1 \
+		| grep -v 'executable file.*not found' || true
+	@echo ""
+	@echo "========================================="
+	@echo "  Platform starting"
+	@echo "========================================="
+	@echo "  KMS init: podman logs -f platform-kms-init"
+	@echo "  CI setup: podman logs -f platform-ci-setup"
+	@echo "  OpenBao:  http://127.0.0.1:8200"
+	@echo "  Gitea:    http://127.0.0.1:3000 ($(CI_ADMIN) / $(CI_PASSWORD))"
+	@echo "  WP:       http://127.0.0.1:8000"
+	@echo "  State:    http://127.0.0.1:8080"
+	@echo "  KMS out:  podman volume inspect platform-kms-output"
+	@echo "  Stop:     make bootstrap-stop"
+	@echo "========================================="
 
-kms-stop: ## Stop the platform pod
-	@podman play kube --down /tmp/platform-local/platform-pod.yaml 2>/dev/null || true
+bootstrap-export: ## Copy tokens + certs from PVC to kms-output/
+	@mkdir -p $(KMS_OUTPUT)
+	@podman cp platform-kms-init:/kms-output/. $(KMS_OUTPUT)/
+	@echo "Exported to $(KMS_OUTPUT)/"
+	@ls $(KMS_OUTPUT)/
+
+bootstrap-stop: ## Stop the platform pod
+	@podman play kube --down $(BOOTSTRAP_DIR)/platform-pod.yaml 2>/dev/null || true
 
 state-snapshot: ## Backup OpenBao Raft snapshot (all states)
 	@ROOT_TOKEN=$$(cat $(KMS_OUTPUT)/root-token.txt) && \
@@ -532,8 +613,12 @@ state-restore: ## Restore OpenBao Raft snapshot (SNAPSHOT=path)
 			http://127.0.0.1:8200/v1/sys/storage/raft/snapshot && \
 		echo "Raft snapshot restored from $(SNAPSHOT)"
 
-openbao-init: ## Initialize and unseal in-cluster OpenBao instances
-	@KUBECONFIG=$(KC_FILE) bash scripts/openbao-cluster-init.sh
+# ═══════════════════════════════════════════════════════════════════════
+# Day-2 operations (post-deploy)
+#
+# In-cluster OpenBao is initialized automatically by k8s-pki (K8s Job).
+# Tokens are stored in K8s Secrets (secrets/openbao-infra-token, etc.).
+# ═══════════════════════════════════════════════════════════════════════
 
 # ═══════════════════════════════════════════════════════════════════════
 # VMware airgap (scripts, not Terraform)
@@ -579,7 +664,7 @@ k8s-cni-test: ## tofu test for k8s-cni stack
 
 KUBECONFIG_CMD = $(TF) -chdir=$(TF_SCALEWAY) output -raw kubeconfig
 
-.PHONY: scaleway-kubeconfig scaleway-headlamp scaleway-grafana scaleway-harbor scaleway-oidc
+.PHONY: scaleway-kubeconfig scaleway-headlamp scaleway-grafana scaleway-harbor
 
 scaleway-kubeconfig: ## Export kubeconfig to ~/.kube/talos-scaleway
 	@$(KUBECONFIG_CMD) > $(HOME)/.kube/talos-scaleway 2>/dev/null
@@ -603,40 +688,37 @@ scaleway-harbor: scaleway-kubeconfig ## Open Harbor UI (admin password in clipbo
 		KUBECONFIG=$(KC_FILE) kubectl port-forward -n storage svc/harbor 8080:80 & \
 		sleep 2 && open http://localhost:8080
 
-scaleway-oidc: scaleway-kubeconfig ## Configure apiServer OIDC (Hydra -> K8s)
-	@TALOSCONFIG=$$(mktemp) && \
-		$(TF) -chdir=$(TF_SCALEWAY) output -raw talosconfig > "$$TALOSCONFIG" && \
-		ROOT_CA=$$($(TF) -chdir=$(TF_K8S_PKI) output -raw root_ca_cert) && \
-		CP_NODES=$$($(TF) -chdir=$(TF_SCALEWAY) output -json controlplane_ips | jq -r 'to_entries[].value' | paste -sd, -) && \
-		ROOT_CA="$$ROOT_CA" TALOSCONFIG="$$TALOSCONFIG" CP_NODES="$$CP_NODES" \
-			bash scripts/setup-oidc.sh && \
-		rm -f "$$TALOSCONFIG"
-
 scaleway-grafana: scaleway-kubeconfig ## Open Grafana UI
 	@echo "Opening Grafana..." && \
 		KUBECONFIG=$(KC_FILE) kubectl port-forward -n monitoring svc/grafana 3000:80 & \
 		sleep 2 && open http://localhost:3000
 
 # ═══════════════════════════════════════════════════════════════════════
-# Validation
+# Tests (Chainsaw — declarative K8s e2e)
 # ═══════════════════════════════════════════════════════════════════════
 
-.PHONY: velero-test
+STACKS := terraform/envs/scaleway/image terraform/envs/scaleway terraform/envs/scaleway/ci \
+	terraform/stacks/k8s-cni terraform/stacks/k8s-monitoring terraform/stacks/k8s-pki \
+	terraform/stacks/k8s-identity terraform/stacks/k8s-security terraform/stacks/k8s-storage \
+	terraform/stacks/flux-bootstrap
 
-velero-test: ## Run Velero backup/restore test
-	KUBECONFIG=$(KC_FILE) bash scripts/velero-test.sh
+.PHONY: validate velero-test test clean
 
-# ═══════════════════════════════════════════════════════════════════════
-# Common
-# ═══════════════════════════════════════════════════════════════════════
+validate: ## Validate all Terraform stacks
+	@FAIL=0; for dir in $(STACKS); do \
+		printf "  %-45s" "$$dir:"; \
+		rm -rf "$$dir/.terraform" "$$dir/.terraform.lock.hcl"; \
+		if $(TF) -chdir="$$dir" init -backend=false -input=false >/dev/null 2>&1 \
+			&& $(TF) -chdir="$$dir" validate >/dev/null 2>&1; then \
+			echo "OK"; \
+		else echo "FAIL"; FAIL=1; fi; \
+	done; [ $$FAIL -eq 0 ]
 
-.PHONY: cilium-manifests validate clean
+velero-test: ## Run Velero backup/restore e2e test (Chainsaw)
+	@command -v chainsaw >/dev/null 2>&1 || { echo "Error: chainsaw required (brew install kyverno/tap/chainsaw)"; exit 1; }
+	KUBECONFIG=$(KC_FILE) chainsaw test tests/velero/
 
-cilium-manifests: ## Generate Cilium static manifests from Helm
-	./configs/cilium/generate-manifests.sh
-
-validate: ## Validate all generated machine configs
-	./scripts/validate.sh
+test: validate velero-test ## Run all tests (validate + e2e)
 
 clean: ## Remove all build artifacts
 	rm -rf $(OUT_DIR)

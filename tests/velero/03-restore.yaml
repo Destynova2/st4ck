@@ -1,0 +1,9 @@
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: chainsaw-test-restore
+  namespace: storage
+spec:
+  backupName: chainsaw-test-backup
+  includedNamespaces:
+    - velero-chainsaw-test

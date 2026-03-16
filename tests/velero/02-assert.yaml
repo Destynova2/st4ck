@@ -1,0 +1,7 @@
+apiVersion: velero.io/v1
+kind: Backup
+metadata:
+  name: chainsaw-test-backup
+  namespace: storage
+status:
+  phase: Completed

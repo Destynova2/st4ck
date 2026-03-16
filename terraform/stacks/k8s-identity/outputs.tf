@@ -15,6 +15,6 @@ output "pomerium_version" {
 
 output "oidc_client_secret" {
   description = "OIDC client secret for kubernetes client (for kubelogin)"
-  value       = random_id.oidc_client_secret.hex
+  value       = local.secrets["oidc_client_secret"]
   sensitive   = true
 }

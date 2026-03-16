@@ -1,0 +1,74 @@
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: velero-backup-restore
+spec:
+  timeouts:
+    apply: 2m
+    assert: 5m
+    delete: 2m
+    cleanup: 2m
+  steps:
+    # ─── 1. Create test resources ─────────────────────────────────────
+    - name: Create test namespace and resources
+      try:
+        - apply:
+            file: 01-resources.yaml
+        - assert:
+            file: 01-assert.yaml
+
+    # ─── 2. Backup ────────────────────────────────────────────────────
+    - name: Create Velero backup and wait for completion
+      try:
+        - apply:
+            file: 02-backup.yaml
+        - assert:
+            file: 02-assert.yaml
+
+    # ─── 3. Delete namespace ──────────────────────────────────────────
+    - name: Delete test namespace
+      try:
+        - delete:
+            ref:
+              apiVersion: v1
+              kind: Namespace
+              name: velero-chainsaw-test
+        - script:
+            timeout: 2m
+            content: |
+              kubectl wait --for=delete namespace/velero-chainsaw-test --timeout=120s 2>/dev/null || true
+
+    # ─── 4. Restore ───────────────────────────────────────────────────
+    - name: Restore from backup and verify
+      try:
+        - apply:
+            file: 03-restore.yaml
+        - assert:
+            file: 03-assert.yaml
+
+    # ─── 5. Verify data integrity ─────────────────────────────────────
+    - name: Verify restored data
+      try:
+        - assert:
+            file: 04-assert-data.yaml
+
+    # ─── 6. Cleanup Velero resources ──────────────────────────────────
+    - name: Cleanup
+      try:
+        - delete:
+            ref:
+              apiVersion: v1
+              kind: Namespace
+              name: velero-chainsaw-test
+        - delete:
+            ref:
+              apiVersion: velero.io/v1
+              kind: Backup
+              namespace: storage
+              name: chainsaw-test-backup
+        - delete:
+            ref:
+              apiVersion: velero.io/v1
+              kind: Restore
+              namespace: storage
+              name: chainsaw-test-restore

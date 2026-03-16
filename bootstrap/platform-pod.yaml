@@ -1,0 +1,252 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-config
+data:
+  config.hcl: |
+    ui            = true
+    disable_mlock = true
+    api_addr      = "http://127.0.0.1:8200"
+    cluster_addr  = "http://127.0.0.1:8201"
+    listener "tcp" {
+      address         = "0.0.0.0:8200"
+      cluster_address = "0.0.0.0:8201"
+      tls_disable     = true
+    }
+    storage "raft" {
+      path    = "/bao/data"
+      node_id = "node-0"
+    }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: platform
+  labels:
+    app: platform
+spec:
+  restartPolicy: Always
+  containers:
+    # ═══ OpenBao KMS (single Raft node) ══════════════════════════════
+    - name: bao
+      image: quay.io/openbao/openbao:2.1.0
+      command: ["bao", "server", "-config=/config/config.hcl"]
+      ports:
+        - containerPort: 8200
+          hostPort: 8200
+        - containerPort: 8201
+          hostPort: 8201
+      env:
+        - name: SKIP_CHOWN
+          value: "true"
+      volumeMounts:
+        - name: openbao-config
+          mountPath: /config
+          readOnly: true
+        - name: bao-data
+          mountPath: /bao/data
+
+    # ═══ vault-backend (TF state HTTP → OpenBao KV v2) ═══════════════
+    - name: vault-backend
+      image: docker.io/gherynos/vault-backend:latest
+      command: ["sh", "-c"]
+      args:
+        - |
+          echo "[vault-backend] Waiting for KMS token..."
+          while [ ! -f /kms-output/vault-backend-token.txt ]; do sleep 2; done
+          export VAULT_TOKEN=$(cat /kms-output/vault-backend-token.txt)
+          echo "[vault-backend] Token loaded, starting"
+          exec /vault-backend
+      ports:
+        - containerPort: 8080
+          hostPort: 8080
+      env:
+        - name: VAULT_URL
+          value: "http://127.0.0.1:8200"
+        - name: VAULT_STORE
+          value: "secret"
+        - name: VAULT_PREFIX
+          value: "tfstate"
+        - name: LISTEN_ADDRESS
+          value: "0.0.0.0:8080"
+      volumeMounts:
+        - name: kms-output
+          mountPath: /kms-output
+          readOnly: true
+
+    # ═══ Gitea (rootless, env vars applied by entrypoint) ═════════════
+    - name: gitea
+      image: docker.io/gitea/gitea:1.22-rootless
+      ports:
+        - containerPort: 3000
+          hostPort: 3000
+        - containerPort: 2222
+          hostPort: 2222
+      volumeMounts:
+        - name: gitea-data
+          mountPath: /var/lib/gitea
+        - name: gitea-config
+          mountPath: /etc/gitea
+      env:
+        - name: GITEA__server__ROOT_URL
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_GITEA_URL } }
+        - name: GITEA__server__DOMAIN
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_DOMAIN } }
+        - name: GITEA__webhook__ALLOWED_HOST_LIST
+          value: "loopback,private"
+        - name: GITEA__database__DB_TYPE
+          value: "sqlite3"
+
+    # ═══ Woodpecker server ═══════════════════════════════════════════
+    - name: woodpecker-server
+      image: docker.io/woodpeckerci/woodpecker-server:latest
+      command: ["sh", "-c"]
+      args:
+        - |
+          while [ ! -f /shared/creds.env ]; do sleep 1; done
+          . /shared/creds.env
+          exec woodpecker-server
+      ports:
+        - containerPort: 8001
+          hostPort: 8000
+        - containerPort: 9001
+          hostPort: 9000
+      volumeMounts:
+        - name: woodpecker-data
+          mountPath: /var/lib/woodpecker
+        - name: shared
+          mountPath: /shared
+      env:
+        - name: WOODPECKER_HOST
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_WP_HOST } }
+        - name: WOODPECKER_SERVER_ADDR
+          value: ":8001"
+        - name: WOODPECKER_GRPC_ADDR
+          value: ":9001"
+        - name: WOODPECKER_OPEN
+          value: "true"
+        - name: WOODPECKER_ADMIN
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_ADMIN } }
+        - name: WOODPECKER_GITEA
+          value: "true"
+        - name: WOODPECKER_GITEA_URL
+          value: "http://platform-gitea:3000"
+        - name: WOODPECKER_DEV_GITEA_OAUTH_URL
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_OAUTH_URL } }
+        - name: WOODPECKER_AGENT_SECRET
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_AGENT_SECRET } }
+
+    # ═══ Woodpecker agent ════════════════════════════════════════════
+    - name: woodpecker-agent
+      image: docker.io/woodpeckerci/woodpecker-agent:latest
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - name: podman-sock
+          mountPath: /var/run/docker.sock
+      env:
+        - name: WOODPECKER_SERVER
+          value: "platform-woodpecker-server:9001"
+        - name: WOODPECKER_BACKEND
+          value: "docker"
+        - name: WOODPECKER_AGENT_SECRET
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_AGENT_SECRET } }
+        - name: WOODPECKER_BACKEND_DOCKER_NETWORK
+          value: "podman-default-kube-network"
+
+    # ═══ KMS init (OpenTofu: init OpenBao + PKI + secrets) ═══════════
+    - name: kms-init
+      image: ghcr.io/opentofu/opentofu:1.9
+      command: ["sh", "-c"]
+      args:
+        - |
+          OUT=/kms-output
+          [ -f "$OUT/root-ca.pem" ] && echo "[kms] Already initialized" && exec sleep infinity
+
+          apk add --no-cache curl >/dev/null 2>&1
+          echo "[kms] Waiting for OpenBao..."
+          until curl -sf http://127.0.0.1:8200/v1/sys/health >/dev/null 2>&1 || curl -so /dev/null -w '%{http_code}' http://127.0.0.1:8200/v1/sys/health 2>/dev/null | grep -qv 000; do sleep 2; done
+          echo "[kms] OpenBao ready"
+
+          mkdir -p /tmp/kms-work && cd /tmp/kms-work
+          cp -r /source/bootstrap/kms/* .
+          tofu init -input=false
+          tofu apply -auto-approve \
+            -target=terraform_data.wait_for_openbao \
+            -target=terraform_data.init_unseal \
+            -var="kms_output_dir=$OUT"
+          VAULT_TOKEN=$(cat "$OUT/root-token.txt") tofu apply -auto-approve \
+            -var="kms_output_dir=$OUT"
+
+          echo "[kms] Done"
+          exec sleep infinity
+      volumeMounts:
+        - name: kms-output
+          mountPath: /kms-output
+        - name: source
+          mountPath: /source
+          readOnly: true
+
+    # ═══ CI setup sidecar ════════════════════════════════════════════
+    - name: ci-setup
+      image: docker.io/gitea/gitea:1.22-rootless
+      command: ["sh", "/scripts/setup.sh"]
+      volumeMounts:
+        - name: gitea-data
+          mountPath: /var/lib/gitea
+        - name: gitea-config
+          mountPath: /etc/gitea
+        - name: shared
+          mountPath: /shared
+        - name: source
+          mountPath: /source
+          readOnly: true
+        - name: kms-output
+          mountPath: /kms-output
+          readOnly: true
+        - name: setup-script
+          mountPath: /scripts
+          readOnly: true
+      env:
+        - name: CI_ADMIN
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_ADMIN } }
+        - name: CI_PASSWORD
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_PASSWORD } }
+        - name: CI_WP_HOST
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_WP_HOST } }
+        - name: CI_OAUTH_URL
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_OAUTH_URL } }
+        - name: CI_GIT_REPO_URL
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_GIT_REPO_URL } }
+        - name: CI_SCW_PROJECT_ID
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_SCW_PROJECT_ID } }
+        - name: CI_SCW_IMAGE_ACCESS_KEY
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_SCW_IMAGE_ACCESS_KEY } }
+        - name: CI_SCW_IMAGE_SECRET_KEY
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_SCW_IMAGE_SECRET_KEY } }
+        - name: CI_SCW_CLUSTER_ACCESS_KEY
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_SCW_CLUSTER_ACCESS_KEY } }
+        - name: CI_SCW_CLUSTER_SECRET_KEY
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_SCW_CLUSTER_SECRET_KEY } }
+
+  volumes:
+    - name: openbao-config
+      configMap: { name: openbao-config }
+    - name: setup-script
+      configMap: { name: setup-script }
+    - name: bao-data
+      emptyDir: {}
+    - name: gitea-data
+      persistentVolumeClaim: { claimName: platform-gitea-data }
+    - name: gitea-config
+      persistentVolumeClaim: { claimName: platform-gitea-config }
+    - name: woodpecker-data
+      persistentVolumeClaim: { claimName: platform-wp-data }
+    - name: podman-sock
+      persistentVolumeClaim: { claimName: platform-podman-sock }
+    - name: shared
+      persistentVolumeClaim: { claimName: platform-shared }
+    - name: source
+      hostPath: { path: __SOURCE_DIR__, type: Directory }
+    - name: kms-output
+      persistentVolumeClaim: { claimName: platform-kms-output }

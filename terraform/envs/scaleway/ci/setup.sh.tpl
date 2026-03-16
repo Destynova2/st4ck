@@ -24,7 +24,8 @@ export CI_SECRETS_JSON='{"data":{"scw_project_id":"${scw_project_id}","scw_image
 
 # ─── Start ────────────────────────────────────────────────────────────
 mkdir -p /tmp/empty-source /opt/talos/kms-output
-envsubst < /opt/woodpecker/platform-pod.yaml > /opt/woodpecker/platform-pod-final.yaml
+envsubst '${CI_GITEA_URL} ${CI_OAUTH_URL} ${CI_DOMAIN} ${CI_WP_HOST} ${CI_ADMIN} ${CI_PASSWORD} ${CI_AGENT_SECRET} ${CI_GIT_REPO_URL} ${CI_SECRETS_JSON} ${CI_KMS_DIR} ${CI_SOURCE_DIR} ${CI_GITEA_DATA_DIR} ${CI_WP_DATA_DIR} ${CI_PODMAN_SOCK} ${CI_SCW_PROJECT_ID} ${CI_SCW_IMAGE_ACCESS_KEY} ${CI_SCW_IMAGE_SECRET_KEY} ${CI_SCW_CLUSTER_ACCESS_KEY} ${CI_SCW_CLUSTER_SECRET_KEY}' \
+  < /opt/woodpecker/platform-pod.yaml > /opt/woodpecker/platform-pod-final.yaml
 podman play kube /opt/woodpecker/platform-pod-final.yaml
 
 echo "========================================="
