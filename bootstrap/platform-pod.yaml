@@ -48,6 +48,23 @@ data:
       }
     }
 
+    # ─── Self-init: AppRole for vault-backend ───────────────────
+    initialize "approle" {
+      request "enable-approle" {
+        operation = "update"
+        path      = "sys/auth/approle"
+        data      = { type = "approle" }
+      }
+      request "create-role" {
+        operation = "update"
+        path      = "auth/approle/role/vault-backend"
+        data = {
+          token_policies = ["vault-backend"]
+          token_period   = "768h"
+        }
+      }
+    }
+
     # ─── Self-init: Admin auth (for tofu-setup to create tokens) ─
     initialize "admin" {
       request "add-superuser-policy" {
@@ -137,16 +154,9 @@ spec:
           readOnly: true
 
     # ═══ vault-backend (TF state HTTP → OpenBao KV v2) ═══════════════
+    # No token needed at startup — each TF client sends creds per request.
     - name: vault-backend
       image: docker.io/gherynos/vault-backend:latest
-      command: ["sh", "-c"]
-      args:
-        - |
-          echo "[vault-backend] Waiting for KMS token..."
-          while [ ! -f /kms-output/vault-backend-token.txt ]; do sleep 2; done
-          export VAULT_TOKEN=$(cat /kms-output/vault-backend-token.txt)
-          echo "[vault-backend] Token loaded, starting"
-          exec /vault-backend
       ports:
         - containerPort: 8080
           hostPort: 8080
@@ -159,10 +169,6 @@ spec:
           value: "tfstate"
         - name: LISTEN_ADDRESS
           value: "0.0.0.0:8080"
-      volumeMounts:
-        - name: kms-output
-          mountPath: /kms-output
-          readOnly: true
 
     # ═══ Gitea (rootless, env vars applied by entrypoint) ═════════════
     - name: gitea
@@ -263,8 +269,8 @@ spec:
             -var=ci_password=$CI_PASSWORD \
             -var=gitea_external_url=$CI_GITEA_URL \
             -var=wp_external_url=$CI_WP_HOST \
-            -var=gitea_internal_url=http://platform-gitea:3000 \
-            -var=wp_internal_url=http://platform-woodpecker-server:8000"
+            -var=gitea_internal_url=http://127.0.0.1:3000 \
+            -var=wp_internal_url=http://127.0.0.1:8000"
 
           tofu init -input=false
 

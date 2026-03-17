@@ -19,7 +19,7 @@ variable "ci_password" {
 variable "gitea_internal_url" {
   description = "Gitea URL inside the pod"
   type        = string
-  default     = "http://platform-gitea:3000"
+  default     = "http://127.0.0.1:3000"
 }
 
 variable "gitea_external_url" {
@@ -31,7 +31,7 @@ variable "gitea_external_url" {
 variable "wp_internal_url" {
   description = "Woodpecker URL inside the pod"
   type        = string
-  default     = "http://platform-woodpecker-server:8000"
+  default     = "http://127.0.0.1:8000"
 }
 
 variable "wp_external_url" {

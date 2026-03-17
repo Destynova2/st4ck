@@ -1,3 +1,26 @@
+# ─── AppRole for vault-backend ────────────────────────────────────────
+# Role created by self-init, we just fetch the IDs
+
+data "vault_approle_auth_backend_role_id" "vault_backend" {
+  backend   = "approle"
+  role_name = "vault-backend"
+}
+
+resource "vault_approle_auth_backend_role_secret_id" "vault_backend" {
+  backend   = "approle"
+  role_name = "vault-backend"
+}
+
+resource "local_file" "approle_role_id" {
+  content  = data.vault_approle_auth_backend_role_id.vault_backend.role_id
+  filename = "${var.output_dir}/approle-role-id.txt"
+}
+
+resource "local_file" "approle_secret_id" {
+  content  = vault_approle_auth_backend_role_secret_id.vault_backend.secret_id
+  filename = "${var.output_dir}/approle-secret-id.txt"
+}
+
 # ─── Tokens ──────────────────────────────────────────────────────────
 # Created via vault provider (authenticated by userpass from self-init)
 
