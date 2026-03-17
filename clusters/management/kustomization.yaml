@@ -1,10 +1,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - external-secrets
-  - k8s-cni
-  - k8s-monitoring
-  - k8s-pki
-  - k8s-identity
-  - k8s-security
-  - k8s-storage
+  - ../../stacks/external-secrets/flux
+  - ../../stacks/cni/flux
+  - ../../stacks/monitoring/flux
+  - ../../stacks/pki/flux
+  - ../../stacks/identity/flux
+  - ../../stacks/security/flux
+  - ../../stacks/storage/flux

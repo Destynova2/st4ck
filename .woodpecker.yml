@@ -16,16 +16,16 @@ steps:
     commands:
       - |
         for dir in \
-          terraform/envs/scaleway/image \
-          terraform/envs/scaleway \
-          terraform/envs/scaleway/ci \
-          terraform/stacks/k8s-cni \
-          terraform/stacks/k8s-monitoring \
-          terraform/stacks/k8s-pki \
-          terraform/stacks/k8s-identity \
-          terraform/stacks/k8s-security \
-          terraform/stacks/k8s-storage \
-          terraform/stacks/flux-bootstrap; do
+          envs/scaleway/image \
+          envs/scaleway \
+          envs/scaleway/ci \
+          stacks/cni \
+          stacks/monitoring \
+          stacks/pki \
+          stacks/identity \
+          stacks/security \
+          stacks/storage \
+          stacks/flux-bootstrap; do
           echo "--- validating $dir"
           cd "$dir" && tofu init -backend=false -input=false >/dev/null && tofu validate && cd /woodpecker/src
         done
@@ -41,7 +41,7 @@ steps:
       - source: scw_image_secret_key
         target: scw_secret_key
     commands:
-      - cd terraform/envs/scaleway/image
+      - cd envs/scaleway/image
       - tofu init -input=false
       - tofu apply -auto-approve
         -target=scaleway_object_bucket.talos_image
@@ -87,7 +87,7 @@ steps:
       - source: scw_image_secret_key
         target: scw_secret_key
     commands:
-      - cd terraform/envs/scaleway/image
+      - cd envs/scaleway/image
       - tofu init -input=false
       - tofu apply -auto-approve
         -var="project_id=$${SCW_PROJECT_ID}"
@@ -109,7 +109,7 @@ steps:
     commands:
       - |
         VB=http://host.containers.internal:8080
-        cd terraform/envs/scaleway
+        cd envs/scaleway
         tofu init -input=false \
           -backend-config="address=$$VB/state/scaleway" \
           -backend-config="lock_address=$$VB/state/scaleway" \
@@ -127,7 +127,7 @@ steps:
       - |
         VB=http://host.containers.internal:8080
         apk add --no-cache kubectl >/dev/null 2>&1 || true
-        cd terraform/envs/scaleway
+        cd envs/scaleway
         tofu init -input=false \
           -backend-config="address=$$VB/state/scaleway" \
           -backend-config="lock_address=$$VB/state/scaleway" \
@@ -158,14 +158,14 @@ steps:
             -backend-config="lock_address=$$VB/state/$$1" \
             -backend-config="unlock_address=$$VB/state/$$1"
         }
-        cd terraform/envs/scaleway
+        cd envs/scaleway
         vb_init scaleway >/dev/null
         tofu output -raw kubeconfig > /tmp/kubeconfig
-        cd /woodpecker/src/terraform/stacks/$${STACK}
+        cd /woodpecker/src/stacks/$${STACK}
         vb_init $${STACK}
         tofu apply -auto-approve -var="kubeconfig_path=/tmp/kubeconfig"
     environment:
-      STACK: k8s-cni
+      STACK: cni
     depends_on: [wait-api]
     <<: *deploy_only
 
@@ -174,7 +174,7 @@ steps:
     secrets: [tf_http_password]
     commands: *deploy_stack
     environment:
-      STACK: k8s-pki
+      STACK: pki
     depends_on: [deploy-cni]
     <<: *deploy_only
 
@@ -183,7 +183,7 @@ steps:
     secrets: [tf_http_password]
     commands: *deploy_stack
     environment:
-      STACK: k8s-monitoring
+      STACK: monitoring
     depends_on: [deploy-pki]
     <<: *deploy_only
 
@@ -201,17 +201,17 @@ steps:
             -backend-config="lock_address=$$VB/state/$$1" \
             -backend-config="unlock_address=$$VB/state/$$1"
         }
-        cd terraform/envs/scaleway
+        cd envs/scaleway
         vb_init scaleway >/dev/null
         tofu output -raw kubeconfig > /tmp/kubeconfig
-        cd /woodpecker/src/terraform/stacks/$${STACK}
+        cd /woodpecker/src/stacks/$${STACK}
         vb_init $${STACK}
         tofu apply -auto-approve \
           -var="kubeconfig_path=/tmp/kubeconfig" \
           -var="vault_address=$$BAO" \
           -var="vault_token=$${VAULT_TOKEN}"
     environment:
-      STACK: k8s-identity
+      STACK: identity
     depends_on: [deploy-monitoring]
     <<: *deploy_only
 
@@ -220,7 +220,7 @@ steps:
     secrets: [tf_http_password]
     commands: *deploy_stack
     environment:
-      STACK: k8s-security
+      STACK: security
     depends_on: [deploy-identity]
     <<: *deploy_only
 
@@ -229,7 +229,7 @@ steps:
     secrets: [tf_http_password, vault_token]
     commands: *deploy_stack_vault
     environment:
-      STACK: k8s-storage
+      STACK: storage
     depends_on: [deploy-security]
     <<: *deploy_only
 

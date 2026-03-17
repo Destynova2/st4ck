@@ -62,7 +62,7 @@ The `kms-output/` directory now contains certificates and tokens. This directory
 Create the IAM secret file:
 
 ```bash
-cat > terraform/envs/scaleway/iam/secret.tfvars << 'EOF'
+cat > envs/scaleway/iam/secret.tfvars << 'EOF'
 organization_id = "your-org-id"
 access_key      = "your-admin-access-key"
 secret_key      = "your-admin-secret-key"

@@ -139,7 +139,7 @@ Les Sub-CAs sont injectees dans le cluster via `kubernetes_secret`.
 
 ```mermaid
 graph TB
-    MOD[terraform/modules/talos-cluster<br/>machine secrets + configs]
+    MOD[modules/talos-cluster<br/>machine secrets + configs]
 
     MOD --> SCW[Scaleway<br/>4 stages IAM/image/cluster/CI]
     MOD --> LOCAL[Local<br/>libvirt/KVM]

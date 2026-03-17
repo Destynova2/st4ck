@@ -22,7 +22,7 @@ Sovereign air-gapped Kubernetes platform built on Talos Linux v1.12, deploying a
 
 The platform uses a two-phase deployment model. Phase 1 (OpenTofu) bootstraps infrastructure and all Kubernetes stacks in strict dependency order. Phase 2 (Flux) takes over day-2 reconciliation via GitOps.
 
-A shared Terraform module (`terraform/modules/talos-cluster`) generates machine secrets and configs via the siderolabs/talos provider. Each environment (Scaleway, local, Outscale, VMware) calls this module and adds its own cloud resources. All Kubernetes stacks are provider-agnostic -- they only need a kubeconfig path.
+A shared Terraform module (`modules/talos-cluster`) generates machine secrets and configs via the siderolabs/talos provider. Each environment (Scaleway, local, Outscale, VMware) calls this module and adds its own cloud resources. All Kubernetes stacks are provider-agnostic -- they only need a kubeconfig path.
 
 State is stored in OpenBao KV v2 via vault-backend (HTTP backend with locking), running in a local podman pod. This avoids any cloud dependency for state storage. Secrets are auto-generated via `random_id` Terraform, stored in encrypted state, zero secrets in Git.
 
@@ -31,11 +31,11 @@ The VMware airgap path is entirely script-based (no Terraform) due to lack of vS
 ## Domain Concepts
 
 - **KMS bootstrap**: Local podman pod running 3-node OpenBao Raft cluster. Generates PKI CA chain, Transit auto-unseal keys, and vault-backend token. Must run once before any cloud deployment.
-- **Stack**: A self-contained Terraform root module in `terraform/stacks/` that deploys one logical layer (CNI, monitoring, PKI, identity, security, storage, flux).
-- **Environment (env)**: A cloud provider configuration in `terraform/envs/` (Scaleway has 4 stages: IAM, image, cluster, CI).
+- **Stack**: A self-contained folder in `stacks/` co-locating TF code, Helm values, and Flux manifests for one logical layer (CNI, monitoring, PKI, identity, security, storage, flux).
+- **Environment (env)**: A cloud provider configuration in `envs/` (Scaleway has 4 stages: IAM, image, cluster, CI).
 - **vault-backend**: HTTP proxy that translates Terraform HTTP backend protocol to OpenBao KV v2 API. Runs on port 8080.
 - **openbao-init**: Post-deploy step that initializes and unseals the in-cluster OpenBao instances (separate from the bootstrap KMS).
-- **CAPI**: Cluster API -- creates workload clusters on demand from the management cluster.
+
 
 ## Key Patterns
 
@@ -44,7 +44,7 @@ The VMware airgap path is entirely script-based (no Terraform) due to lack of vS
 - Destroy order is the reverse of create order. Cilium must be destroyed last (it is the CNI). Kyverno webhooks must be deleted before other resources.
 - Secrets are auto-generated via `random_id` Terraform resources -- no manual `secret.tfvars` for application secrets.
 - Scaleway credentials flow through IAM stage outputs (`tofu -chdir=iam output -raw ...`).
-- All Helm values live in `configs/<component>/values.yaml`. Terraform references them via `file()`.
+- Helm values are co-located in each stack folder (e.g., `stacks/cni/values.yaml`). Terraform references them via `file("${path.module}/...")`.
 - ADRs are numbered sequentially in `docs/adr/` and written in French.
 
 ## Commands

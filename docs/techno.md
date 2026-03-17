@@ -166,16 +166,17 @@ Deploy key : tofu output flux_ssh_public_key → Gitea Settings → Deploy Keys
 ## Deploiement Terraform
 
 ```
-terraform/stacks/
-├── k8s-cni/        # Cilium (1 helm release)
-├── k8s-monitoring/ # vm-k8s-stack, VictoriaLogs, Headlamp (4 helm releases + dashboard)
-├── k8s-pki/        # PKI, OpenBao x2, cert-manager (4 helm releases + secrets + ClusterIssuer)
-├── k8s-identity/   # Kratos, Hydra, Pomerium (3 helm releases + OIDC client)
-├── k8s-security/   # Trivy, Tetragon, Kyverno (3 helm releases + policy)
-├── k8s-storage/    # local-path, Garage, Velero, Harbor (4 helm releases + K8s Job setup)
-└── flux-bootstrap/ # Flux v2, SSH key, GitRepository, Kustomization
+stacks/
+├── cni/            # Cilium (1 helm release + values + flux/)
+├── monitoring/     # vm-k8s-stack, VictoriaLogs, Headlamp (4 helm releases + dashboard + flux/)
+├── pki/            # PKI, OpenBao x2, cert-manager (4 helm releases + secrets + ClusterIssuer + flux/)
+├── identity/       # Kratos, Hydra, Pomerium (3 helm releases + OIDC client + flux/)
+├── security/       # Trivy, Tetragon, Kyverno (3 helm releases + policy + flux/)
+├── storage/        # local-path, Garage, Velero, Harbor (4 helm releases + K8s Job setup + flux/)
+├── flux-bootstrap/ # Flux v2, SSH key, GitRepository, Kustomization
+└── external-secrets/ # ESO + ClusterSecretStore (flux only)
 
-terraform/envs/scaleway/
+envs/scaleway/
 ├── iam/            # Projet, API keys (image-builder, cluster, ci), buckets
 ├── ci/             # VM CI (Gitea + Woodpecker, Podman Quadlet)
 └── main.tf         # Cluster Talos (6 noeuds, LB, VPC)

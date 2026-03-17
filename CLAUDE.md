@@ -5,46 +5,40 @@
 ```
 talos/
 ├── Makefile                            # Root orchestration (make help)
-├── vars.mk                             # Shared version variables
+├── vars.mk                            # Shared version variables
 │
 ├── bootstrap/                          # Platform pod (podman) — runs BEFORE cluster
 │   ├── platform-pod.yaml               # Single pod: OpenBao 3-node + vault-backend + Gitea + WP
 │   └── local-test.sh                   # One-command local bootstrap (no cloud needed)
 │
-├── terraform/
-│   ├── modules/
-│   │   └── talos-cluster/              # Common module: secrets, machine configs
-│   ├── envs/
-│   │   ├── local/                      # Provider: libvirt (QEMU/KVM)
-│   │   ├── outscale/                   # Provider: outscale (FCU)
-│   │   └── scaleway/                   # Provider: scaleway (fr-par)
-│   │       ├── iam/                    # Stage 0: scoped IAM apps
-│   │       ├── image/                  # Stage 1: Talos image builder
-│   │       ├── main.tf                 # Stage 2: cluster infra
-│   │       └── ci/                     # Stage 3: CI VM (deploys platform pod)
-│   └── stacks/                         # K8s application layer (provider-agnostic)
-│       ├── k8s-cni/                    # Cilium CNI (fast, ~30s, MUST be first)
-│       ├── k8s-monitoring/             # vm-k8s-stack + VictoriaLogs + Headlamp
-│       ├── k8s-pki/                    # OpenBao + cert-manager + CA secrets
-│       ├── k8s-identity/               # Kratos + Hydra + Pomerium
-│       ├── k8s-security/               # Trivy + Tetragon + Kyverno
-│       ├── k8s-storage/                # local-path + Garage + Velero + Harbor
-│       └── flux-bootstrap/             # Flux v2 + GitRepository + root Kustomization
+├── envs/                               # Provider-specific infra
+│   ├── local/                          # Provider: libvirt (QEMU/KVM)
+│   ├── outscale/                       # Provider: outscale (FCU)
+│   ├── scaleway/                       # Provider: scaleway (fr-par)
+│   │   ├── iam/                        # Stage 0: scoped IAM apps
+│   │   ├── image/                      # Stage 1: Talos image builder
+│   │   ├── main.tf                     # Stage 2: cluster infra
+│   │   └── ci/                         # Stage 3: CI VM (deploys platform pod)
+│   └── vmware-airgap/                  # Non-Terraform: shell scripts pipeline
 │
-├── clusters/management/                # Flux GitOps manifests (day-2 reconciliation)
-│   ├── kustomization.yaml              # Root: references all stacks
-│   ├── external-secrets/               # ESO + ClusterSecretStore (OpenBao)
-│   ├── k8s-cni/                        # HelmRelease Cilium
-│   ├── k8s-monitoring/                 # HelmReleases vm-k8s-stack, VictoriaLogs, Headlamp
-│   ├── k8s-pki/                        # HelmReleases OpenBao, cert-manager, ClusterIssuer
-│   ├── k8s-identity/                   # HelmReleases Ory + ExternalSecrets
-│   ├── k8s-security/                   # HelmReleases Trivy, Tetragon, Kyverno, Cosign
-│   └── k8s-storage/                    # HelmReleases Garage, Velero, Harbor + ExternalSecrets
+├── modules/
+│   └── talos-cluster/                  # Common module: secrets, machine configs
 │
-├── configs/                            # Helm values + patches per component
+├── stacks/                             # 1 stack = 1 folder (TF + values + flux)
+│   ├── cni/                            # Cilium CNI (main.tf + values.yaml + flux/)
+│   ├── pki/                            # OpenBao + cert-manager + CA secrets
+│   ├── monitoring/                     # vm-k8s-stack + VictoriaLogs + Headlamp
+│   ├── identity/                       # Kratos + Hydra + Pomerium
+│   ├── security/                       # Trivy + Tetragon + Kyverno
+│   ├── storage/                        # local-path + Garage + Velero + Harbor
+│   ├── flux-bootstrap/                 # Flux v2 + GitRepository + root Kustomization
+│   └── external-secrets/               # Flux only (ESO + ClusterSecretStore)
+│
+├── clusters/management/                # Thin kustomization.yaml → ../../stacks/*/flux/
+├── patches/                            # Machine config patches (cilium-cni, registry-mirror)
 ├── scripts/                            # Day-2 + validation scripts
-├── envs/vmware-airgap/                 # Non-Terraform: shell scripts pipeline
-└── docs/
+├── docs/
+└── tests/
 ```
 
 ## Architecture
@@ -54,6 +48,7 @@ talos/
   infra with its own provider (libvirt, outscale, scaleway).
 - **K8s stacks**: provider-agnostic, use `kubeconfig_path` variable.
   All stacks read from `~/.kube/talos-$(ENV)`.
+  Each stack co-locates TF code, Helm values, and Flux manifests in one folder.
 - **State storage**: vault-backend → OpenBao KMS (podman) KV v2. All states stored
   in OpenBao with locking + versioning. No local tfstate files.
 - **Day-2 management**: Flux reconciles all stacks after initial bootstrap.
@@ -111,17 +106,17 @@ bootstrap (once, podman)
 env-apply (scaleway/local/outscale)
     │ → kubeconfig → ~/.kube/talos-$(ENV)
     │
-k8s-cni          ← Cilium MUST be first (~30s)
+cni              ← Cilium MUST be first (~30s)
     │
-k8s-pki          ← OpenBao in-cluster + cert-manager + auto-init (~2min)
+pki              ← OpenBao in-cluster + cert-manager + auto-init (~2min)
     │
-k8s-monitoring   ← VictoriaMetrics + Headlamp (~2min)
+monitoring       ← VictoriaMetrics + Headlamp (~2min)
     │
-k8s-identity     ← Kratos + Hydra + Pomerium (~1min)
+identity         ← Kratos + Hydra + Pomerium (~1min)
     │                 (all secrets: random_id Terraform)
-k8s-security     ← Trivy + Tetragon + Kyverno (~2min)
+security         ← Trivy + Tetragon + Kyverno (~2min)
     │
-k8s-storage      ← Garage + Velero + Harbor (~2min)
+storage          ← Garage + Velero + Harbor (~2min)
     │
 flux-bootstrap   ← Flux SSH + GitRepository (~30s)
     │
@@ -138,12 +133,12 @@ Note: pipeline was initially parallel (make -j2) but race conditions
 
 | Stack | Owns | Interface |
 |-------|------|-----------|
-| k8s-cni | Cilium | kube-system (CNI DaemonSet) |
-| k8s-monitoring | vm-k8s-stack, VictoriaLogs, Headlamp | monitoring namespace |
-| k8s-pki | OpenBao x2, cert-manager, ClusterIssuer, CA secrets | ClusterIssuer "internal-ca", secrets namespace |
-| k8s-identity | Kratos, Hydra, Pomerium, OIDC registration | identity namespace |
-| k8s-security | Trivy, Tetragon, Kyverno, Cosign policy | security namespace |
-| k8s-storage | local-path, Garage, Velero, Harbor | storage namespace |
+| cni | Cilium | kube-system (CNI DaemonSet) |
+| monitoring | vm-k8s-stack, VictoriaLogs, Headlamp | monitoring namespace |
+| pki | OpenBao x2, cert-manager, ClusterIssuer, CA secrets | ClusterIssuer "internal-ca", secrets namespace |
+| identity | Kratos, Hydra, Pomerium, OIDC registration | identity namespace |
+| security | Trivy, Tetragon, Kyverno, Cosign policy | security namespace |
+| storage | local-path, Garage, Velero, Harbor | storage namespace |
 | flux-bootstrap | Flux v2, GitRepository, root Kustomization | flux-system namespace |
 | external-secrets | ESO, ClusterSecretStore | external-secrets namespace |
 
@@ -155,12 +150,12 @@ vault-backend provides HTTP backend with locking + KV v2 versioning.
 ```
 OpenTofu ──HTTP──→ vault-backend (:8080) ──→ OpenBao KV v2 (:8200)
                    ├── /state/scaleway          → secret/data/tfstate/scaleway
-                   ├── /state/k8s-cni           → secret/data/tfstate/k8s-cni
-                   ├── /state/k8s-monitoring    → secret/data/tfstate/k8s-monitoring
-                   ├── /state/k8s-pki           → secret/data/tfstate/k8s-pki
-                   ├── /state/k8s-identity      → secret/data/tfstate/k8s-identity
-                   ├── /state/k8s-security      → secret/data/tfstate/k8s-security
-                   ├── /state/k8s-storage       → secret/data/tfstate/k8s-storage
+                   ├── /state/cni               → secret/data/tfstate/cni
+                   ├── /state/monitoring         → secret/data/tfstate/monitoring
+                   ├── /state/pki               → secret/data/tfstate/pki
+                   ├── /state/identity           → secret/data/tfstate/identity
+                   ├── /state/security           → secret/data/tfstate/security
+                   ├── /state/storage            → secret/data/tfstate/storage
                    └── /state/flux-bootstrap    → secret/data/tfstate/flux-bootstrap
 ```
 
@@ -177,7 +172,7 @@ All secrets are auto-generated via `random_id` Terraform resources.
 Stored in encrypted tfstate (via vault-backend → OpenBao KV v2). Zero manual input.
 
 ### Day-2 (ESO + in-cluster OpenBao)
-After k8s-pki deploys (auto-init Job), ESO can sync secrets from in-cluster OpenBao:
+After pki deploys (auto-init Job), ESO can sync secrets from in-cluster OpenBao:
 OpenBao KV v2 → ESO ClusterSecretStore → ExternalSecret → K8s Secret
 
 | Secret | OpenBao path | K8s Secret | Namespace |
@@ -202,7 +197,7 @@ No SOPS. No secrets in Git.
 | OpenBao returns `sealed` | Pod restarted, seal key missing | Check `openbao-seal-key` secret in secrets namespace |
 | `k8s-storage-init` fails | Garage Helm chart not fetched | Auto-handled: `k8s-storage-init` depends on `garage-chart` |
 | Port-forward zombie processes | Previous session not cleaned | `pkill -f 'kubectl port-forward'` (included in k8s-down) |
-| Hydra TLS cert not issued | ClusterIssuer not ready | k8s-pki must be applied before k8s-identity |
+| Hydra TLS cert not issued | ClusterIssuer not ready | pki must be applied before identity |
 | Flux not reconciling | GitRepository secret missing | Check `flux-git-credentials` in flux-system namespace |
 | ESO ExternalSecret stuck | ClusterSecretStore not ready | Check openbao-infra-token secret in external-secrets namespace |
 
@@ -210,9 +205,9 @@ No SOPS. No secrets in Git.
 
 - Cilium MUST be deployed before any other k8s stack (it's the CNI)
 - Cilium MUST be destroyed LAST (removing it breaks pod eviction)
-- k8s-pki MUST be deployed before k8s-identity (ClusterIssuer dependency)
+- pki MUST be deployed before identity (ClusterIssuer dependency)
 - In-cluster OpenBao uses self-init + static seal (no Job, no scripts)
-- k8s-storage is self-contained (generates its own harbor_admin_password)
+- storage is self-contained (generates its own harbor_admin_password)
 - Stacks are provider-agnostic: they only need a kubeconfig path
 - vault-backend (podman) must be running for any tofu command
 - Platform pod does NOT auto-stop — use `make bootstrap-stop`
@@ -221,8 +216,8 @@ No SOPS. No secrets in Git.
 
 ```bash
 # vault-backend + OpenBao KMS
-curl -s http://localhost:8080/state/k8s-cni | head -c 100  # state accessible?
-curl -s http://localhost:8200/v1/sys/health | jq .          # OpenBao healthy?
+curl -s http://localhost:8080/state/cni | head -c 100     # state accessible?
+curl -s http://localhost:8200/v1/sys/health | jq .         # OpenBao healthy?
 
 # Cilium
 kubectl -n kube-system get pods -l app.kubernetes.io/name=cilium-agent

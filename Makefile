@@ -21,23 +21,23 @@ VAULT_TOKEN        := $(shell cat $(CS_TOKEN_FILE) 2>/dev/null)
 
 # ─── Stack paths ─────────────────────────────────────────────────────
 
-TF_K8S_CNI        := terraform/stacks/k8s-cni
-TF_K8S_MONITORING := terraform/stacks/k8s-monitoring
-TF_K8S_PKI        := terraform/stacks/k8s-pki
-TF_K8S_IDENTITY   := terraform/stacks/k8s-identity
-TF_K8S_SECURITY   := terraform/stacks/k8s-security
-TF_K8S_STORAGE    := terraform/stacks/k8s-storage
-TF_FLUX_BOOTSTRAP := terraform/stacks/flux-bootstrap
-GARAGE_CHART      := configs/garage/chart
+TF_CNI        := stacks/cni
+TF_MONITORING := stacks/monitoring
+TF_PKI        := stacks/pki
+TF_IDENTITY   := stacks/identity
+TF_SECURITY   := stacks/security
+TF_STORAGE    := stacks/storage
+TF_FLUX       := stacks/flux-bootstrap
+GARAGE_CHART  := stacks/storage/chart
 
 # ─── Provider paths ──────────────────────────────────────────────────
 
-TF_LOCAL    := terraform/envs/local
-TF_OUTSCALE := terraform/envs/outscale
-TF_SCALEWAY := terraform/envs/scaleway
-TF_SCW_IAM  := terraform/envs/scaleway/iam
-TF_SCW_IMAGE := terraform/envs/scaleway/image
-TF_SCW_CI   := terraform/envs/scaleway/ci
+TF_LOCAL    := envs/local
+TF_OUTSCALE := envs/outscale
+TF_SCALEWAY := envs/scaleway
+TF_SCW_IAM  := envs/scaleway/iam
+TF_SCW_IMAGE := envs/scaleway/image
+TF_SCW_CI   := envs/scaleway/ci
 VMWARE      := envs/vmware-airgap
 
 .PHONY: help
@@ -62,14 +62,14 @@ help: ## Show this help
 .PHONY: k8s-cni-init k8s-cni-apply k8s-cni-destroy
 
 k8s-cni-init: ## terraform init for k8s-cni
-	$(TF) -chdir=$(TF_K8S_CNI) init
+	$(TF) -chdir=$(TF_CNI) init
 
 k8s-cni-apply: ## Deploy Cilium CNI
-	$(TF) -chdir=$(TF_K8S_CNI) apply -auto-approve \
+	$(TF) -chdir=$(TF_CNI) apply -auto-approve \
 		-var="kubeconfig_path=$(KC_FILE)"
 
 k8s-cni-destroy:
-	$(TF) -chdir=$(TF_K8S_CNI) destroy -auto-approve \
+	$(TF) -chdir=$(TF_CNI) destroy -auto-approve \
 		-var="kubeconfig_path=$(KC_FILE)"
 
 # ─── k8s-monitoring (vm-k8s-stack + VictoriaLogs + Headlamp) ─────────
@@ -78,14 +78,14 @@ k8s-cni-destroy:
 .PHONY: k8s-monitoring-init k8s-monitoring-apply k8s-monitoring-destroy
 
 k8s-monitoring-init: ## terraform init for k8s-monitoring
-	$(TF) -chdir=$(TF_K8S_MONITORING) init
+	$(TF) -chdir=$(TF_MONITORING) init
 
 k8s-monitoring-apply: ## Deploy monitoring stack
-	$(TF) -chdir=$(TF_K8S_MONITORING) apply -auto-approve \
+	$(TF) -chdir=$(TF_MONITORING) apply -auto-approve \
 		-var="kubeconfig_path=$(KC_FILE)"
 
 k8s-monitoring-destroy:
-	$(TF) -chdir=$(TF_K8S_MONITORING) destroy -auto-approve \
+	$(TF) -chdir=$(TF_MONITORING) destroy -auto-approve \
 		-var="kubeconfig_path=$(KC_FILE)"
 
 # ─── k8s-pki (OpenBao + cert-manager + CA secrets) ────────────────────
@@ -94,14 +94,14 @@ k8s-monitoring-destroy:
 .PHONY: k8s-pki-init k8s-pki-apply k8s-pki-destroy
 
 k8s-pki-init: ## terraform init for k8s-pki
-	$(TF) -chdir=$(TF_K8S_PKI) init
+	$(TF) -chdir=$(TF_PKI) init
 
 k8s-pki-apply: ## Deploy PKI + OpenBao + cert-manager
-	$(TF) -chdir=$(TF_K8S_PKI) apply -auto-approve \
+	$(TF) -chdir=$(TF_PKI) apply -auto-approve \
 		-var="kubeconfig_path=$(KC_FILE)"
 
 k8s-pki-destroy:
-	$(TF) -chdir=$(TF_K8S_PKI) destroy -auto-approve \
+	$(TF) -chdir=$(TF_PKI) destroy -auto-approve \
 		-var="kubeconfig_path=$(KC_FILE)"
 
 # ─── k8s-identity (Kratos + Hydra + Pomerium) ─────────────────────────
@@ -110,15 +110,15 @@ k8s-pki-destroy:
 .PHONY: k8s-identity-init k8s-identity-apply k8s-identity-destroy
 
 k8s-identity-init: ## terraform init for k8s-identity
-	$(TF) -chdir=$(TF_K8S_IDENTITY) init
+	$(TF) -chdir=$(TF_IDENTITY) init
 
 k8s-identity-apply: ## Deploy Kratos + Hydra + Pomerium
-	$(TF) -chdir=$(TF_K8S_IDENTITY) apply -auto-approve \
+	$(TF) -chdir=$(TF_IDENTITY) apply -auto-approve \
 		-var="kubeconfig_path=$(KC_FILE)" \
 		-var="vault_token=$(VAULT_TOKEN)"
 
 k8s-identity-destroy:
-	$(TF) -chdir=$(TF_K8S_IDENTITY) destroy -auto-approve \
+	$(TF) -chdir=$(TF_IDENTITY) destroy -auto-approve \
 		-var="kubeconfig_path=$(KC_FILE)" \
 		-var="vault_token=$(VAULT_TOKEN)"
 
@@ -127,14 +127,14 @@ k8s-identity-destroy:
 .PHONY: k8s-security-init k8s-security-apply k8s-security-destroy
 
 k8s-security-init: ## terraform init for k8s-security
-	$(TF) -chdir=$(TF_K8S_SECURITY) init
+	$(TF) -chdir=$(TF_SECURITY) init
 
 k8s-security-apply: ## Deploy Trivy + Tetragon + Kyverno
-	$(TF) -chdir=$(TF_K8S_SECURITY) apply -auto-approve \
+	$(TF) -chdir=$(TF_SECURITY) apply -auto-approve \
 		-var="kubeconfig_path=$(KC_FILE)"
 
 k8s-security-destroy:
-	$(TF) -chdir=$(TF_K8S_SECURITY) destroy -auto-approve \
+	$(TF) -chdir=$(TF_SECURITY) destroy -auto-approve \
 		-var="kubeconfig_path=$(KC_FILE)"
 
 # ─── k8s-storage (local-path + Garage + Velero + Harbor) ──────────────
@@ -149,15 +149,15 @@ garage-chart: ## Fetch Garage Helm chart (v2.2.0) from upstream
 	@echo "Garage Helm chart fetched to $(GARAGE_CHART)/"
 
 k8s-storage-init: garage-chart ## terraform init for k8s-storage (fetches Garage chart)
-	$(TF) -chdir=$(TF_K8S_STORAGE) init
+	$(TF) -chdir=$(TF_STORAGE) init
 
 k8s-storage-apply: ## Deploy local-path + Garage + Velero + Harbor
-	$(TF) -chdir=$(TF_K8S_STORAGE) apply -auto-approve \
+	$(TF) -chdir=$(TF_STORAGE) apply -auto-approve \
 		-var="kubeconfig_path=$(KC_FILE)" \
 		-var="vault_token=$(VAULT_TOKEN)"
 
 k8s-storage-destroy:
-	$(TF) -chdir=$(TF_K8S_STORAGE) destroy -auto-approve \
+	$(TF) -chdir=$(TF_STORAGE) destroy -auto-approve \
 		-var="kubeconfig_path=$(KC_FILE)" \
 		-var="vault_token=$(VAULT_TOKEN)"
 
@@ -166,14 +166,14 @@ k8s-storage-destroy:
 .PHONY: flux-bootstrap-init flux-bootstrap-apply flux-bootstrap-destroy
 
 flux-bootstrap-init: ## terraform init for flux-bootstrap
-	$(TF) -chdir=$(TF_FLUX_BOOTSTRAP) init
+	$(TF) -chdir=$(TF_FLUX) init
 
 flux-bootstrap-apply: ## Install Flux and configure GitOps sync
-	$(TF) -chdir=$(TF_FLUX_BOOTSTRAP) apply -auto-approve \
+	$(TF) -chdir=$(TF_FLUX) apply -auto-approve \
 		-var="kubeconfig_path=$(KC_FILE)"
 
 flux-bootstrap-destroy:
-	$(TF) -chdir=$(TF_FLUX_BOOTSTRAP) destroy -auto-approve \
+	$(TF) -chdir=$(TF_FLUX) destroy -auto-approve \
 		-var="kubeconfig_path=$(KC_FILE)"
 
 # ─── Composite: all k8s stacks ───────────────────────────────────────
@@ -200,8 +200,8 @@ k8s-down: ## Destroy all k8s stacks (correct order)
 	-$(MAKE) k8s-monitoring-destroy
 	-$(MAKE) k8s-pki-destroy
 	-$(MAKE) k8s-cni-destroy
-	@for stack in k8s-cni k8s-monitoring k8s-pki k8s-identity k8s-security k8s-storage; do \
-		rm -f terraform/stacks/$$stack/terraform.tfstate.backup; \
+	@for stack in cni monitoring pki identity security storage; do \
+		rm -f stacks/$$stack/terraform.tfstate.backup; \
 	done
 	@pkill -f 'kubectl port-forward' 2>/dev/null || true
 
@@ -449,81 +449,6 @@ scaleway-nuke: ## DANGEROUS: destroy everything including IAM and image
 	-$(MAKE) scaleway-iam-destroy
 
 # ═══════════════════════════════════════════════════════════════════════
-# CAPI Workload Clusters
-# ═══════════════════════════════════════════════════════════════════════
-
-.PHONY: capi-init capi-create-cpu capi-create-gpu capi-status capi-kubeconfig capi-delete capi-destroy
-
-CAPI_NS := capi-workload
-
-define capi-ensure-ns
-	@KUBECONFIG=$(KC_FILE) kubectl create namespace $(CAPI_NS) 2>/dev/null || true
-	@SCW_AK=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw cluster_access_key) && \
-		SCW_SK=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw cluster_secret_key) && \
-		SCW_PID=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw project_id) && \
-		KUBECONFIG=$(KC_FILE) kubectl -n $(CAPI_NS) create secret generic scaleway-credentials \
-			--from-literal=SCW_ACCESS_KEY="$$SCW_AK" \
-			--from-literal=SCW_SECRET_KEY="$$SCW_SK" \
-			--from-literal=SCW_DEFAULT_PROJECT_ID="$$SCW_PID" \
-			--dry-run=client -o yaml | KUBECONFIG=$(KC_FILE) kubectl apply -f -
-endef
-
-capi-init: scaleway-kubeconfig ## Install CAPI + CAPT + CAPS providers on management cluster
-	@command -v clusterctl >/dev/null 2>&1 || { echo "Installing clusterctl..."; brew install clusterctl; }
-	@echo "Installing CAPI providers on management cluster..."
-	@SCW_ACCESS_KEY=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw cluster_access_key) \
-		SCW_SECRET_KEY=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw cluster_secret_key) \
-		SCW_DEFAULT_PROJECT_ID=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw project_id) \
-		KUBECONFIG=$(KC_FILE) \
-		clusterctl init \
-			--config configs/capi/clusterctl.yaml \
-			--infrastructure scaleway:v0.2.0 \
-			--bootstrap talos:v0.6.11 \
-			--control-plane talos:v0.5.12
-	@echo "CAPI providers installed."
-
-capi-create-cpu: scaleway-kubeconfig ## Create a CPU workload cluster (DEV1-S)
-	@echo "Creating CPU workload cluster..."
-	$(capi-ensure-ns)
-	@SCW_PROJECT_ID=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw project_id) \
-		envsubst '$$SCW_PROJECT_ID' < configs/capi/workload-cpu.yaml | \
-		KUBECONFIG=$(KC_FILE) kubectl apply -f -
-	@echo "CPU cluster created. Watch: make capi-status"
-
-capi-create-gpu: scaleway-kubeconfig ## Create a GPU workload cluster (L4-1-24G)
-	@echo "Creating GPU workload cluster..."
-	$(capi-ensure-ns)
-	@SCW_PROJECT_ID=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw project_id) \
-		envsubst '$$SCW_PROJECT_ID' < configs/capi/workload-gpu.yaml | \
-		KUBECONFIG=$(KC_FILE) kubectl apply -f -
-	@echo "GPU cluster created. Watch: make capi-status"
-
-capi-status: scaleway-kubeconfig ## Show all workload cluster status
-	@echo "=== Clusters ==="
-	@KUBECONFIG=$(KC_FILE) kubectl get cluster -n $(CAPI_NS) -o wide 2>/dev/null || echo "No clusters found"
-	@echo ""
-	@echo "=== Machines ==="
-	@KUBECONFIG=$(KC_FILE) kubectl get machines -n $(CAPI_NS) -o wide 2>/dev/null || echo "No machines found"
-	@echo ""
-	@echo "=== ScalewayMachines ==="
-	@KUBECONFIG=$(KC_FILE) kubectl get scalewaymachines -n $(CAPI_NS) -o wide 2>/dev/null || echo "No ScalewayMachines found"
-
-capi-kubeconfig: scaleway-kubeconfig ## Get workload cluster kubeconfig (CLUSTER=name)
-	@KUBECONFIG=$(KC_FILE) clusterctl get kubeconfig $(CLUSTER) -n $(CAPI_NS) > $(HOME)/.kube/talos-$(CLUSTER)
-	@echo "Kubeconfig written to $(HOME)/.kube/talos-$(CLUSTER)"
-
-capi-delete: scaleway-kubeconfig ## Delete a workload cluster (CLUSTER=name)
-	@echo "Deleting cluster $(CLUSTER)..."
-	@KUBECONFIG=$(KC_FILE) kubectl delete cluster $(CLUSTER) -n $(CAPI_NS) --timeout=300s
-	@echo "Cluster $(CLUSTER) deleted."
-
-capi-destroy: scaleway-kubeconfig ## Remove CAPI providers from management cluster
-	@echo "Removing CAPI providers..."
-	@KUBECONFIG=$(KC_FILE) clusterctl delete --all
-	@KUBECONFIG=$(KC_FILE) kubectl delete namespace $(CAPI_NS) --ignore-not-found
-	@echo "CAPI providers removed."
-
-# ═══════════════════════════════════════════════════════════════════════
 # Bootstrap (podman platform pod — OpenBao KMS + Gitea + Woodpecker)
 #
 # Single pod: OpenBao 3-node Raft (tfstate + PKI CA chain) +
@@ -657,7 +582,7 @@ scaleway-cluster-test: ## tofu test for cluster stage
 	$(TF) -chdir=$(TF_SCALEWAY) test
 
 k8s-cni-test: ## tofu test for k8s-cni stack
-	$(TF) -chdir=$(TF_K8S_CNI) test
+	$(TF) -chdir=$(TF_CNI) test
 
 # ═══════════════════════════════════════════════════════════════════════
 # UI Access
@@ -682,7 +607,7 @@ scaleway-headlamp: scaleway-kubeconfig ## Open Headlamp UI (token copied to clip
 		sleep 2 && open http://localhost:4466
 
 scaleway-harbor: scaleway-kubeconfig ## Open Harbor UI (admin password in clipboard)
-	@PASSWORD=$$($(TF) -chdir=$(TF_K8S_STORAGE) output -raw harbor_admin_password) && \
+	@PASSWORD=$$($(TF) -chdir=$(TF_STORAGE) output -raw harbor_admin_password) && \
 		echo "$$PASSWORD" | pbcopy && \
 		echo "Harbor admin password copied to clipboard (user: admin)" && \
 		echo "" && \
@@ -698,10 +623,10 @@ scaleway-grafana: scaleway-kubeconfig ## Open Grafana UI
 # Tests (Chainsaw — declarative K8s e2e)
 # ═══════════════════════════════════════════════════════════════════════
 
-STACKS := terraform/envs/scaleway/image terraform/envs/scaleway terraform/envs/scaleway/ci \
-	terraform/stacks/k8s-cni terraform/stacks/k8s-monitoring terraform/stacks/k8s-pki \
-	terraform/stacks/k8s-identity terraform/stacks/k8s-security terraform/stacks/k8s-storage \
-	terraform/stacks/flux-bootstrap
+STACKS := envs/scaleway/image envs/scaleway envs/scaleway/ci \
+	stacks/cni stacks/monitoring stacks/pki \
+	stacks/identity stacks/security stacks/storage \
+	stacks/flux-bootstrap
 
 .PHONY: validate velero-test test clean
 

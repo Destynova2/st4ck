@@ -17,9 +17,9 @@
 
 ### Terraform/OpenTofu
 
-- All Kubernetes stacks live in `terraform/stacks/<stack-name>/`
-- Environment-specific infrastructure lives in `terraform/envs/<provider>/`
-- Helm values live in `configs/<component>/values.yaml` and are referenced via `file()`
+- All Kubernetes stacks live in `stacks/<stack-name>/` (TF + values + flux co-located)
+- Environment-specific infrastructure lives in `envs/<provider>/`
+- Helm values are co-located in each stack folder and referenced via `file("${path.module}/...")`
 - Variables use `kubeconfig_path` (not raw credentials) for provider-agnostic stacks
 - Sensitive outputs must be marked `sensitive = true`
 
@@ -61,18 +61,18 @@ The Woodpecker CI pipeline (`.woodpecker.yml`) runs on push to `main`:
 
 ## Adding a new Kubernetes stack
 
-1. Create `terraform/stacks/<stack-name>/` with `main.tf`, `variables.tf`, `outputs.tf`
+1. Create `stacks/<stack-name>/` with `main.tf`, `variables.tf`, `outputs.tf`
 2. Add `kubeconfig_path` variable (required for all stacks)
-3. Add Helm values in `configs/<component>/values.yaml`
+3. Add Helm values in `stacks/<stack-name>/values-<component>.yaml`
 4. Add Makefile targets: `k8s-<stack>-init`, `k8s-<stack>-apply`, `k8s-<stack>-destroy`
 5. Wire into `k8s-up` and `k8s-down` composite targets (respect dependency order)
-6. Add Flux manifests in `clusters/management/<stack-name>/`
+6. Add Flux manifests in `stacks/<stack-name>/flux/`
 7. Add a Woodpecker CI step in `.woodpecker.yml`
 8. Document the stack in `docs/techno.md` and `CLAUDE.md`
 
 ## Adding a new environment
 
-1. Create `terraform/envs/<provider>/` with `main.tf` calling the `talos-cluster` module
+1. Create `envs/<provider>/` with `main.tf` calling the `talos-cluster` module
 2. Add provider-specific resources (VMs, networking, load balancer)
 3. Output `kubeconfig` and `talosconfig` as sensitive values
 4. Add Makefile targets: `<provider>-init`, `<provider>-apply`, `<provider>-destroy`, `<provider>-up`, `<provider>-down`

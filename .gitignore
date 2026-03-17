@@ -24,7 +24,7 @@ _out/
 kms-output/
 
 # Fetched Helm charts (upstream dependencies)
-configs/garage/chart/
+stacks/storage/chart/
 
 # Build artifacts
 image-cache.oci
