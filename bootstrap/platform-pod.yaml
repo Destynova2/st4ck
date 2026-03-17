@@ -131,7 +131,7 @@ spec:
   containers:
     # ═══ OpenBao KMS (single Raft node) ══════════════════════════════
     - name: bao
-      image: quay.io/openbao/openbao:2.5.0
+      image: quay.io/openbao/openbao:2.5.1
       command: ["bao", "server", "-config=/config/config.hcl"]
       ports:
         - containerPort: 8200
@@ -156,7 +156,7 @@ spec:
     # ═══ vault-backend (TF state HTTP → OpenBao KV v2) ═══════════════
     # No token needed at startup — each TF client sends creds per request.
     - name: vault-backend
-      image: docker.io/gherynos/vault-backend:latest
+      image: docker.io/gherynos/vault-backend@sha256:fb654a3f344ec38edf93e31b95c81a531d3a22178e31d00c25fef2b3dcbffa03
       ports:
         - containerPort: 8080
           hostPort: 8080
@@ -172,7 +172,7 @@ spec:
 
     # ═══ Gitea (rootless, env vars applied by entrypoint) ═════════════
     - name: gitea
-      image: docker.io/gitea/gitea:1.22-rootless
+      image: docker.io/gitea/gitea:1.22-rootless@sha256:4216d612992a25ed5fe6062679ca0be0b224f93c0b6fdba03e6c8f3d623cfb4e
       ports:
         - containerPort: 3000
           hostPort: 3000
@@ -195,7 +195,7 @@ spec:
 
     # ═══ Woodpecker server (v3, reads OAuth creds from files) ═════════
     - name: woodpecker-server
-      image: docker.io/woodpeckerci/woodpecker-server:v3
+      image: docker.io/woodpeckerci/woodpecker-server:v3@sha256:428eb0965754e25e67b8b086648438858b4fa64487b1cd3cc8e4101b396e459a
       ports:
         - containerPort: 8000
           hostPort: 8000
@@ -229,7 +229,7 @@ spec:
 
     # ═══ Woodpecker agent ════════════════════════════════════════════
     - name: woodpecker-agent
-      image: docker.io/woodpeckerci/woodpecker-agent:v3
+      image: docker.io/woodpeckerci/woodpecker-agent:v3@sha256:a983b1016217ad94cdab48d732ec97b5b1f72718725d651183d7ec885f7caf35
       command: ["woodpecker-agent", "agent"]
       securityContext:
         privileged: true
@@ -251,7 +251,7 @@ spec:
 
     # ═══ Setup (OpenTofu: tokens, secrets, Gitea, WP) ════════════════
     - name: tofu-setup
-      image: ghcr.io/opentofu/opentofu:1.9
+      image: ghcr.io/opentofu/opentofu:1.9@sha256:2fc03a4a0e745558a0693f1e80ffe56c3c43826ee21140c4d27f52fd938b82fe
       command: ["sh", "-c"]
       args:
         - |
@@ -316,7 +316,7 @@ spec:
     - name: openbao-config
       configMap: { name: openbao-config }
     - name: bao-data
-      emptyDir: {}
+      emptyDir: {}  # Ephemeral: all KMS data lost on pod restart (bootstrap is one-shot)
     - name: bao-seal
       configMap: { name: bao-seal-key }
     - name: gitea-data

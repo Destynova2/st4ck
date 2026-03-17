@@ -11,8 +11,9 @@ resource "terraform_data" "gitea_install" {
         sleep 2
       done
 
-      # Install Gitea via wizard (first boot only, idempotent)
-      wget -qO /dev/null --post-data="db_type=sqlite3&\
+      # Install Gitea via wizard (first boot only, idempotent — retry up to 3x)
+      for attempt in 1 2 3; do
+        wget -qO /dev/null --post-data="db_type=sqlite3&\
 db_path=/var/lib/gitea/data/gitea.db&\
 app_name=Gitea&\
 repo_root_path=/var/lib/gitea/git/repositories&\
@@ -28,7 +29,10 @@ admin_passwd=${var.ci_password}&\
 admin_confirm_passwd=${var.ci_password}&\
 admin_email=admin@ci.local&\
 password_algorithm=pbkdf2" \
-        "$GITEA/" 2>/dev/null || true
+          "$GITEA/" 2>/dev/null && break
+        echo "  Gitea install attempt $attempt failed, retrying..."
+        sleep 3
+      done
 
       echo "Waiting for Gitea API..."
       for i in $(seq 1 30); do
