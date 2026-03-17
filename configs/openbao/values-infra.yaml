@@ -1,6 +1,5 @@
 # OpenBao Infra — PKI backend + infrastructure secrets
-# Standalone mode with file storage
-# Init handled automatically by openbao-init K8s Job (in k8s-pki stack)
+# Standalone mode with file storage + static seal + self-init
 
 server:
   dev:
@@ -21,13 +20,150 @@ server:
         path = "/openbao/data"
       }
 
-      # Production: transit auto-unseal from external KMS
-      # seal "transit" {
-      #   address    = "https://kms.example.com:8200"
-      #   token      = "s.xxxxx"
-      #   key_name   = "autounseal"
-      #   mount_path = "transit/"
-      # }
+      seal "static" {
+        current_key_id = "infra-1"
+        current_key    = "env://BAO_SEAL_KEY"
+      }
+
+      # ─── Self-init: KV v2 for cluster secrets ─────────────────────
+      initialize "kv" {
+        request "mount-kv" {
+          operation = "update"
+          path      = "sys/mounts/secret"
+          data = {
+            type    = "kv"
+            options = { version = "2" }
+          }
+        }
+      }
+
+      # ─── Self-init: Transit for state encryption ──────────────────
+      initialize "transit" {
+        request "mount-transit" {
+          operation = "update"
+          path      = "sys/mounts/transit"
+          data      = { type = "transit" }
+        }
+        request "create-state-key" {
+          operation = "update"
+          path      = "transit/keys/state-encryption"
+          data      = { type = "aes256-gcm96" }
+        }
+      }
+
+      # ─── Self-init: SSH CA for Flux ───────────────────────────────
+      initialize "ssh-ca" {
+        request "mount-ssh" {
+          operation = "update"
+          path      = "sys/mounts/ssh-client-signer"
+          data      = { type = "ssh" }
+        }
+        request "generate-ca" {
+          operation = "update"
+          path      = "ssh-client-signer/config/ca"
+          data      = { generate_signing_key = true }
+        }
+        request "flux-role" {
+          operation = "update"
+          path      = "ssh-client-signer/roles/flux"
+          data = {
+            key_type                = "ca"
+            allowed_users           = "flux"
+            default_user            = "flux"
+            ttl                     = "2h"
+            max_ttl                 = "24h"
+            allow_user_certificates = true
+          }
+        }
+      }
+
+      # ─── Self-init: Policies ──────────────────────────────────────
+      initialize "policies" {
+        request "flux-ssh-policy" {
+          operation = "update"
+          path      = "sys/policies/acl/flux-ssh"
+          data = {
+            policy = "path \"ssh-client-signer/sign/flux\" { capabilities = [\"create\", \"update\"] }"
+          }
+        }
+        request "eso-readonly-policy" {
+          operation = "update"
+          path      = "sys/policies/acl/eso-readonly"
+          data = {
+            policy = "path \"secret/data/*\" { capabilities = [\"read\"] }\npath \"secret/metadata/*\" { capabilities = [\"read\", \"list\"] }"
+          }
+        }
+        request "admin-policy" {
+          operation = "update"
+          path      = "sys/policies/acl/admin"
+          data = {
+            policy = "path \"*\" { capabilities = [\"create\",\"update\",\"read\",\"delete\",\"list\",\"sudo\"] }"
+          }
+        }
+      }
+
+      # ─── Self-init: K8s auth (Flux SSH + ESO) ───────────────────
+      initialize "k8s-auth" {
+        request "enable-k8s-auth" {
+          operation = "update"
+          path      = "sys/auth/kubernetes"
+          data      = { type = "kubernetes" }
+        }
+        request "configure-k8s-auth" {
+          operation = "update"
+          path      = "auth/kubernetes/config"
+          data      = { kubernetes_host = "https://kubernetes.default.svc" }
+        }
+        request "flux-ssh-role" {
+          operation = "update"
+          path      = "auth/kubernetes/role/flux-ssh"
+          data = {
+            bound_service_account_names      = "flux2-source-controller"
+            bound_service_account_namespaces = "flux-system"
+            policies                         = "flux-ssh"
+            ttl                              = "1h"
+          }
+        }
+        request "eso-role" {
+          operation = "update"
+          path      = "auth/kubernetes/role/eso"
+          data = {
+            bound_service_account_names      = "external-secrets"
+            bound_service_account_namespaces = "external-secrets"
+            policies                         = "eso-readonly"
+            ttl                              = "1h"
+          }
+        }
+      }
+
+      # ─── Self-init: Admin userpass (break-glass access) ─────────
+      initialize "admin" {
+        request "mount-userpass" {
+          operation = "update"
+          path      = "sys/auth/userpass"
+          data      = { type = "userpass" }
+        }
+        request "create-admin" {
+          operation = "update"
+          path      = "auth/userpass/users/admin"
+          data = {
+            "password" = {
+              eval_type   = "string"
+              eval_source = "env"
+              env_var     = "BAO_ADMIN_PASSWORD"
+            }
+            "token_policies" = ["admin"]
+          }
+        }
+      }
+
+  extraSecretEnvironmentVars:
+    - envName: BAO_SEAL_KEY
+      secretName: openbao-seal-key
+      secretKey: key
+    - envName: BAO_ADMIN_PASSWORD
+      secretName: openbao-admin-password
+      secretKey: password
 
   dataStorage:
     enabled: true

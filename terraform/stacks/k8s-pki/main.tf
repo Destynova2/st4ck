@@ -8,6 +8,10 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
     kubectl = {
       source  = "alekc/kubectl"
       version = "~> 2.1"
@@ -108,6 +112,43 @@ resource "kubernetes_secret" "pki_app_ca" {
   depends_on = [kubernetes_namespace.secrets]
 }
 
+# ─── OpenBao seal key (shared, static seal for auto-unseal) ──────────
+
+resource "random_bytes" "openbao_seal_key" {
+  length = 32
+}
+
+resource "kubernetes_secret" "openbao_seal_key" {
+  metadata {
+    name      = "openbao-seal-key"
+    namespace = "secrets"
+  }
+
+  data = {
+    key = random_bytes.openbao_seal_key.hex
+  }
+
+  depends_on = [kubernetes_namespace.secrets]
+}
+
+resource "random_password" "openbao_admin" {
+  length  = 32
+  special = false
+}
+
+resource "kubernetes_secret" "openbao_admin_password" {
+  metadata {
+    name      = "openbao-admin-password"
+    namespace = "secrets"
+  }
+
+  data = {
+    password = random_password.openbao_admin.result
+  }
+
+  depends_on = [kubernetes_namespace.secrets]
+}
+
 # ─── OpenBao Infra — PKI backend + infrastructure secrets ──────────
 
 resource "helm_release" "openbao_infra" {
@@ -120,7 +161,11 @@ resource "helm_release" "openbao_infra" {
 
   values = [file("${path.module}/../../../configs/openbao/values-infra.yaml")]
 
-  depends_on = [kubernetes_namespace.secrets]
+  depends_on = [
+    kubernetes_namespace.secrets,
+    kubernetes_secret.openbao_seal_key,
+    kubernetes_secret.openbao_admin_password,
+  ]
 }
 
 # ─── OpenBao App — application secrets ─────────────────────────────
@@ -135,117 +180,7 @@ resource "helm_release" "openbao_app" {
 
   values = [file("${path.module}/../../../configs/openbao/values-app.yaml")]
 
-  depends_on = [kubernetes_namespace.secrets]
-}
-
-# ─── OpenBao init Job — in-cluster init, unseal, configure ─────────
-# Replaces scripts/openbao-cluster-init.sh. Runs as a K8s Job:
-# - Idempotent (checks if already initialized)
-# - Stores tokens in K8s Secrets (not local files)
-# - Configures: Transit engine, SSH CA, K8s auth, policies
-
-resource "kubernetes_service_account_v1" "openbao_init" {
-  metadata {
-    name      = "openbao-init"
-    namespace = "secrets"
-  }
-  depends_on = [kubernetes_namespace.secrets]
-}
-
-resource "kubernetes_cluster_role_v1" "openbao_init" {
-  metadata { name = "openbao-init" }
-  rule {
-    api_groups = [""]
-    resources  = ["secrets"]
-    verbs      = ["get", "create", "update", "patch"]
-  }
-  rule {
-    api_groups = [""]
-    resources  = ["pods", "pods/exec"]
-    verbs      = ["get", "list", "create"]
-  }
-}
-
-resource "kubernetes_cluster_role_binding_v1" "openbao_init" {
-  metadata { name = "openbao-init" }
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "ClusterRole"
-    name      = kubernetes_cluster_role_v1.openbao_init.metadata[0].name
-  }
-  subject {
-    kind      = "ServiceAccount"
-    name      = kubernetes_service_account_v1.openbao_init.metadata[0].name
-    namespace = "secrets"
-  }
-}
-
-resource "kubernetes_config_map_v1" "openbao_init_script" {
-  metadata {
-    name      = "openbao-init-script"
-    namespace = "secrets"
-  }
-
-  data = {
-    "init.sh" = file("${path.module}/../../../configs/openbao/init-job.sh")
-  }
-
-  depends_on = [kubernetes_namespace.secrets]
-}
-
-resource "kubernetes_job_v1" "openbao_init" {
-  metadata {
-    name      = "openbao-init"
-    namespace = "secrets"
-  }
-
-  spec {
-    backoff_limit = 5
-
-    template {
-      metadata { labels = { app = "openbao-init" } }
-      spec {
-        service_account_name = kubernetes_service_account_v1.openbao_init.metadata[0].name
-        restart_policy       = "OnFailure"
-
-        container {
-          name    = "init"
-          image   = "quay.io/openbao/openbao:2.1.0"
-          command = ["sh", "/scripts/init.sh"]
-
-          env {
-            name  = "NAMESPACE"
-            value = "secrets"
-          }
-
-          volume_mount {
-            name       = "scripts"
-            mount_path = "/scripts"
-            read_only  = true
-          }
-        }
-
-        volume {
-          name = "scripts"
-          config_map {
-            name         = kubernetes_config_map_v1.openbao_init_script.metadata[0].name
-            default_mode = "0755"
-          }
-        }
-      }
-    }
-  }
-
-  wait_for_completion = true
-
-  timeouts {
-    create = "10m"
-  }
-
-  depends_on = [
-    helm_release.openbao_infra,
-    helm_release.openbao_app,
-  ]
+  depends_on = [kubernetes_namespace.secrets, kubernetes_secret.openbao_seal_key]
 }
 
 # ─── cert-manager — automatic TLS from infra sub-CA ────────────────

@@ -199,7 +199,7 @@ No SOPS. No secrets in Git.
 | `k8s-pki-apply` fails: file not found | `kms-output/` missing | Run `make bootstrap` (one-shot, needs podman) |
 | `tofu init` fails: connection refused | vault-backend not running | `make bootstrap` or restart: `podman pod start platform` |
 | Kyverno webhooks block deletions | Webhooks persist after pods gone | `make k8s-down` handles this (deletes webhooks first) |
-| OpenBao returns `sealed` | Pod restarted, auto-init didn't unseal | Check `openbao-init` Job logs in secrets namespace |
+| OpenBao returns `sealed` | Pod restarted, seal key missing | Check `openbao-seal-key` secret in secrets namespace |
 | `k8s-storage-init` fails | Garage Helm chart not fetched | Auto-handled: `k8s-storage-init` depends on `garage-chart` |
 | Port-forward zombie processes | Previous session not cleaned | `pkill -f 'kubectl port-forward'` (included in k8s-down) |
 | Hydra TLS cert not issued | ClusterIssuer not ready | k8s-pki must be applied before k8s-identity |
@@ -211,7 +211,7 @@ No SOPS. No secrets in Git.
 - Cilium MUST be deployed before any other k8s stack (it's the CNI)
 - Cilium MUST be destroyed LAST (removing it breaks pod eviction)
 - k8s-pki MUST be deployed before k8s-identity (ClusterIssuer dependency)
-- In-cluster OpenBao is auto-initialized by k8s-pki (K8s Job, tokens in K8s Secrets)
+- In-cluster OpenBao uses self-init + static seal (no Job, no scripts)
 - k8s-storage is self-contained (generates its own harbor_admin_password)
 - Stacks are provider-agnostic: they only need a kubeconfig path
 - vault-backend (podman) must be running for any tofu command

@@ -592,7 +592,7 @@ bootstrap: ## Start platform pod (everything auto-initializes inside)
 
 bootstrap-export: ## Copy tokens + certs from PVC to kms-output/
 	@mkdir -p $(KMS_OUTPUT)
-	@podman cp platform-kms-init:/kms-output/. $(KMS_OUTPUT)/
+	@podman cp platform-tofu-setup:/kms-output/. $(KMS_OUTPUT)/
 	@echo "Exported to $(KMS_OUTPUT)/"
 	@ls $(KMS_OUTPUT)/
 

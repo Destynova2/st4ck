@@ -1,6 +1,6 @@
 # State encryption with OpenBao Transit (KMS-backed)
 #
-# Copy this block into stacks that run AFTER `make openbao-init`:
+# Copy this block into stacks that run AFTER k8s-pki (OpenBao self-init):
 #   - terraform/stacks/k8s-identity/main.tf
 #   - terraform/stacks/k8s-security/main.tf
 #   - terraform/stacks/k8s-storage/main.tf

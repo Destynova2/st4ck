@@ -1,6 +1,5 @@
 # OpenBao App — application secrets
-# Standalone mode with file storage
-# Init handled automatically by openbao-init K8s Job (in k8s-pki stack)
+# Standalone mode with file storage + static seal + self-init
 
 server:
   dev:
@@ -21,13 +20,27 @@ server:
         path = "/openbao/data"
       }
 
-      # Production: transit auto-unseal from external KMS
-      # seal "transit" {
-      #   address    = "https://kms.example.com:8200"
-      #   token      = "s.xxxxx"
-      #   key_name   = "autounseal"
-      #   mount_path = "transit/"
-      # }
+      seal "static" {
+        current_key_id = "app-1"
+        current_key    = "env://BAO_SEAL_KEY"
+      }
+
+      # ─── Self-init: KV v2 for application secrets ────────────────
+      initialize "kv" {
+        request "mount-kv" {
+          operation = "update"
+          path      = "sys/mounts/secret"
+          data = {
+            type    = "kv"
+            options = { version = "2" }
+          }
+        }
+      }
+
+  extraSecretEnvironmentVars:
+    - envName: BAO_SEAL_KEY
+      secretName: openbao-seal-key
+      secretKey: key
 
   dataStorage:
     enabled: true
