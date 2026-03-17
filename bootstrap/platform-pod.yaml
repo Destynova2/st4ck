@@ -170,7 +170,10 @@ spec:
         - name: LISTEN_ADDRESS
           value: "0.0.0.0:8080"
 
-    # ═══ Gitea (rootless, env vars applied by entrypoint) ═════════════
+    # ═══ Gitea (rootless, pre-configured via env — no install wizard) ══
+    # INSTALL_LOCK=true skips the wizard POST that causes a server
+    # shutdown+restart race condition ("address already in use" on :3000).
+    # First user registered via /user/sign_up becomes admin automatically.
     - name: gitea
       image: docker.io/gitea/gitea:1.22-rootless@sha256:4216d612992a25ed5fe6062679ca0be0b224f93c0b6fdba03e6c8f3d623cfb4e
       ports:
@@ -184,14 +187,22 @@ spec:
         - name: gitea-config
           mountPath: /etc/gitea
       env:
+        - name: GITEA__security__INSTALL_LOCK
+          value: "true"
         - name: GITEA__server__ROOT_URL
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_GITEA_URL } }
         - name: GITEA__server__DOMAIN
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_DOMAIN } }
+        - name: GITEA__server__HTTP_PORT
+          value: "3000"
+        - name: GITEA__server__SSH_PORT
+          value: "2222"
         - name: GITEA__webhook__ALLOWED_HOST_LIST
           value: "loopback,private"
         - name: GITEA__database__DB_TYPE
           value: "sqlite3"
+        - name: GITEA__database__PATH
+          value: "/var/lib/gitea/data/gitea.db"
 
     # ═══ Woodpecker server (v3, reads OAuth creds from files) ═════════
     - name: woodpecker-server

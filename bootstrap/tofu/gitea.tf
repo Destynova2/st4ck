@@ -1,4 +1,11 @@
-# ─── Wait for Gitea install wizard to be available ───────────────────
+# ─── Wait for Gitea + register first user (auto-admin, no wizard) ────
+# INSTALL_LOCK=true in platform-pod.yaml skips the install wizard entirely,
+# so Gitea boots directly into normal mode without the shutdown/restart
+# that caused "address already in use" on :3000.
+#
+# The first registered user via /user/sign_up automatically becomes admin
+# (Gitea checks HasOnlyOneUser and sets IsAdmin=true).
+# This POST does NOT trigger a server restart — it's a normal signup.
 
 resource "terraform_data" "gitea_install" {
   provisioner "local-exec" {
@@ -6,33 +13,18 @@ resource "terraform_data" "gitea_install" {
       GITEA="${var.gitea_internal_url}"
       echo "Waiting for Gitea..."
       for i in $(seq 1 60); do
-        CODE=$(wget -qO /dev/null -S "$GITEA/" 2>&1 | grep -c 'HTTP/' || echo 0)
-        [ "$CODE" -gt 0 ] && break
+        wget -qO /dev/null "$GITEA/api/v1/version" 2>/dev/null && break
         sleep 2
       done
 
-      # Install Gitea via wizard (first boot only, idempotent — retry up to 3x)
-      for attempt in 1 2 3; do
-        wget -qO /dev/null --post-data="db_type=sqlite3&\
-db_path=/var/lib/gitea/data/gitea.db&\
-app_name=Gitea&\
-repo_root_path=/var/lib/gitea/git/repositories&\
-lfs_root_path=/var/lib/gitea/data/lfs&\
-run_user=git&\
-domain=localhost&\
-ssh_port=2222&\
-http_port=3000&\
-app_url=${var.gitea_external_url}/&\
-log_root_path=/var/lib/gitea/data/log&\
-admin_name=${var.ci_admin}&\
-admin_passwd=${var.ci_password}&\
-admin_confirm_passwd=${var.ci_password}&\
-admin_email=admin@ci.local&\
-password_algorithm=pbkdf2" \
-          "$GITEA/" 2>/dev/null && break
-        echo "  Gitea install attempt $attempt failed, retrying..."
-        sleep 3
-      done
+      # Register first user via signup form (becomes admin automatically)
+      # Fetch CSRF token from signup page first
+      wget -qO /tmp/signup.html "$GITEA/user/sign_up" 2>/dev/null
+      CSRF=$(grep '_csrf' /tmp/signup.html | grep -o 'value="[^"]*"' | head -1 | cut -d'"' -f2)
+
+      # POST signup — idempotent: if user exists, Gitea returns 200 with error in HTML
+      wget -qO /dev/null --post-data="_csrf=$CSRF&user_name=${var.ci_admin}&email=admin@ci.local&password=${var.ci_password}&retype=${var.ci_password}" \
+        "$GITEA/user/sign_up" 2>/dev/null || true
 
       echo "Waiting for Gitea API..."
       for i in $(seq 1 30); do
