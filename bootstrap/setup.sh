@@ -4,21 +4,73 @@
 set -e
 
 GITEA="http://platform-gitea:3000"
-WP="http://platform-woodpecker-server:8001"
+WP="http://platform-woodpecker-server:8000"
 OUT="/kms-output"
 API="-H Content-Type:application/json"
 
 [ -f /shared/done ] && exec sleep infinity
+
+# Write agent secret early so WP server + agent can start
+printf '%s' "$CI_AGENT_SECRET" > /shared/agent-secret 2>/dev/null || true
 
 # Minimal JSON value extractor (handles simple flat objects)
 json_val() { sed -n "s/.*\"$1\":\s*\"\\([^\"]*\\)\".*/\\1/p" | head -1; }
 
 log() { echo "[setup] $*"; }
 
-# ─── Wait for dependencies ───────────────────────────────────────────
-log "Waiting for KMS bootstrap..."
-until [ -f "$OUT/vault-backend-token.txt" ]; do sleep 2; done
-log "KMS tokens found"
+# ─── Wait for OpenBao (self-init handles everything) ─────────────────
+log "Waiting for OpenBao..."
+BAO="http://127.0.0.1:8200"
+until curl -sf "$BAO/v1/sys/health" >/dev/null 2>&1; do sleep 2; done
+log "OpenBao ready"
+
+# Authenticate via userpass (created by self-init)
+log "Authenticating to OpenBao..."
+BAO_TOKEN=$(curl -sf -X POST "$BAO/v1/auth/userpass/login/bootstrap-admin" \
+  -d "{\"password\":\"$CI_PASSWORD\"}" | json_val client_token)
+
+if [ -z "$BAO_TOKEN" ]; then
+  log "ERROR: Failed to authenticate to OpenBao"
+  exit 1
+fi
+
+# Create vault-backend token
+VB_TOKEN=$(curl -sf -X POST "$BAO/v1/auth/token/create" \
+  -H "X-Vault-Token: $BAO_TOKEN" \
+  -d '{"policies":["vault-backend"],"no_parent":true,"period":"768h"}' | json_val client_token)
+printf '%s' "$VB_TOKEN" > "$OUT/vault-backend-token.txt"
+
+# Create cluster-secrets read-only token
+CS_TOKEN=$(curl -sf -X POST "$BAO/v1/auth/token/create" \
+  -H "X-Vault-Token: $BAO_TOKEN" \
+  -d '{"policies":["cluster-secrets-ro"],"no_parent":true,"period":"768h"}' | json_val client_token)
+printf '%s' "$CS_TOKEN" > "$OUT/cluster-secrets-token.txt"
+
+# Create transit auto-unseal token
+TR_TOKEN=$(curl -sf -X POST "$BAO/v1/auth/token/create" \
+  -H "X-Vault-Token: $BAO_TOKEN" \
+  -d '{"policies":["autounseal"],"no_parent":true,"period":"768h"}' | json_val client_token)
+printf '%s' "$TR_TOKEN" > "$OUT/transit-token.txt"
+
+# Generate cluster secrets (identity + storage)
+gen_hex() { head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+gen_b64() { head -c "$1" /dev/urandom | base64 | tr -d '\n'; }
+
+if ! curl -sf "$BAO/v1/secret/data/cluster/identity" -H "X-Vault-Token: $BAO_TOKEN" >/dev/null 2>&1; then
+  HS=$(gen_hex 32); PS=$(gen_b64 32); PC=$(gen_b64 32); PX=$(gen_hex 32); OC=$(gen_hex 32)
+  curl -sf -X POST "$BAO/v1/secret/data/cluster/identity" -H "X-Vault-Token: $BAO_TOKEN" \
+    -d "{\"data\":{\"hydra_system_secret\":\"$HS\",\"pomerium_shared_secret\":\"$PS\",\"pomerium_cookie_secret\":\"$PC\",\"pomerium_client_secret\":\"$PX\",\"oidc_client_secret\":\"$OC\"}}" >/dev/null
+  log "Identity secrets generated"
+fi
+
+if ! curl -sf "$BAO/v1/secret/data/cluster/storage" -H "X-Vault-Token: $BAO_TOKEN" >/dev/null 2>&1; then
+  GR=$(gen_hex 32); GA=$(gen_hex 32); HP=$(gen_hex 12)
+  curl -sf -X POST "$BAO/v1/secret/data/cluster/storage" -H "X-Vault-Token: $BAO_TOKEN" \
+    -d "{\"data\":{\"garage_rpc_secret\":\"$GR\",\"garage_admin_token\":\"$GA\",\"harbor_admin_password\":\"$HP\"}}" >/dev/null
+  log "Storage secrets generated"
+fi
+
+log "KMS tokens + secrets ready"
 
 # Gitea install wizard (creates DB + admin, first boot only)
 log "Waiting for Gitea..."
@@ -49,10 +101,8 @@ OAUTH=$(curl -sf -X POST "$GITEA/api/v1/user/applications/oauth2" \
   -u "$CI_ADMIN:$CI_PASSWORD" -H "Content-Type: application/json" \
   -d "{\"name\":\"woodpecker\",\"confidential_client\":true,\"redirect_uris\":[\"$CI_WP_HOST/authorize\"]}")
 
-cat > /shared/creds.env <<EOF
-export WOODPECKER_GITEA_CLIENT=$(echo "$OAUTH" | json_val client_id)
-export WOODPECKER_GITEA_SECRET=$(echo "$OAUTH" | json_val client_secret)
-EOF
+echo "$OAUTH" | json_val client_id > /shared/gitea-client
+echo "$OAUTH" | json_val client_secret > /shared/gitea-secret
 
 # ─── Wait for Woodpecker ────────────────────────────────────────────
 log "Waiting for Woodpecker..."
@@ -124,7 +174,7 @@ HOOK_TOKEN=$(echo "$HOOK_URL" | sed 's/.*access_token=//')
 if [ -n "$HOOK_ID" ] && [ -n "$HOOK_TOKEN" ]; then
   curl -sf -X PATCH "$GITEA/api/v1/repos/$CI_ADMIN/talos/hooks/$HOOK_ID" \
     -u "$CI_ADMIN:$CI_PASSWORD" -H "Content-Type: application/json" \
-    -d "{\"config\":{\"url\":\"http://platform-woodpecker-server:8001/api/hook?access_token=$HOOK_TOKEN\",\"content_type\":\"json\"}}" >/dev/null
+    -d "{\"config\":{\"url\":\"http://platform-woodpecker-server:8000/api/hook?access_token=$HOOK_TOKEN\",\"content_type\":\"json\"}}" >/dev/null
   log "Webhook patched"
 else
   log "WARNING: Could not patch webhook (hook_id=$HOOK_ID)"

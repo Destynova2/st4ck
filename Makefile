@@ -570,7 +570,12 @@ bootstrap: ## Start platform pod (everything auto-initializes inside)
 	@printf '%s\n' '---' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: setup-script' 'data:' '  setup.sh: |' \
 		>> $(BOOTSTRAP_DIR)/configmap.yaml
 	@sed 's/^/    /' bootstrap/setup.sh >> $(BOOTSTRAP_DIR)/configmap.yaml
-	@# Start pod (kms-init + ci-setup run as sidecars)
+	@# Generate seal key for OpenBao auto-unseal
+	@openssl rand -out $(BOOTSTRAP_DIR)/unseal.key 32 2>/dev/null
+	@printf '%s\n' '---' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: bao-seal-key' \
+		'binaryData:' "  unseal.key: $$(base64 < $(BOOTSTRAP_DIR)/unseal.key | tr -d '\n')" \
+		>> $(BOOTSTRAP_DIR)/configmap.yaml
+	@# Start pod (self-init + ci-setup handle everything)
 	@sed 's|__SOURCE_DIR__|$(CURDIR)|g' bootstrap/platform-pod.yaml > $(BOOTSTRAP_DIR)/platform-pod.yaml
 	@podman play kube $(BOOTSTRAP_DIR)/platform-pod.yaml \
 		--configmap=$(BOOTSTRAP_DIR)/configmap.yaml 2>&1 \
@@ -579,8 +584,7 @@ bootstrap: ## Start platform pod (everything auto-initializes inside)
 	@echo "========================================="
 	@echo "  Platform starting"
 	@echo "========================================="
-	@echo "  KMS init: podman logs -f platform-kms-init"
-	@echo "  CI setup: podman logs -f platform-ci-setup"
+	@echo "  Setup:    podman logs -f platform-ci-setup"
 	@echo "  OpenBao:  http://127.0.0.1:8200"
 	@echo "  Gitea:    http://127.0.0.1:3000 ($(CI_ADMIN) / $(CI_PASSWORD))"
 	@echo "  WP:       http://127.0.0.1:8000"

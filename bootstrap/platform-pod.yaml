@@ -17,6 +17,154 @@ data:
       path    = "/bao/data"
       node_id = "node-0"
     }
+    seal "static" {
+      current_key_id = "bootstrap-1"
+      current_key    = "file:///bao/seal/unseal.key"
+    }
+
+    # ─── Self-init: KV v2 for tfstate + cluster secrets ──────────
+    initialize "kv" {
+      request "mount-kv" {
+        operation = "update"
+        path      = "sys/mounts/secret"
+        data = {
+          type    = "kv"
+          options = { version = "2" }
+        }
+      }
+    }
+
+    # ─── Self-init: Transit for auto-unseal ──────────────────────
+    initialize "transit" {
+      request "mount-transit" {
+        operation = "update"
+        path      = "sys/mounts/transit"
+        data      = { type = "transit" }
+      }
+      request "create-autounseal-key" {
+        operation = "update"
+        path      = "transit/keys/autounseal"
+        data      = { type = "aes256-gcm96" }
+      }
+    }
+
+    # ─── Self-init: PKI Root CA ──────────────────────────────────
+    initialize "pki" {
+      request "mount-pki" {
+        operation = "update"
+        path      = "sys/mounts/pki"
+        data      = { type = "pki", config = { max_lease_ttl = "87600h" } }
+      }
+      request "generate-root-ca" {
+        operation = "update"
+        path      = "pki/root/generate/internal"
+        data = {
+          common_name  = "Talos Platform Root CA"
+          organization = "Talos Platform"
+          key_type     = "ec"
+          key_bits     = 384
+          ttl          = "87600h"
+          issuer_name  = "root"
+        }
+      }
+    }
+
+    # ─── Self-init: Infra Sub-CA ─────────────────────────────────
+    initialize "pki-infra" {
+      request "mount" {
+        operation = "update"
+        path      = "sys/mounts/pki_infra"
+        data      = { type = "pki", config = { max_lease_ttl = "43800h" } }
+      }
+      request "generate-csr" {
+        operation     = "update"
+        path          = "pki_infra/intermediate/generate/exported"
+        allow_failure = true
+        data = {
+          common_name  = "Talos Platform Infra CA"
+          organization = "Talos Platform"
+          key_type     = "ec"
+          key_bits     = 384
+          issuer_name  = "infra"
+        }
+      }
+    }
+
+    # ─── Self-init: App Sub-CA ───────────────────────────────────
+    initialize "pki-app" {
+      request "mount" {
+        operation = "update"
+        path      = "sys/mounts/pki_app"
+        data      = { type = "pki", config = { max_lease_ttl = "43800h" } }
+      }
+      request "generate-csr" {
+        operation     = "update"
+        path          = "pki_app/intermediate/generate/exported"
+        allow_failure = true
+        data = {
+          common_name  = "Talos Platform App CA"
+          organization = "Talos Platform"
+          key_type     = "ec"
+          key_bits     = 384
+          issuer_name  = "app"
+        }
+      }
+    }
+
+    # ─── Self-init: Admin auth (for ci-setup to create tokens) ──
+    initialize "admin" {
+      request "add-superuser-policy" {
+        operation = "update"
+        path      = "sys/policies/acl/superuser"
+        data = {
+          policy = "path \"*\" { capabilities = [\"create\",\"update\",\"read\",\"delete\",\"list\",\"sudo\"] }"
+        }
+      }
+      request "mount-userpass" {
+        operation = "update"
+        path      = "sys/auth/userpass"
+        data = {
+          type = "userpass"
+        }
+      }
+      request "create-admin-user" {
+        operation = "update"
+        path      = "auth/userpass/users/bootstrap-admin"
+        data = {
+          "password" = {
+            eval_type   = "string"
+            eval_source = "env"
+            env_var     = "BAO_ADMIN_PASSWORD"
+          }
+          "token_policies" = ["superuser"]
+        }
+      }
+    }
+
+    # ─── Self-init: Policies ─────────────────────────────────────
+    initialize "policies" {
+      request "vault-backend-policy" {
+        operation = "update"
+        path      = "sys/policies/acl/vault-backend"
+        data = {
+          policy = "path \"secret/data/tfstate/*\" { capabilities = [\"create\",\"read\",\"update\"] }\npath \"secret/metadata/tfstate/*\" { capabilities = [\"delete\",\"read\",\"list\"] }"
+        }
+      }
+      request "cluster-secrets-ro-policy" {
+        operation = "update"
+        path      = "sys/policies/acl/cluster-secrets-ro"
+        data = {
+          policy = "path \"secret/data/cluster/*\" { capabilities = [\"read\"] }"
+        }
+      }
+      request "autounseal-policy" {
+        operation = "update"
+        path      = "sys/policies/acl/autounseal"
+        data = {
+          policy = "path \"transit/encrypt/autounseal\" { capabilities = [\"update\"] }\npath \"transit/decrypt/autounseal\" { capabilities = [\"update\"] }"
+        }
+      }
+    }
 ---
 apiVersion: v1
 kind: Pod
@@ -29,7 +177,7 @@ spec:
   containers:
     # ═══ OpenBao KMS (single Raft node) ══════════════════════════════
     - name: bao
-      image: quay.io/openbao/openbao:2.1.0
+      image: quay.io/openbao/openbao:2.5.0
       command: ["bao", "server", "-config=/config/config.hcl"]
       ports:
         - containerPort: 8200
@@ -39,12 +187,17 @@ spec:
       env:
         - name: SKIP_CHOWN
           value: "true"
+        - name: BAO_ADMIN_PASSWORD
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_PASSWORD } }
       volumeMounts:
         - name: openbao-config
           mountPath: /config
           readOnly: true
         - name: bao-data
           mountPath: /bao/data
+        - name: bao-seal
+          mountPath: /bao/seal
+          readOnly: true
 
     # ═══ vault-backend (TF state HTTP → OpenBao KV v2) ═══════════════
     - name: vault-backend
@@ -97,32 +250,23 @@ spec:
         - name: GITEA__database__DB_TYPE
           value: "sqlite3"
 
-    # ═══ Woodpecker server ═══════════════════════════════════════════
+    # ═══ Woodpecker server (v3, reads OAuth creds from files) ═════════
     - name: woodpecker-server
-      image: docker.io/woodpeckerci/woodpecker-server:latest
-      command: ["sh", "-c"]
-      args:
-        - |
-          while [ ! -f /shared/creds.env ]; do sleep 1; done
-          . /shared/creds.env
-          exec woodpecker-server
+      image: docker.io/woodpeckerci/woodpecker-server:v3
       ports:
-        - containerPort: 8001
+        - containerPort: 8000
           hostPort: 8000
-        - containerPort: 9001
+        - containerPort: 9000
           hostPort: 9000
       volumeMounts:
         - name: woodpecker-data
           mountPath: /var/lib/woodpecker
         - name: shared
           mountPath: /shared
+          readOnly: true
       env:
         - name: WOODPECKER_HOST
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_WP_HOST } }
-        - name: WOODPECKER_SERVER_ADDR
-          value: ":8001"
-        - name: WOODPECKER_GRPC_ADDR
-          value: ":9001"
         - name: WOODPECKER_OPEN
           value: "true"
         - name: WOODPECKER_ADMIN
@@ -131,61 +275,36 @@ spec:
           value: "true"
         - name: WOODPECKER_GITEA_URL
           value: "http://platform-gitea:3000"
+        - name: WOODPECKER_GITEA_CLIENT_FILE
+          value: "/shared/gitea-client"
+        - name: WOODPECKER_GITEA_SECRET_FILE
+          value: "/shared/gitea-secret"
+        - name: WOODPECKER_AGENT_SECRET_FILE
+          value: "/shared/agent-secret"
         - name: WOODPECKER_DEV_GITEA_OAUTH_URL
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_OAUTH_URL } }
-        - name: WOODPECKER_AGENT_SECRET
-          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_AGENT_SECRET } }
 
     # ═══ Woodpecker agent ════════════════════════════════════════════
     - name: woodpecker-agent
-      image: docker.io/woodpeckerci/woodpecker-agent:latest
+      image: docker.io/woodpeckerci/woodpecker-agent:v3
+      command: ["woodpecker-agent", "agent"]
       securityContext:
         privileged: true
       volumeMounts:
         - name: podman-sock
           mountPath: /var/run/docker.sock
+        - name: shared
+          mountPath: /shared
+          readOnly: true
       env:
         - name: WOODPECKER_SERVER
-          value: "platform-woodpecker-server:9001"
+          value: "platform-woodpecker-server:9000"
         - name: WOODPECKER_BACKEND
           value: "docker"
-        - name: WOODPECKER_AGENT_SECRET
-          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_AGENT_SECRET } }
+        - name: WOODPECKER_AGENT_SECRET_FILE
+          value: "/shared/agent-secret"
         - name: WOODPECKER_BACKEND_DOCKER_NETWORK
           value: "podman-default-kube-network"
-
-    # ═══ KMS init (OpenTofu: init OpenBao + PKI + secrets) ═══════════
-    - name: kms-init
-      image: ghcr.io/opentofu/opentofu:1.9
-      command: ["sh", "-c"]
-      args:
-        - |
-          OUT=/kms-output
-          [ -f "$OUT/root-ca.pem" ] && echo "[kms] Already initialized" && exec sleep infinity
-
-          apk add --no-cache curl >/dev/null 2>&1
-          echo "[kms] Waiting for OpenBao..."
-          until curl -sf http://127.0.0.1:8200/v1/sys/health >/dev/null 2>&1 || curl -so /dev/null -w '%{http_code}' http://127.0.0.1:8200/v1/sys/health 2>/dev/null | grep -qv 000; do sleep 2; done
-          echo "[kms] OpenBao ready"
-
-          mkdir -p /tmp/kms-work && cd /tmp/kms-work
-          cp -r /source/bootstrap/kms/* .
-          tofu init -input=false
-          tofu apply -auto-approve \
-            -target=terraform_data.wait_for_openbao \
-            -target=terraform_data.init_unseal \
-            -var="kms_output_dir=$OUT"
-          VAULT_TOKEN=$(cat "$OUT/root-token.txt") tofu apply -auto-approve \
-            -var="kms_output_dir=$OUT"
-
-          echo "[kms] Done"
-          exec sleep infinity
-      volumeMounts:
-        - name: kms-output
-          mountPath: /kms-output
-        - name: source
-          mountPath: /source
-          readOnly: true
 
     # ═══ CI setup sidecar ════════════════════════════════════════════
     - name: ci-setup
@@ -203,7 +322,6 @@ spec:
           readOnly: true
         - name: kms-output
           mountPath: /kms-output
-          readOnly: true
         - name: setup-script
           mountPath: /scripts
           readOnly: true
@@ -228,6 +346,10 @@ spec:
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_SCW_CLUSTER_ACCESS_KEY } }
         - name: CI_SCW_CLUSTER_SECRET_KEY
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_SCW_CLUSTER_SECRET_KEY } }
+        - name: CI_AGENT_SECRET
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_AGENT_SECRET } }
+        - name: CI_GITEA_URL
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_GITEA_URL } }
 
   volumes:
     - name: openbao-config
@@ -236,6 +358,8 @@ spec:
       configMap: { name: setup-script }
     - name: bao-data
       emptyDir: {}
+    - name: bao-seal
+      configMap: { name: bao-seal-key }
     - name: gitea-data
       persistentVolumeClaim: { claimName: platform-gitea-data }
     - name: gitea-config

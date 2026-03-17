@@ -14,8 +14,7 @@ resource "terraform_data" "wait_for_openbao" {
     command = <<-SH
       echo "Waiting for OpenBao..."
       for i in $(seq 1 30); do
-        CODE=$(curl -so /dev/null -w '%%{http_code}' http://127.0.0.1:8200/v1/sys/health 2>/dev/null || echo 000)
-        [ "$CODE" != "000" ] && echo "OpenBao ready (HTTP $CODE)" && exit 0
+        wget -qS http://127.0.0.1:8200/v1/sys/health 2>&1 | grep -q 'HTTP/' && echo "OpenBao ready" && exit 0
         sleep 2
       done
       echo "ERROR: OpenBao not reachable" && exit 1
@@ -34,27 +33,23 @@ resource "terraform_data" "init_unseal" {
       OUT="${var.kms_output_dir}"
       mkdir -p "$OUT"
 
-      if [ -f "$OUT/root-token.txt" ]; then
-        echo "Already initialized, unsealing..."
-        KEY0=$(head -1 "$OUT/unseal-keys.txt")
-        KEY1=$(head -2 "$OUT/unseal-keys.txt" | tail -1)
-        curl -sf -X PUT "$NODE0/v1/sys/unseal" -d "{\"key\":\"$KEY0\"}" >/dev/null 2>&1 || true
-        curl -sf -X PUT "$NODE0/v1/sys/unseal" -d "{\"key\":\"$KEY1\"}" >/dev/null 2>&1 || true
-        echo "Nodes unsealed"
+      if [ -f "$OUT/root-token.txt" ] && [ -s "$OUT/root-token.txt" ]; then
+        echo "Already initialized (root-token.txt exists)"
         exit 0
       fi
 
+      # Static seal auto-unseal: OpenBao is unsealed but needs operator init
       sleep 2
-      INIT=$(curl -sf -X PUT "$NODE0/v1/sys/init" -d '{"secret_shares":3,"secret_threshold":2}')
+      INIT=$(wget -qO- --header="Content-Type: application/json" \
+        --post-data='{"secret_shares":1,"secret_threshold":1}' \
+        "$NODE0/v1/sys/init" 2>/dev/null)
       echo "$INIT" | grep -o '"root_token":"[^"]*"' | cut -d'"' -f4 > "$OUT/root-token.txt"
-      echo "$INIT" | grep -o '"keys":\[[^]]*\]' | sed 's/.*\[//;s/\]//;s/"//g' | tr ',' '\n' > "$OUT/unseal-keys.txt"
 
-      KEY0=$(head -1 "$OUT/unseal-keys.txt")
-      KEY1=$(head -2 "$OUT/unseal-keys.txt" | tail -1)
-      curl -sf -X PUT "$NODE0/v1/sys/unseal" -d "{\"key\":\"$KEY0\"}" >/dev/null
-      curl -sf -X PUT "$NODE0/v1/sys/unseal" -d "{\"key\":\"$KEY1\"}" >/dev/null
-
-      echo "Raft cluster ready (single node)"
+      if [ ! -s "$OUT/root-token.txt" ]; then
+        echo "ERROR: init failed, no root token"
+        exit 1
+      fi
+      echo "OpenBao initialized (static seal auto-unseal)"
     SH
   }
 }
