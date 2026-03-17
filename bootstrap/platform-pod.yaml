@@ -306,15 +306,35 @@ spec:
         - name: WOODPECKER_BACKEND_DOCKER_NETWORK
           value: "podman-default-kube-network"
 
-    # ═══ CI setup sidecar ════════════════════════════════════════════
-    - name: ci-setup
-      image: docker.io/gitea/gitea:1.22-rootless
-      command: ["sh", "/scripts/setup.sh"]
+    # ═══ Setup (OpenTofu: tokens, secrets, Gitea, WP) ════════════════
+    - name: tofu-setup
+      image: ghcr.io/opentofu/opentofu:1.9
+      command: ["sh", "-c"]
+      args:
+        - |
+          echo "[setup] Waiting for OpenBao..."
+          until wget -qS http://127.0.0.1:8200/v1/sys/health 2>&1 | grep -q 'HTTP/1.1 200'; do sleep 2; done
+          echo "[setup] OpenBao ready"
+
+          # Write agent secret for WP (from ConfigMap env)
+          printf '%s' "$CI_AGENT_SECRET" > /shared/agent-secret
+
+          mkdir -p /tmp/tofu-work && cd /tmp/tofu-work
+          cp -r /source/bootstrap/tofu/* .
+          cp -r /source/bootstrap/kms/sub-ca .
+          tofu init -input=false
+          tofu apply -auto-approve \
+            -var="bao_admin_password=$CI_PASSWORD" \
+            -var="ci_admin=$CI_ADMIN" \
+            -var="ci_password=$CI_PASSWORD" \
+            -var="gitea_external_url=$CI_GITEA_URL" \
+            -var="wp_external_url=$CI_WP_HOST" \
+            -var="gitea_internal_url=http://platform-gitea:3000" \
+            -var="wp_internal_url=http://platform-woodpecker-server:8000"
+
+          echo "[setup] === Platform ready ==="
+          exec sleep infinity
       volumeMounts:
-        - name: gitea-data
-          mountPath: /var/lib/gitea
-        - name: gitea-config
-          mountPath: /etc/gitea
         - name: shared
           mountPath: /shared
         - name: source
@@ -322,9 +342,6 @@ spec:
           readOnly: true
         - name: kms-output
           mountPath: /kms-output
-        - name: setup-script
-          mountPath: /scripts
-          readOnly: true
       env:
         - name: CI_ADMIN
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_ADMIN } }
@@ -332,30 +349,14 @@ spec:
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_PASSWORD } }
         - name: CI_WP_HOST
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_WP_HOST } }
-        - name: CI_OAUTH_URL
-          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_OAUTH_URL } }
-        - name: CI_GIT_REPO_URL
-          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_GIT_REPO_URL } }
-        - name: CI_SCW_PROJECT_ID
-          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_SCW_PROJECT_ID } }
-        - name: CI_SCW_IMAGE_ACCESS_KEY
-          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_SCW_IMAGE_ACCESS_KEY } }
-        - name: CI_SCW_IMAGE_SECRET_KEY
-          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_SCW_IMAGE_SECRET_KEY } }
-        - name: CI_SCW_CLUSTER_ACCESS_KEY
-          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_SCW_CLUSTER_ACCESS_KEY } }
-        - name: CI_SCW_CLUSTER_SECRET_KEY
-          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_SCW_CLUSTER_SECRET_KEY } }
-        - name: CI_AGENT_SECRET
-          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_AGENT_SECRET } }
         - name: CI_GITEA_URL
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_GITEA_URL } }
+        - name: CI_AGENT_SECRET
+          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_AGENT_SECRET } }
 
   volumes:
     - name: openbao-config
       configMap: { name: openbao-config }
-    - name: setup-script
-      configMap: { name: setup-script }
     - name: bao-data
       emptyDir: {}
     - name: bao-seal

@@ -567,9 +567,6 @@ bootstrap: ## Start platform pod (everything auto-initializes inside)
 		'  CI_SCW_IMAGE_SECRET_KEY: "dummy"' '  CI_SCW_CLUSTER_ACCESS_KEY: "dummy"' \
 		'  CI_SCW_CLUSTER_SECRET_KEY: "dummy"' \
 		> $(BOOTSTRAP_DIR)/configmap.yaml
-	@printf '%s\n' '---' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: setup-script' 'data:' '  setup.sh: |' \
-		>> $(BOOTSTRAP_DIR)/configmap.yaml
-	@sed 's/^/    /' bootstrap/setup.sh >> $(BOOTSTRAP_DIR)/configmap.yaml
 	@# Generate seal key for OpenBao auto-unseal
 	@openssl rand -out $(BOOTSTRAP_DIR)/unseal.key 32 2>/dev/null
 	@printf '%s\n' '---' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: bao-seal-key' \
