@@ -581,7 +581,7 @@ bootstrap: ## Start platform pod (everything auto-initializes inside)
 	@echo "========================================="
 	@echo "  Platform starting"
 	@echo "========================================="
-	@echo "  Setup:    podman logs -f platform-ci-setup"
+	@echo "  Setup:    podman logs -f platform-tofu-setup"
 	@echo "  OpenBao:  http://127.0.0.1:8200"
 	@echo "  Gitea:    http://127.0.0.1:3000 ($(CI_ADMIN) / $(CI_PASSWORD))"
 	@echo "  WP:       http://127.0.0.1:8000"

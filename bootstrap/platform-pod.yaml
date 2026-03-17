@@ -48,70 +48,7 @@ data:
       }
     }
 
-    # ─── Self-init: PKI Root CA ──────────────────────────────────
-    initialize "pki" {
-      request "mount-pki" {
-        operation = "update"
-        path      = "sys/mounts/pki"
-        data      = { type = "pki", config = { max_lease_ttl = "87600h" } }
-      }
-      request "generate-root-ca" {
-        operation = "update"
-        path      = "pki/root/generate/internal"
-        data = {
-          common_name  = "Talos Platform Root CA"
-          organization = "Talos Platform"
-          key_type     = "ec"
-          key_bits     = 384
-          ttl          = "87600h"
-          issuer_name  = "root"
-        }
-      }
-    }
-
-    # ─── Self-init: Infra Sub-CA ─────────────────────────────────
-    initialize "pki-infra" {
-      request "mount" {
-        operation = "update"
-        path      = "sys/mounts/pki_infra"
-        data      = { type = "pki", config = { max_lease_ttl = "43800h" } }
-      }
-      request "generate-csr" {
-        operation     = "update"
-        path          = "pki_infra/intermediate/generate/exported"
-        allow_failure = true
-        data = {
-          common_name  = "Talos Platform Infra CA"
-          organization = "Talos Platform"
-          key_type     = "ec"
-          key_bits     = 384
-          issuer_name  = "infra"
-        }
-      }
-    }
-
-    # ─── Self-init: App Sub-CA ───────────────────────────────────
-    initialize "pki-app" {
-      request "mount" {
-        operation = "update"
-        path      = "sys/mounts/pki_app"
-        data      = { type = "pki", config = { max_lease_ttl = "43800h" } }
-      }
-      request "generate-csr" {
-        operation     = "update"
-        path          = "pki_app/intermediate/generate/exported"
-        allow_failure = true
-        data = {
-          common_name  = "Talos Platform App CA"
-          organization = "Talos Platform"
-          key_type     = "ec"
-          key_bits     = 384
-          issuer_name  = "app"
-        }
-      }
-    }
-
-    # ─── Self-init: Admin auth (for ci-setup to create tokens) ──
+    # ─── Self-init: Admin auth (for tofu-setup to create tokens) ─
     initialize "admin" {
       request "add-superuser-policy" {
         operation = "update"
@@ -321,16 +258,31 @@ spec:
 
           mkdir -p /tmp/tofu-work && cd /tmp/tofu-work
           cp -r /source/bootstrap/tofu/* .
-          cp -r /source/bootstrap/kms/sub-ca .
+          VARS="-var=bao_admin_password=$CI_PASSWORD \
+            -var=ci_admin=$CI_ADMIN \
+            -var=ci_password=$CI_PASSWORD \
+            -var=gitea_external_url=$CI_GITEA_URL \
+            -var=wp_external_url=$CI_WP_HOST \
+            -var=gitea_internal_url=http://platform-gitea:3000 \
+            -var=wp_internal_url=http://platform-woodpecker-server:8000"
+
           tofu init -input=false
-          tofu apply -auto-approve \
-            -var="bao_admin_password=$CI_PASSWORD" \
-            -var="ci_admin=$CI_ADMIN" \
-            -var="ci_password=$CI_PASSWORD" \
-            -var="gitea_external_url=$CI_GITEA_URL" \
-            -var="wp_external_url=$CI_WP_HOST" \
-            -var="gitea_internal_url=http://platform-gitea:3000" \
-            -var="wp_internal_url=http://platform-woodpecker-server:8000"
+
+          # Phase 1: vault tokens + secrets + PKI + Gitea install (no gitea provider)
+          eval tofu apply -auto-approve \
+            -target=vault_token.vault_backend \
+            -target=vault_token.cluster_secrets \
+            -target=vault_token.autounseal \
+            -target=vault_kv_secret_v2.identity \
+            -target=vault_kv_secret_v2.storage \
+            -target=tls_self_signed_cert.root_ca \
+            -target=tls_locally_signed_cert.infra_ca \
+            -target=tls_locally_signed_cert.app_ca \
+            -target=terraform_data.gitea_install \
+            $VARS
+
+          # Phase 2: gitea provider + WP (Gitea is now installed)
+          eval tofu apply -auto-approve $VARS
 
           echo "[setup] === Platform ready ==="
           exec sleep infinity
