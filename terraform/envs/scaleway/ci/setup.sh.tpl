@@ -1,36 +1,58 @@
 #!/bin/bash
 set -euo pipefail
 
-# ─── Config ───────────────────────────────────────────────────────────
-export CI_GITEA_URL="http://${public_ip}:3000"
-export CI_OAUTH_URL="http://${public_ip}:3000"
-export CI_DOMAIN="${public_ip}"
-export CI_WP_HOST="http://${public_ip}:8000"
-export CI_ADMIN="${gitea_admin_user}"
-export CI_PASSWORD="${gitea_admin_password}"
-export CI_AGENT_SECRET=$(openssl rand -hex 32)
-export CI_GIT_REPO_URL="${git_repo_url}"
-export CI_KMS_DIR="/opt/talos/kms-output"
-export CI_SOURCE_DIR="/tmp/empty-source"
-export CI_GITEA_DATA_DIR="/opt/woodpecker/gitea-data"
-export CI_WP_DATA_DIR="/opt/woodpecker/woodpecker-data"
-export CI_PODMAN_SOCK="/run/podman/podman.sock"
-export CI_SCW_PROJECT_ID="${scw_project_id}"
-export CI_SCW_IMAGE_ACCESS_KEY="${scw_image_access_key}"
-export CI_SCW_IMAGE_SECRET_KEY="${scw_image_secret_key}"
-export CI_SCW_CLUSTER_ACCESS_KEY="${scw_cluster_access_key}"
-export CI_SCW_CLUSTER_SECRET_KEY="${scw_cluster_secret_key}"
-export CI_SECRETS_JSON='{"data":{"scw_project_id":"${scw_project_id}","scw_image_access_key":"${scw_image_access_key}","scw_image_secret_key":"${scw_image_secret_key}","scw_cluster_access_key":"${scw_cluster_access_key}","scw_cluster_secret_key":"${scw_cluster_secret_key}"}}'
+PUBLIC_IP="${public_ip}"
+ADMIN="${gitea_admin_user}"
+PASSWORD="${gitea_admin_password}"
+AGENT_SECRET=$(openssl rand -hex 32)
+WORKDIR="/opt/woodpecker"
 
-# ─── Start ────────────────────────────────────────────────────────────
-mkdir -p /tmp/empty-source /opt/talos/kms-output
-envsubst '${CI_GITEA_URL} ${CI_OAUTH_URL} ${CI_DOMAIN} ${CI_WP_HOST} ${CI_ADMIN} ${CI_PASSWORD} ${CI_AGENT_SECRET} ${CI_GIT_REPO_URL} ${CI_SECRETS_JSON} ${CI_KMS_DIR} ${CI_SOURCE_DIR} ${CI_GITEA_DATA_DIR} ${CI_WP_DATA_DIR} ${CI_PODMAN_SOCK} ${CI_SCW_PROJECT_ID} ${CI_SCW_IMAGE_ACCESS_KEY} ${CI_SCW_IMAGE_SECRET_KEY} ${CI_SCW_CLUSTER_ACCESS_KEY} ${CI_SCW_CLUSTER_SECRET_KEY}' \
-  < /opt/woodpecker/platform-pod.yaml > /opt/woodpecker/platform-pod-final.yaml
-podman play kube /opt/woodpecker/platform-pod-final.yaml
+mkdir -p "$WORKDIR" /opt/talos/kms-output /tmp/empty-source
+
+# ─── Generate ConfigMap YAML ─────────────────────────────────────────
+cat > "$WORKDIR/configmap.yaml" <<CFGEOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-config
+data:
+  CI_GITEA_URL: "http://$PUBLIC_IP:3000"
+  CI_OAUTH_URL: "http://$PUBLIC_IP:3000"
+  CI_DOMAIN: "$PUBLIC_IP"
+  CI_WP_HOST: "http://$PUBLIC_IP:8000"
+  CI_ADMIN: "$ADMIN"
+  CI_PASSWORD: "$PASSWORD"
+  CI_AGENT_SECRET: "$AGENT_SECRET"
+  CI_GIT_REPO_URL: "${git_repo_url}"
+  CI_SCW_PROJECT_ID: "${scw_project_id}"
+  CI_SCW_IMAGE_ACCESS_KEY: "${scw_image_access_key}"
+  CI_SCW_IMAGE_SECRET_KEY: "${scw_image_secret_key}"
+  CI_SCW_CLUSTER_ACCESS_KEY: "${scw_cluster_access_key}"
+  CI_SCW_CLUSTER_SECRET_KEY: "${scw_cluster_secret_key}"
+CFGEOF
+
+# ─── Generate seal key ──────────────────────────────────────────────
+openssl rand -out "$WORKDIR/unseal.key" 32
+cat >> "$WORKDIR/configmap.yaml" <<SEALEOF
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bao-seal-key
+binaryData:
+  unseal.key: $(base64 < "$WORKDIR/unseal.key" | tr -d '\n')
+SEALEOF
+
+# ─── Patch source path and start ────────────────────────────────────
+sed 's|__SOURCE_DIR__|/tmp/empty-source|g' \
+  "$WORKDIR/platform-pod.yaml" > "$WORKDIR/platform-pod-final.yaml"
+
+podman play kube "$WORKDIR/platform-pod-final.yaml" \
+  --configmap="$WORKDIR/configmap.yaml"
 
 echo "========================================="
-echo "  Platform starting (KMS + CI)"
+echo "  Platform starting"
 echo "========================================="
-echo "  Logs: podman logs -f platform-setup"
-echo "  WP:   http://${public_ip}:8000"
+echo "  Setup: podman logs -f platform-tofu-setup"
+echo "  WP:    http://$PUBLIC_IP:8000"
 echo "========================================="
