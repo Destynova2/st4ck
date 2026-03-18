@@ -182,7 +182,9 @@ flux-bootstrap-destroy:
 
 k8s-init: k8s-cni-init k8s-monitoring-init k8s-pki-init k8s-identity-init k8s-security-init k8s-storage-init flux-bootstrap-init ## terraform init all k8s stacks
 
-k8s-up: k8s-cni-apply ## Deploy all k8s stacks (sequential — parallel caused PVC/webhook races)
+k8s-up: ## Deploy all k8s stacks (sequential — parallel caused PVC/webhook races)
+	@curl -sf http://localhost:8080/state/test >/dev/null 2>&1 || { echo "ERROR: vault-backend not reachable at :8080. Run 'make bootstrap' first."; exit 1; }
+	$(MAKE) k8s-cni-apply
 	$(MAKE) k8s-pki-apply
 	$(MAKE) k8s-monitoring-apply
 	$(MAKE) k8s-identity-apply
@@ -191,6 +193,7 @@ k8s-up: k8s-cni-apply ## Deploy all k8s stacks (sequential — parallel caused P
 	$(MAKE) flux-bootstrap-apply
 
 k8s-down: ## Destroy all k8s stacks (correct order)
+	@curl -sf http://localhost:8080/state/test >/dev/null 2>&1 || { echo "ERROR: vault-backend not reachable at :8080. Run 'make bootstrap' first."; exit 1; }
 	@# Remove Kyverno webhooks first to prevent them blocking other deletions
 	@KUBECONFIG=$(KC_FILE) kubectl delete mutatingwebhookconfiguration -l app.kubernetes.io/instance=kyverno --ignore-not-found 2>/dev/null || true
 	@KUBECONFIG=$(KC_FILE) kubectl delete validatingwebhookconfiguration -l app.kubernetes.io/instance=kyverno --ignore-not-found 2>/dev/null || true
