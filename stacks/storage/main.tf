@@ -87,182 +87,83 @@ resource "helm_release" "garage" {
   depends_on = [helm_release.local_path_provisioner]
 }
 
-# ─── Garage setup Job (layout, buckets, API keys, K8s secrets) ───────
-# Runs in-cluster as a K8s Job. Creates:
-#   - velero-s3-credentials (storage ns, INI format)
-#   - harbor-s3-credentials (storage ns, plain key/secret)
+# ─── Garage setup (layout, buckets, API keys, K8s secrets) ───────────
+# Uses kubectl exec + garage CLI (simpler than the admin API v2).
 
-resource "kubernetes_service_account_v1" "garage_setup" {
-  metadata {
-    name      = "garage-setup"
-    namespace = "garage"
-  }
-  depends_on = [helm_release.garage]
-}
+resource "terraform_data" "garage_setup" {
+  depends_on = [helm_release.garage, kubernetes_namespace.storage]
 
-resource "kubernetes_role_v1" "garage_setup_storage" {
-  metadata {
-    name      = "garage-setup"
-    namespace = "storage"
-  }
-  rule {
-    api_groups = [""]
-    resources  = ["secrets"]
-    verbs      = ["get", "create", "update", "patch"]
-  }
-}
+  input = local.secrets["garage_admin_token"]
 
-resource "kubernetes_role_binding_v1" "garage_setup_storage" {
-  metadata {
-    name      = "garage-setup"
-    namespace = "storage"
-  }
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "Role"
-    name      = kubernetes_role_v1.garage_setup_storage.metadata[0].name
-  }
-  subject {
-    kind      = "ServiceAccount"
-    name      = kubernetes_service_account_v1.garage_setup.metadata[0].name
-    namespace = "garage"
-  }
-}
-
-resource "kubernetes_job_v1" "garage_setup" {
-  metadata {
-    name      = "garage-setup-${substr(md5(local.secrets["garage_admin_token"]), 0, 8)}"
-    namespace = "garage"
-  }
-
-  spec {
-    backoff_limit = 5
-    completions   = 1
-
-    template {
-      metadata {
-        labels = { app = "garage-setup" }
-      }
-      spec {
-        service_account_name = kubernetes_service_account_v1.garage_setup.metadata[0].name
-        restart_policy       = "OnFailure"
-
-        container {
-          name  = "setup"
-          image = "alpine:3.21"
-
-          env {
-            name  = "GARAGE_ADMIN_TOKEN"
-            value = local.secrets["garage_admin_token"]
-          }
-          env {
-            name  = "GARAGE_API"
-            value = "http://garage-0.garage-headless.garage.svc.cluster.local:3903/v2"
-          }
-          env {
-            name  = "KUBE_API"
-            value = "https://kubernetes.default.svc"
-          }
-
-          command = ["/bin/sh", "-c"]
-          args = [<<-SCRIPT
-            set -eu
-            apk add --no-cache curl jq >/dev/null 2>&1
-
-            TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-            CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-            garage() { curl -sf -H "Authorization: Bearer $GARAGE_ADMIN_TOKEN" -H "Content-Type: application/json" "$@"; }
-            kube()   { curl -sf --cacert $CA -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" "$@"; }
-
-            # ─── Wait for Garage admin API ──────────────────────────────
-            echo "Waiting for Garage admin API..."
-            for i in $(seq 1 60); do
-              garage "$GARAGE_API/GetClusterStatus" >/dev/null 2>&1 && break
-              echo "  attempt $i/60..." && sleep 5
-            done
-            garage "$GARAGE_API/GetClusterStatus" >/dev/null || { echo "ERROR: Garage admin API unreachable"; exit 1; }
-            echo "Garage API ready."
-
-            # ─── Layout ─────────────────────────────────────────────────
-            LAYOUT=$(garage "$GARAGE_API/GetClusterLayout")
-            LAYOUT_VER=$(echo "$LAYOUT" | jq -r '.version')
-            if [ "$LAYOUT_VER" = "0" ]; then
-              echo "Configuring layout..."
-              NODES=$(garage "$GARAGE_API/GetClusterStatus" | jq '[.nodes[] | select(.isUp) | {id: .id, zone: "dc1", capacity: 5000000000, tags: []}]')
-              garage -X POST -d "$NODES" "$GARAGE_API/UpdateClusterLayout" >/dev/null
-              garage -X POST -d "{\"version\": 1}" "$GARAGE_API/ApplyClusterLayout" >/dev/null
-              echo "Layout applied (version 1)."
-            else
-              echo "Layout already configured (version $LAYOUT_VER)."
-            fi
-
-            # ─── Buckets ────────────────────────────────────────────────
-            for BUCKET in velero-backups harbor-registry; do
-              if garage "$GARAGE_API/GetBucketInfo?globalAlias=$BUCKET" >/dev/null 2>&1; then
-                echo "Bucket '$BUCKET' exists."
-              else
-                echo "Creating bucket '$BUCKET'..."
-                garage -X POST -d "{\"globalAlias\": \"$BUCKET\"}" "$GARAGE_API/CreateBucket" >/dev/null
-              fi
-            done
-
-            # ─── Helper: create key + grant + K8s secret ────────────────
-            create_key() {
-              KEY_NAME=$1; BUCKET=$2; SECRET_NS=$3; SECRET_NAME=$4; SECRET_FORMAT=$5
-
-              # Check if K8s secret already exists
-              if kube "$KUBE_API/api/v1/namespaces/$SECRET_NS/secrets/$SECRET_NAME" >/dev/null 2>&1; then
-                echo "Secret '$SECRET_NAME' already exists, skipping key '$KEY_NAME'."
-                return 0
-              fi
-
-              # Create key
-              echo "Creating key '$KEY_NAME'..."
-              KEY_JSON=$(garage -X POST -d "{\"name\": \"$KEY_NAME\"}" "$GARAGE_API/CreateKey")
-              ACCESS=$(echo "$KEY_JSON" | jq -r '.accessKeyId')
-              SECRET=$(echo "$KEY_JSON" | jq -r '.secretAccessKey')
-              [ -z "$ACCESS" ] || [ "$ACCESS" = "null" ] && { echo "ERROR: key creation failed"; exit 1; }
-
-              # Grant permissions
-              BUCKET_ID=$(garage "$GARAGE_API/GetBucketInfo?globalAlias=$BUCKET" | jq -r '.id')
-              garage -X POST -d "{\"bucketId\": \"$BUCKET_ID\", \"accessKeyId\": \"$ACCESS\", \"permissions\": {\"read\": true, \"write\": true, \"owner\": true}}" \
-                "$GARAGE_API/AllowBucketKey" >/dev/null
-
-              # Create K8s secret
-              if [ "$SECRET_FORMAT" = "ini" ]; then
-                CLOUD=$(printf '[default]\naws_access_key_id=%s\naws_secret_access_key=%s\n' "$ACCESS" "$SECRET" | base64 | tr -d '\n')
-                BODY="{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"metadata\":{\"name\":\"$SECRET_NAME\",\"namespace\":\"$SECRET_NS\"},\"data\":{\"cloud\":\"$CLOUD\"}}"
-              else
-                AK=$(printf '%s' "$ACCESS" | base64 | tr -d '\n')
-                SK=$(printf '%s' "$SECRET" | base64 | tr -d '\n')
-                BODY="{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"metadata\":{\"name\":\"$SECRET_NAME\",\"namespace\":\"$SECRET_NS\"},\"data\":{\"access_key\":\"$AK\",\"secret_key\":\"$SK\"}}"
-              fi
-              kube -X POST -d "$BODY" "$KUBE_API/api/v1/namespaces/$SECRET_NS/secrets" >/dev/null
-              echo "  Key '$KEY_NAME' created ($ACCESS), secret '$SECRET_NAME' written."
-            }
-
-            create_key "velero-key"  "velero-backups"   "storage" "velero-s3-credentials"  "ini"
-            create_key "harbor-key"  "harbor-registry"  "storage" "harbor-s3-credentials"  "plain"
-
-            echo "Garage setup complete."
-          SCRIPT
-          ]
-        }
-      }
+  provisioner "local-exec" {
+    environment = {
+      KUBECONFIG = var.kubeconfig_path
     }
+    command = <<-EOT
+      set -eu
+
+      echo "Waiting for Garage pods..."
+      for i in $(seq 1 60); do
+        kubectl -n garage get pod garage-0 -o jsonpath='{.status.phase}' 2>/dev/null | grep -q Running && break
+        echo "  attempt $i/60..." && sleep 5
+      done
+
+      echo "Configuring layout..."
+      NODES=$(kubectl -n garage exec garage-0 -c garage -- ./garage status 2>/dev/null | grep "NO ROLE" | awk '{print $1}')
+      if [ -n "$NODES" ]; then
+        for NODE_ID in $NODES; do
+          kubectl -n garage exec garage-0 -c garage -- ./garage layout assign -z dc1 -c 5G "$NODE_ID"
+        done
+        NEXT_VER=$(kubectl -n garage exec garage-0 -c garage -- ./garage layout show 2>/dev/null | grep -oP 'version \K\d+' || echo "1")
+        kubectl -n garage exec garage-0 -c garage -- ./garage layout apply --version "$${NEXT_VER:-1}"
+      else
+        echo "Layout already configured."
+      fi
+
+      echo "Waiting for Garage ready..."
+      for i in $(seq 1 30); do
+        kubectl -n garage exec garage-0 -c garage -- ./garage status 2>/dev/null | grep -q "HEALTHY" && break
+        sleep 5
+      done
+
+      echo "Creating buckets..."
+      for BUCKET in velero-backups harbor-registry; do
+        kubectl -n garage exec garage-0 -c garage -- ./garage bucket create "$BUCKET" 2>/dev/null || true
+      done
+
+      echo "Creating keys and K8s secrets..."
+      for ENTRY in "velero-key:velero-backups:storage:velero-s3-credentials:ini" \
+                    "harbor-key:harbor-registry:storage:harbor-s3-credentials:plain"; do
+        KEY_NAME=$(echo "$ENTRY" | cut -d: -f1)
+        BUCKET=$(echo "$ENTRY" | cut -d: -f2)
+        SECRET_NS=$(echo "$ENTRY" | cut -d: -f3)
+        SECRET_NAME=$(echo "$ENTRY" | cut -d: -f4)
+        SECRET_FMT=$(echo "$ENTRY" | cut -d: -f5)
+
+        if kubectl -n "$SECRET_NS" get secret "$SECRET_NAME" >/dev/null 2>&1; then
+          echo "  Secret $SECRET_NAME exists, skipping."
+          continue
+        fi
+
+        KEY_INFO=$(kubectl -n garage exec garage-0 -c garage -- ./garage key create "$KEY_NAME" 2>/dev/null)
+        ACCESS=$(echo "$KEY_INFO" | grep "Key ID" | awk '{print $NF}')
+        SECRET=$(echo "$KEY_INFO" | grep "Secret key" | awk '{print $NF}')
+
+        kubectl -n garage exec garage-0 -c garage -- ./garage bucket allow --read --write --owner "$BUCKET" --key "$KEY_NAME"
+
+        if [ "$SECRET_FMT" = "ini" ]; then
+          kubectl -n "$SECRET_NS" create secret generic "$SECRET_NAME" \
+            --from-literal=cloud="$(printf '[default]\naws_access_key_id=%s\naws_secret_access_key=%s\n' "$ACCESS" "$SECRET")"
+        else
+          kubectl -n "$SECRET_NS" create secret generic "$SECRET_NAME" \
+            --from-literal=access_key="$ACCESS" --from-literal=secret_key="$SECRET"
+        fi
+        echo "  Key $KEY_NAME → secret $SECRET_NAME created."
+      done
+
+      echo "Garage setup complete."
+    EOT
   }
-
-  wait_for_completion = true
-
-  timeouts {
-    create = "10m"
-  }
-
-  depends_on = [
-    helm_release.garage,
-    kubernetes_namespace.storage,
-    kubernetes_role_binding_v1.garage_setup_storage,
-  ]
 }
 
 # ─── Velero (backup & DR → Garage S3) ────────────────────────────────
@@ -281,13 +182,13 @@ resource "helm_release" "velero" {
     s3_url        = var.s3_url
   })]
 
-  depends_on = [kubernetes_namespace.storage, kubernetes_job_v1.garage_setup]
+  depends_on = [kubernetes_namespace.storage, terraform_data.garage_setup]
 }
 
 # ─── Harbor (container registry with Garage S3 backend) ──────────────
 
 data "kubernetes_secret" "harbor_s3" {
-  depends_on = [kubernetes_job_v1.garage_setup]
+  depends_on = [terraform_data.garage_setup]
 
   metadata {
     name      = "harbor-s3-credentials"
@@ -319,5 +220,5 @@ resource "helm_release" "harbor" {
     })),
   ]
 
-  depends_on = [kubernetes_namespace.storage, kubernetes_job_v1.garage_setup]
+  depends_on = [kubernetes_namespace.storage, terraform_data.garage_setup]
 }
