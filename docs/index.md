@@ -55,7 +55,10 @@ See [Getting Started](tutorials/getting-started.md) for a detailed walkthrough.
 | Deploy to a specific environment | [How to Deploy](how-to/deploy.md) |
 | Understand the architecture | [Architecture](explanation/architecture.md) |
 | Bootstrap chicken-and-egg | [Bootstrap Mechanics](explanation/bootstrap.md) |
+| Security model and threat assumptions | [Security Model](explanation/security.md) |
 | All Makefile targets and config options | [Command Reference](reference/commands.md) |
+| All configurable parameters | [Configuration Reference](reference/config.md) |
+| CI/CD pipeline details | [CI/CD Reference](reference/ci-cd.md) |
 | Troubleshoot a problem | [Troubleshooting](how-to/troubleshoot.md) |
 | Why a specific technology was chosen | [ADRs](adr/) |
 | Full component inventory | [Technology Stack](techno.md) |

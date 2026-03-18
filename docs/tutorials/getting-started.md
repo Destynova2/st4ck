@@ -29,24 +29,26 @@ git clone git@github.com:Destynova2/talos.git
 cd talos
 ```
 
-## Step 2: Bootstrap the KMS
+## Step 2: Bootstrap the platform pod
 
-The KMS (Key Management Service) is a local 3-node OpenBao cluster running in podman. It generates:
-- Root CA + 2 intermediate CAs (infra and app)
-- Transit auto-unseal key for in-cluster OpenBao
+The platform pod is a local podman pod containing: 3-node OpenBao Raft cluster, vault-backend, Gitea, and a tofu-setup sidecar. It generates:
+- Root CA + intermediate CA
+- Static seal key for in-cluster OpenBao
 - vault-backend token for Terraform state storage
 
 ```bash
-make kms-bootstrap
+make bootstrap
+make bootstrap-export    # Copy tokens + certs to kms-output/
 ```
 
 Expected output:
 ```
-=== Starting OpenBao KMS cluster (3 nodes) ===
-  Waiting for http://127.0.0.1:8200 ready (HTTP 501)
-...
-vault-backend ready on http://localhost:8080
-Token: kms-output/vault-backend-token.txt
+=========================================
+  Platform starting
+=========================================
+  OpenBao:  http://127.0.0.1:8200
+  State:    http://127.0.0.1:8080
+=========================================
 ```
 
 Verify it is running:

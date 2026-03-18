@@ -12,7 +12,7 @@ Sovereign air-gapped Kubernetes platform built on Talos Linux v1.12, deploying a
 - **CI/CD**: Woodpecker CI + Gitea (Podman Quadlet on Scaleway VM)
 - **GitOps day-2**: Flux v2 (HelmReleases + Kustomize)
 - **Secrets**: OpenBao (2 instances: infra + app), auto-generated via `random_id` Terraform
-- **PKI**: Root CA + 2 intermediate CAs (infra + app), cert-manager ClusterIssuer
+- **PKI**: Root CA + intermediate CA (Terraform TLS provider), cert-manager ClusterIssuer
 - **Identity**: Ory Kratos + Hydra + Pomerium (zero-trust proxy, OIDC)
 - **Monitoring**: victoria-metrics-k8s-stack + VictoriaLogs + Headlamp + Grafana
 - **Security**: Trivy + Tetragon + Kyverno + Cosign policy
@@ -24,34 +24,35 @@ The platform uses a two-phase deployment model. Phase 1 (OpenTofu) bootstraps in
 
 A shared Terraform module (`modules/talos-cluster`) generates machine secrets and configs via the siderolabs/talos provider. Each environment (Scaleway, local, Outscale, VMware) calls this module and adds its own cloud resources. All Kubernetes stacks are provider-agnostic -- they only need a kubeconfig path.
 
-State is stored in OpenBao KV v2 via vault-backend (HTTP backend with locking), running in a local podman pod. This avoids any cloud dependency for state storage. Secrets are auto-generated via `random_id` Terraform, stored in encrypted state, zero secrets in Git.
+State is stored in OpenBao KV v2 via vault-backend (HTTP backend with locking), running in a local podman pod. Secrets are auto-generated via `random_id` Terraform, stored in encrypted state, zero secrets in Git.
 
-The VMware airgap path is entirely script-based (no Terraform) due to lack of vSphere API access -- it builds OVA images with embedded container image caches.
+Bootstrap uses a single Terraform module (`bootstrap/`) that generates a podman pod manifest with 6 containers: 3 OpenBao nodes (Raft), vault-backend, Gitea, and a tofu-setup sidecar that auto-initializes everything.
 
 ## Domain Concepts
 
-- **KMS bootstrap**: Local podman pod running 3-node OpenBao Raft cluster. Generates PKI CA chain, Transit auto-unseal keys, and vault-backend token. Must run once before any cloud deployment.
+- **Platform pod**: Local podman pod running 3-node OpenBao Raft cluster + vault-backend + Gitea + Woodpecker. Single Terraform module in `bootstrap/`. Must run once before any cloud deployment.
 - **Stack**: A self-contained folder in `stacks/` co-locating TF code, Helm values, and Flux manifests for one logical layer (CNI, monitoring, PKI, identity, security, storage, flux).
 - **Environment (env)**: A cloud provider configuration in `envs/` (Scaleway has 4 stages: IAM, image, cluster, CI).
 - **vault-backend**: HTTP proxy that translates Terraform HTTP backend protocol to OpenBao KV v2 API. Runs on port 8080.
-- **openbao-init**: Post-deploy step that initializes and unseals the in-cluster OpenBao instances (separate from the bootstrap KMS).
-
+- **kms-output/**: Directory containing tokens and certs exported from the platform pod. Gitignored. Required for all tofu commands.
 
 ## Key Patterns
 
 - All Makefile targets follow `<provider>-<action>` (e.g., `scaleway-apply`) or `k8s-<stack>-<action>` (e.g., `k8s-cni-apply`).
-- Composite targets enforce ordering: `k8s-up` deploys all 8 stacks sequentially (parallel was removed due to race conditions).
+- Composite targets enforce ordering: `k8s-up` deploys all stacks sequentially (parallel was removed due to race conditions).
 - Destroy order is the reverse of create order. Cilium must be destroyed last (it is the CNI). Kyverno webhooks must be deleted before other resources.
 - Secrets are auto-generated via `random_id` Terraform resources -- no manual `secret.tfvars` for application secrets.
 - Scaleway credentials flow through IAM stage outputs (`tofu -chdir=iam output -raw ...`).
 - Helm values are co-located in each stack folder (e.g., `stacks/cni/values.yaml`). Terraform references them via `file("${path.module}/...")`.
 - ADRs are numbered sequentially in `docs/adr/` and written in French.
+- Bootstrap is a single TF module (`bootstrap/main.tf`) that works for both local and remote (CI VM) deployments.
 
 ## Commands
 
 ```bash
 # Prerequisites (once)
-make kms-bootstrap              # PKI CA chain + vault-backend (needs podman)
+make bootstrap                  # Platform pod: OpenBao + Gitea + Woodpecker (needs podman)
+make bootstrap-export           # Copy tokens/certs to kms-output/
 
 # Full deployment
 make scaleway-up                # Scaleway: infra + all k8s stacks + Flux
@@ -68,13 +69,14 @@ make flux-bootstrap-apply       # Flux v2 GitOps
 
 # Teardown (correct order)
 make scaleway-down              # All k8s stacks + cluster
-make kms-stop                   # Stop local KMS pod
+make bootstrap-stop             # Stop local platform pod
 
 # State management
 make state-snapshot             # Raft snapshot backup
 make state-restore SNAPSHOT=f   # Restore from snapshot
 
 # Tests
+make validate                   # Validate all Terraform stacks
 make scaleway-test              # All Scaleway tofu tests
 make velero-test                # Backup/restore validation
 
@@ -82,23 +84,17 @@ make velero-test                # Backup/restore validation
 make scaleway-headlamp          # Headlamp UI (token in clipboard)
 make scaleway-grafana           # Grafana UI
 make scaleway-harbor            # Harbor UI (password in clipboard)
-
-# CAPI workload clusters
-make capi-init                  # Install CAPI providers
-make capi-create-cpu            # Create CPU workload cluster
-make capi-create-gpu            # Create GPU workload cluster
 ```
 
 ## Gotchas
 
-- **vault-backend must be running** for any `tofu` command. If `tofu init` fails with "connection refused", run `make kms-bootstrap` or restart: `podman pod start openbao-kms`.
+- **vault-backend must be running** for any `tofu` command. If `tofu init` fails with "connection refused", run `make bootstrap` or restart: `podman pod start platform`.
 - **Cilium must deploy before anything else**. Without CNI, no pods can schedule. The `k8s-up` target handles this automatically.
-- **openbao-init is a separate step** from kms-bootstrap. The former initializes in-cluster OpenBao instances; the latter bootstraps the local KMS. Both are needed.
 - **Scaleway uses 4 stages**: IAM (admin creds) -> image (builder VM) -> cluster (VMs + LB) -> CI (Gitea + Woodpecker). Credentials chain between stages.
-- **README.md** exists for GitHub visitors. CLAUDE.md and this file provide deeper context for agents and contributors.
-- **ADRs are in French** -- 18 ADRs in `docs/adr/` covering all major architectural decisions.
+- **ADRs are in French** -- 20 ADRs in `docs/adr/` covering all major architectural decisions.
 - **Bootstrap has 5 chicken-and-egg problems** resolved by design -- see `docs/explanation/bootstrap.md`.
 - **Talos has no shell access** -- you cannot SSH into nodes. Use `talosctl` for node operations.
 - **Kyverno webhooks block deletion** -- `k8s-down` deletes webhooks first to prevent cascading failures.
 - **Harbor admin password** is auto-generated by `random_id` in the k8s-storage stack state. Use `make scaleway-harbor` to access.
 - **Port-forward zombies** -- previous `kubectl port-forward` processes may linger. `k8s-down` kills them.
+- **Bootstrap is now a single TF module** (`bootstrap/`) -- old references to `scripts/openbao-kms-bootstrap.sh` or `configs/openbao/` are stale.

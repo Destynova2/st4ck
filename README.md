@@ -104,8 +104,11 @@ See [Bootstrap mechanics](docs/explanation/bootstrap.md) for the chicken-and-egg
 | Step-by-step first deployment | [Getting Started](docs/tutorials/getting-started.md) |
 | Deploy to a specific environment | [How to Deploy](docs/how-to/deploy.md) |
 | All Makefile targets and options | [Command Reference](docs/reference/commands.md) |
+| All configurable parameters | [Configuration Reference](docs/reference/config.md) |
+| CI/CD pipeline details | [CI/CD Reference](docs/reference/ci-cd.md) |
 | Architecture deep dive | [Architecture](docs/explanation/architecture.md) |
 | Bootstrap chicken-and-egg problems | [Bootstrap Mechanics](docs/explanation/bootstrap.md) |
+| Security model and policies | [Security Model](docs/explanation/security.md) |
 | Troubleshoot a problem | [Troubleshooting](docs/how-to/troubleshoot.md) |
 | Full component inventory | [Technology Stack](docs/techno.md) |
 | Architecture decisions (ADRs) | [docs/adr/](docs/adr/) |

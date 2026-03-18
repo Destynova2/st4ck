@@ -5,8 +5,8 @@
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | Pods stuck in `ContainerCreating` | Cilium CNI not ready | `make k8s-cni-apply` must complete first |
-| `k8s-pki-apply` fails: file not found | `kms-output/` missing | Run `make kms-bootstrap` (needs podman) |
-| `tofu init` fails: connection refused | vault-backend not running | `make kms-bootstrap` or `podman pod start openbao-kms` |
+| `k8s-pki-apply` fails: file not found | `kms-output/` missing | Run `make bootstrap && make bootstrap-export` (needs podman) |
+| `tofu init` fails: connection refused | vault-backend not running | `make bootstrap` or `podman pod start platform` |
 | Kyverno webhooks block deletions | Webhooks persist after pods gone | `make k8s-down` handles this (deletes webhooks first) |
 | OpenBao returns `sealed` | Standalone mode, not initialized | `make openbao-init` (after k8s-pki-apply) |
 | `k8s-storage-init` fails | Garage Helm chart not fetched | Auto-handled: depends on `garage-chart` target |
@@ -75,16 +75,16 @@ make state-snapshot             # Raft snapshot (DR backup)
 
 ## How to restart the local KMS
 
-If the KMS pod stopped (e.g., after a reboot):
+If the platform pod stopped (e.g., after a reboot):
 
 ```bash
-podman pod start openbao-kms
+podman pod start platform
 ```
 
 If it needs to be recreated:
 
 ```bash
-make kms-bootstrap
+make bootstrap
 ```
 
 ## How to force-destroy a stuck deployment
