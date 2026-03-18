@@ -458,68 +458,43 @@ scaleway-nuke: ## DANGEROUS: destroy everything including IAM and image
 # Source: bootstrap/
 # ═══════════════════════════════════════════════════════════════════════
 
-.PHONY: bootstrap bootstrap-stop kms-bootstrap kms-stop state-snapshot state-restore
+.PHONY: bootstrap bootstrap-init bootstrap-stop bootstrap-export bootstrap-tunnel kms-bootstrap kms-stop state-snapshot state-restore
 
 # Aliases (backward compat)
 kms-bootstrap: bootstrap
 kms-stop: bootstrap-stop
 
-# ─── Bootstrap defaults (override: make bootstrap CI_ADMIN=myuser) ───
+TF_BOOTSTRAP   := bootstrap
+BOOTSTRAP_DIR  ?= /tmp/platform-local
+BOOTSTRAP_HOST ?= localhost
 
-BOOTSTRAP_DIR      ?= /tmp/platform-local
-CI_GITEA_URL       ?= http://host.containers.internal:3000
-CI_OAUTH_URL       ?= http://127.0.0.1:3000
-CI_DOMAIN          ?= 127.0.0.1
-CI_WP_HOST         ?= http://127.0.0.1:8000
-CI_ADMIN           ?= talos
-CI_PASSWORD        ?= localpass123
-CI_GIT_REPO_URL    ?= file:///source
-CI_SECRETS_JSON    ?= {"data":{}}
+bootstrap-init: ## terraform init for bootstrap
+	$(TF) -chdir=$(TF_BOOTSTRAP) init
 
-bootstrap: ## Start platform pod (everything auto-initializes inside)
+bootstrap: bootstrap-init ## Start platform pod (everything auto-initializes inside)
 	@command -v podman >/dev/null 2>&1 || { echo "Error: podman required"; exit 1; }
-	@podman pod rm -f platform 2>/dev/null || true
 	@mkdir -p $(BOOTSTRAP_DIR)
-	@# Generate ConfigMaps
-	@printf '%s\n' \
-		'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: platform-config' 'data:' \
-		'  CI_GITEA_URL: "$(CI_GITEA_URL)"' '  CI_OAUTH_URL: "$(CI_OAUTH_URL)"' \
-		'  CI_DOMAIN: "$(CI_DOMAIN)"' '  CI_WP_HOST: "$(CI_WP_HOST)"' \
-		'  CI_ADMIN: "$(CI_ADMIN)"' '  CI_PASSWORD: "$(CI_PASSWORD)"' \
-		"  CI_AGENT_SECRET: \"$$(openssl rand -hex 32)\"" \
-		'  CI_GIT_REPO_URL: "$(CI_GIT_REPO_URL)"' \
-		'  CI_SCW_PROJECT_ID: "dummy"' '  CI_SCW_IMAGE_ACCESS_KEY: "dummy"' \
-		'  CI_SCW_IMAGE_SECRET_KEY: "dummy"' '  CI_SCW_CLUSTER_ACCESS_KEY: "dummy"' \
-		'  CI_SCW_CLUSTER_SECRET_KEY: "dummy"' \
-		> $(BOOTSTRAP_DIR)/configmap.yaml
-	@# Generate seal key for OpenBao auto-unseal
-	@openssl rand -out $(BOOTSTRAP_DIR)/unseal.key 32 2>/dev/null
-	@printf '%s\n' '---' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: bao-seal-key' \
-		'binaryData:' "  unseal.key: $$(base64 < $(BOOTSTRAP_DIR)/unseal.key | tr -d '\n')" \
-		>> $(BOOTSTRAP_DIR)/configmap.yaml
-	@# Start pod (self-init + ci-setup handle everything)
-	@sed 's|__SOURCE_DIR__|$(CURDIR)|g' bootstrap/platform-pod.yaml > $(BOOTSTRAP_DIR)/platform-pod.yaml
-	@podman play kube $(BOOTSTRAP_DIR)/platform-pod.yaml \
-		--configmap=$(BOOTSTRAP_DIR)/configmap.yaml 2>&1 \
-		| grep -v 'executable file.*not found' || true
-	@echo ""
-	@echo "========================================="
-	@echo "  Platform starting"
-	@echo "========================================="
-	@echo "  Setup:    podman logs -f platform-tofu-setup"
-	@echo "  OpenBao:  http://127.0.0.1:8200"
-	@echo "  Gitea:    http://127.0.0.1:3000 ($(CI_ADMIN) / $(CI_PASSWORD))"
-	@echo "  WP:       http://127.0.0.1:8000"
-	@echo "  State:    http://127.0.0.1:8080"
-	@echo "  KMS out:  podman volume inspect platform-kms-output"
-	@echo "  Stop:     make bootstrap-stop"
-	@echo "========================================="
+	$(TF) -chdir=$(TF_BOOTSTRAP) apply -auto-approve \
+		-var="source_dir=$(CURDIR)" \
+		-var="bootstrap_dir=$(BOOTSTRAP_DIR)"
+	@$(TF) -chdir=$(TF_BOOTSTRAP) output -raw status
 
 bootstrap-export: ## Copy tokens + certs from PVC to kms-output/
 	@mkdir -p $(KMS_OUTPUT)
 	@podman cp platform-tofu-setup:/kms-output/. $(KMS_OUTPUT)/
 	@echo "Exported to $(KMS_OUTPUT)/"
 	@ls $(KMS_OUTPUT)/
+
+bootstrap-export-remote: ## Copy tokens from remote bootstrap VM via SSH
+	@test -n "$(BOOTSTRAP_HOST)" -a "$(BOOTSTRAP_HOST)" != "localhost" || { echo "Set BOOTSTRAP_HOST=<ip>"; exit 1; }
+	@mkdir -p $(KMS_OUTPUT)
+	scp $(BOOTSTRAP_HOST):/opt/talos/kms-output/* $(KMS_OUTPUT)/
+	@echo "Exported from $(BOOTSTRAP_HOST) to $(KMS_OUTPUT)/"
+
+bootstrap-tunnel: ## SSH tunnel to remote bootstrap (vault-backend + OpenBao)
+	@test -n "$(BOOTSTRAP_HOST)" -a "$(BOOTSTRAP_HOST)" != "localhost" || { echo "Set BOOTSTRAP_HOST=<ip>"; exit 1; }
+	@echo "Tunneling to $(BOOTSTRAP_HOST) — ports 8080 (state) + 8200 (OpenBao)"
+	ssh -N -L 8080:localhost:8080 -L 8200:localhost:8200 $(BOOTSTRAP_HOST)
 
 bootstrap-stop: ## Stop the platform pod
 	@podman play kube --down $(BOOTSTRAP_DIR)/platform-pod.yaml 2>/dev/null || true

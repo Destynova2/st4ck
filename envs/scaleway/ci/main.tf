@@ -100,17 +100,17 @@ resource "null_resource" "ci_bootstrap" {
   provisioner "remote-exec" {
     inline = [
       "cloud-init status --wait || true",
-      "mkdir -p /opt/woodpecker/gitea-data /opt/woodpecker/woodpecker-data /opt/talos/kms-output /tmp/empty-source",
+      "mkdir -p /opt/woodpecker /opt/talos/kms-output /opt/talos/repo/bootstrap /tmp/empty-source",
     ]
   }
 
-  # Copy platform pod YAML
+  # Copy bootstrap TF module (shared with local bootstrap)
   provisioner "file" {
-    source      = "${path.module}/../../../bootstrap/platform-pod.yaml"
-    destination = "/opt/woodpecker/platform-pod.yaml"
+    source      = "${path.module}/../../../bootstrap/"
+    destination = "/opt/talos/repo/bootstrap"
   }
 
-  # Copy setup script
+  # Copy setup script (thin wrapper calling tofu -chdir=bootstrap apply)
   provisioner "file" {
     content = templatefile("${path.module}/setup.sh.tpl", {
       public_ip              = scaleway_instance_ip.ci.address
@@ -126,7 +126,6 @@ resource "null_resource" "ci_bootstrap" {
     destination = "/opt/woodpecker/setup.sh"
   }
 
-  # Single command: envsubst + podman play kube
   provisioner "remote-exec" {
     inline = [
       "chmod +x /opt/woodpecker/setup.sh",
