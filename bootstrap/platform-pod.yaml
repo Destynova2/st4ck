@@ -108,7 +108,7 @@ data:
         operation = "update"
         path      = "sys/policies/acl/cluster-secrets-ro"
         data = {
-          policy = "path \"secret/data/cluster/*\" { capabilities = [\"read\"] }"
+          policy = "path \"secret/data/cluster/*\" { capabilities = [\"read\"] }\npath \"auth/token/create\" { capabilities = [\"create\", \"update\"] }"
         }
       }
       request "autounseal-policy" {

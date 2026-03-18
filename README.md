@@ -24,17 +24,53 @@ Automates the deployment of a hardened Kubernetes platform across multiple envir
 ```bash
 # Prerequisites: opentofu, podman, kubectl, jq, helm
 
-# 1. Bootstrap local KMS (once, needs podman)
-make kms-bootstrap
+# 1. Bootstrap platform (once, needs podman)
+make bootstrap          # OpenBao KMS + Gitea + Woodpecker
+make bootstrap-export   # Copy tokens to kms-output/
 
-# 2. Deploy a cluster (pick your provider)
+# 2. Configure Scaleway credentials (if deploying to Scaleway)
+scw init                # or: scw config set access-key=... secret-key=...
+scw iam api-key create description="talos-admin"
+# Copy access_key + secret_key to envs/scaleway/iam/secret.tfvars
+make scaleway-iam-apply
+
+# 3. Deploy a cluster (pick your provider)
 make scaleway-up        # Cloud (Scaleway)
 make ENV=local local-up # Local (libvirt/KVM VMs)
 
-# 3. Access dashboards
+# 4. Access dashboards
 make scaleway-headlamp  # Kubernetes UI (token in clipboard)
 make scaleway-grafana   # Metrics and logs
 make scaleway-harbor    # Container registry
+```
+
+### Scaleway CLI setup
+
+Install the [Scaleway CLI](https://github.com/scaleway/scaleway-cli):
+
+```bash
+brew install scw        # macOS
+# or: curl -s https://raw.githubusercontent.com/scaleway/scaleway-cli/master/scripts/get.sh | sh
+```
+
+Configure credentials:
+
+```bash
+scw init                # Interactive setup (access key, secret key, org, project)
+```
+
+Create an API key for Terraform:
+
+```bash
+scw iam api-key create description="talos-admin"
+```
+
+Then update `envs/scaleway/iam/secret.tfvars`:
+
+```hcl
+organization_id = "<your-org-id>"       # scw account list
+access_key      = "<from api-key create>"
+secret_key      = "<from api-key create>"
 ```
 
 ## Supported environments

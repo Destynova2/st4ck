@@ -9,6 +9,8 @@ garage:
       rootDomain: ".s3.garage.local"
     web:
       rootDomain: ".web.garage.local"
+  admin:
+    api_bind_addr: "[::]:3903"
 
 deployment:
   replicaCount: 3

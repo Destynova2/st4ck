@@ -2,6 +2,8 @@
 # Chart: 0.72.4 from https://victoriametrics.github.io/helm-charts
 # Replaces: vm-single + grafana + alertmanager + node-exporter + kube-state-metrics + alloy
 
+fullnameOverride: "vm"
+
 # ─── Disabled components (Talos / Cilium) ───────────────────────────
 kubeControllerManager:
   enabled: false
@@ -23,7 +25,7 @@ vmsingle:
         cpu: 100m
         memory: 256Mi
       limits:
-        memory: 512Mi
+        memory: 1Gi
 
 # ─── VMAgent (replaces Alloy for metrics collection) ────────────────
 vmagent:

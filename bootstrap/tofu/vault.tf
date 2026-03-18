@@ -71,8 +71,12 @@ resource "random_bytes" "identity_b64" {
   length   = 32
 }
 
+resource "random_bytes" "garage_rpc_secret" {
+  length = 32
+}
+
 resource "random_password" "storage" {
-  for_each = toset(["garage_rpc_secret", "garage_admin_token"])
+  for_each = toset(["garage_admin_token"])
   length   = 64
   special  = false
 }
@@ -98,7 +102,7 @@ resource "vault_kv_secret_v2" "storage" {
   mount = "secret"
   name  = "cluster/storage"
   data_json = jsonencode({
-    garage_rpc_secret     = random_password.storage["garage_rpc_secret"].result
+    garage_rpc_secret     = random_bytes.garage_rpc_secret.hex
     garage_admin_token    = random_password.storage["garage_admin_token"].result
     harbor_admin_password = random_password.harbor_admin.result
   })

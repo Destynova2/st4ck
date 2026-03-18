@@ -72,7 +72,7 @@ module "talos" {
       machine = {
         files = [{
           content     = local.oidc_ca_pem
-          permissions = "0644"
+          permissions = 420
           path        = "/var/etc/kubernetes/oidc-ca.pem"
           op          = "create"
         }]
@@ -89,7 +89,7 @@ module "talos" {
           extraVolumes = [{
             hostPath  = "/var/etc/kubernetes"
             mountPath = "/var/etc/kubernetes"
-            readOnly  = true
+            readonly  = true
           }]
         }
       }

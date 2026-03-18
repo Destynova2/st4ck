@@ -8,7 +8,7 @@ variable "kubeconfig_path" {
 variable "kms_output_dir" {
   description = "Path to KMS bootstrap output (certs from make kms-bootstrap)"
   type        = string
-  default     = "../../../kms-output"
+  default     = "../../kms-output"
 }
 
 # ─── OpenBao ──────────────────────────────────────────────────────────
