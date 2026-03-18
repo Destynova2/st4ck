@@ -74,16 +74,16 @@ Key tradeoffs: sequential deployment over parallel (reliability over speed), Ope
 ```mermaid
 graph TB
     Admin["Platform Admin"] -->|make commands<br/>SSH/HTTPS| Platform["Talos Sovereign<br/>K8s Platform"]
-    Developer["Developer"] -->|git push| Gitea["Gitea<br/>(self-hosted Git)"]
+    Developer["Developer"] -->|git push| Gitea["Gitea<br/>self-hosted Git"]
     Gitea -->|webhook| WP["Woodpecker CI"]
     WP -->|tofu apply| Platform
 
-    Platform -->|Scaleway API| SCW["Scaleway Cloud<br/>(fr-par)"]
-    Platform -->|libvirt API| KVM["Local KVM<br/>(QEMU)"]
-    Platform -->|Outscale API| OSC["Outscale Cloud<br/>(FCU)"]
-    Platform -->|OVA deploy| VMW["VMware vSphere<br/>(air-gapped)"]
+    Platform -->|Scaleway API| SCW["Scaleway Cloud<br/>fr-par"]
+    Platform -->|libvirt API| KVM["Local KVM<br/>QEMU"]
+    Platform -->|Outscale API| OSC["Outscale Cloud<br/>FCU"]
+    Platform -->|OVA deploy| VMW["VMware vSphere<br/>air-gapped"]
 
-    Platform -->|pulls images| Registries["Container Registries<br/>(ghcr.io, docker.io, quay.io)"]
+    Platform -->|pulls images| Registries["Container Registries<br/>ghcr.io, docker.io, quay.io"]
 
     subgraph "Platform Boundary"
         Platform
@@ -115,7 +115,7 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph "Bootstrap Pod (podman, pre-cluster)"
+    subgraph "Bootstrap Pod - podman, pre-cluster"
         BAO_KMS["OpenBao KMS<br/>Raft storage<br/>:8200"]
         VB["vault-backend<br/>HTTP state proxy<br/>:8080"]
         GITEA["Gitea<br/>Git server<br/>:3000"]
@@ -129,7 +129,7 @@ graph TB
         WP_AGT -->|gRPC :9000| WP_SRV
     end
 
-    subgraph "Kubernetes Cluster (Talos Linux)"
+    subgraph "Kubernetes Cluster - Talos Linux"
         subgraph "kube-system"
             CILIUM["Cilium CNI<br/>eBPF mode"]
         end
@@ -293,13 +293,13 @@ graph LR
     end
 
     subgraph "Kubernetes Cluster"
-        K8S_SEC["K8s Secrets<br/>(secrets ns)"] -->|mounted| OPENBAO_IC["OpenBao<br/>in-cluster"]
+        K8S_SEC["K8s Secrets<br/>secrets ns"] -->|mounted| OPENBAO_IC["OpenBao<br/>in-cluster"]
         OPENBAO_IC -->|KV v2| ESO["ESO"]
-        ESO -->|creates| K8S_SEC2["K8s Secrets<br/>(target ns)"]
+        ESO -->|creates| K8S_SEC2["K8s Secrets<br/>target ns"]
     end
 
-    PKI_FILES -->|file() in TF| K8S_SEC
-    BAO -->|vault provider read| TF_STACKS["Stack TF<br/>(identity, storage)"]
+    PKI_FILES -->|file fn in TF| K8S_SEC
+    BAO -->|vault provider read| TF_STACKS["Stack TF<br/>identity, storage"]
     TF_STACKS -->|helm values| K8S_SEC2
 ```
 
@@ -750,7 +750,7 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph "Bootstrap Pod (podman play kube)"
+    subgraph "Bootstrap Pod - podman play kube"
         subgraph "Phase 1: Infrastructure"
             BAO["OpenBao<br/>config.hcl with self-init"]
             BAO -->|self-init| KV["KV v2 mount"]
@@ -769,7 +769,7 @@ graph TB
         end
 
         subgraph "Phase 3: CI setup"
-            GITEA_SETUP["Gitea install<br/>(HTTP POST /user/sign_up)"]
+            GITEA_SETUP["Gitea install<br/>HTTP POST /user/sign_up"]
             OAUTH["gitea_oauth2_app<br/>WP OAuth registration"]
             REPO["gitea_repository<br/>+ git push"]
             GITEA_SETUP --> OAUTH --> REPO
@@ -967,8 +967,8 @@ Applied in order via the `talos-cluster` module:
 
 ```mermaid
 graph TD
-    BOOTSTRAP["Bootstrap (podman)<br/>OpenBao + Gitea + WP"]
-    ENV["env-apply<br/>(kubeconfig)"]
+    BOOTSTRAP["Bootstrap - podman<br/>OpenBao + Gitea + WP"]
+    ENV["env-apply<br/>kubeconfig"]
     CNI["cni<br/>Cilium ~30s"]
     PKI["pki<br/>OpenBao x2 + cert-manager ~2min"]
     MON["monitoring<br/>VM + VLogs + Headlamp ~2min"]
@@ -1104,8 +1104,8 @@ Gitea repo (SSH) → GitRepository "management" (5m interval)
 stateDiagram-v2
     [*] --> Generated: make bootstrap
     Generated --> StoredInBao: vault_kv_secret_v2
-    StoredInBao --> ReadByTF: vault provider (TF_HTTP_PASSWORD)
-    ReadByTF --> InjectedInHelm: templatefile() in values
+    StoredInBao --> ReadByTF: vault provider TF_HTTP_PASSWORD
+    ReadByTF --> InjectedInHelm: templatefile in values
     InjectedInHelm --> K8sSecret: Helm creates secret
     K8sSecret --> ConsumedByPod: volumeMount / env
 
@@ -1146,8 +1146,8 @@ stateDiagram-v2
 
 ```mermaid
 graph LR
-    VALIDATE["validate<br/>(PR + push)<br/>tofu validate x10"]
-    BUILD1["start-builder<br/>(push only)<br/>Start VM"]
+    VALIDATE["validate<br/>PR + push<br/>tofu validate x10"]
+    BUILD1["start-builder<br/>push only<br/>Start VM"]
     WAIT["wait-image-upload<br/>Poll S3 ~15min"]
     BUILD2["build-image<br/>Import snapshot"]
     DEPLOY_C["deploy-cluster<br/>tofu apply envs/scaleway"]
@@ -1315,19 +1315,25 @@ After initial deployment via OpenTofu, the handoff to Flux follows this pattern:
 | Kubernetes | Kubernetes | 1.35.0 |
 | IaC | OpenTofu | 1.9 |
 | CNI | Cilium | 1.17.13 |
-| KMS | OpenBao | 2.5.1 |
-| PKI | cert-manager + TLS provider | -- |
-| Metrics | VictoriaMetrics | -- |
-| Logs | VictoriaLogs | -- |
-| Identity | Ory Kratos + Hydra + Pomerium | -- |
-| Policy | Kyverno | -- |
-| Scanning | Trivy Operator | -- |
-| Runtime | Tetragon | -- |
-| Storage | Garage + local-path-provisioner | v2.2.0 |
-| Registry | Harbor | -- |
-| Backup | Velero | -- |
-| GitOps | Flux v2 | -- |
-| Git | Gitea | 1.22 |
+| KMS | OpenBao (bootstrap) | 2.5.1 |
+| PKI | cert-manager | v1.19.4 |
+| PKI | OpenBao (in-cluster) | 0.25.6 (chart) |
+| Metrics | vm-k8s-stack | 0.72.4 |
+| Logs | victoria-logs-single | 0.11.28 |
+| Logs | victoria-logs-collector | 0.2.11 |
+| Dashboard | Headlamp | 0.40.0 |
+| Identity | Ory Kratos | 0.60.1 |
+| Identity | Ory Hydra | 0.60.1 |
+| Identity | Pomerium | 34.0.1 |
+| Policy | Kyverno | 3.7.1 |
+| Scanning | Trivy Operator | 0.32.0 |
+| Runtime | Tetragon | 1.6.0 |
+| Storage | Garage | v2.2.0 (app) / 0.9.2 (chart) |
+| Storage | local-path-provisioner | 0.0.35 |
+| Registry | Harbor | 1.16.2 |
+| Backup | Velero | 11.4.0 |
+| GitOps | Flux v2 | 2.14.1 |
+| Git | Gitea | 1.22-rootless |
 | CI | Woodpecker | v3 |
 
 ### References
