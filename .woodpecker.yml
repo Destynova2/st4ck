@@ -241,7 +241,25 @@ steps:
   - name: deploy-flux
     image: *tofu_image
     secrets: [tf_http_username, tf_http_password]
-    commands: *deploy_stack
+    commands:
+      - |
+        VB=http://host.containers.internal:8080
+        apk add --no-cache openssh-client >/dev/null 2>&1 || true
+        KNOWN_HOSTS=$(ssh-keyscan -p 2222 -t ed25519 host.containers.internal 2>/dev/null)
+        vb_init() {
+          tofu init -input=false \
+            -backend-config="address=$$VB/state/$$1" \
+            -backend-config="lock_address=$$VB/state/$$1" \
+            -backend-config="unlock_address=$$VB/state/$$1"
+        }
+        cd envs/scaleway
+        vb_init scaleway >/dev/null
+        tofu output -raw kubeconfig > /tmp/kubeconfig
+        cd /woodpecker/src/stacks/flux-bootstrap
+        vb_init flux-bootstrap
+        tofu apply -auto-approve \
+          -var="kubeconfig_path=/tmp/kubeconfig" \
+          -var="gitea_known_hosts=$$KNOWN_HOSTS"
     environment:
       STACK: flux-bootstrap
     depends_on: [deploy-storage]

@@ -9,6 +9,8 @@ operator:
   # Limit concurrent scan jobs to avoid resource pressure on fresh clusters
   concurrentScanJobsLimit: 3
   scanJobTimeout: 10m
+  # Auto-cleanup completed scan jobs after 5 minutes
+  scanJobTTL: 300s
 
 compliance:
   specs: []

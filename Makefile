@@ -164,12 +164,17 @@ flux-bootstrap-init: ## terraform init for flux-bootstrap
 	$(TF) -chdir=$(TF_FLUX) init
 
 flux-bootstrap-apply: ## Install Flux and configure GitOps sync
+	@echo "--- Scanning Gitea SSH host key from $(BOOTSTRAP_HOST):2222 ---"
+	$(eval GITEA_KNOWN_HOSTS := $(shell ssh-keyscan -p 2222 -t ed25519 $(BOOTSTRAP_HOST) 2>/dev/null))
+	@test -n "$(GITEA_KNOWN_HOSTS)" || { echo "ERROR: ssh-keyscan failed for $(BOOTSTRAP_HOST):2222. Is Gitea running?"; exit 1; }
 	$(TF) -chdir=$(TF_FLUX) apply -auto-approve \
-		-var="kubeconfig_path=$(KC_FILE)"
+		-var="kubeconfig_path=$(KC_FILE)" \
+		-var="gitea_known_hosts=$(GITEA_KNOWN_HOSTS)"
 
 flux-bootstrap-destroy:
 	$(TF) -chdir=$(TF_FLUX) destroy -auto-approve \
-		-var="kubeconfig_path=$(KC_FILE)"
+		-var="kubeconfig_path=$(KC_FILE)" \
+		-var="gitea_known_hosts=destroy-placeholder"
 
 # ─── Composite: all k8s stacks ───────────────────────────────────────
 
