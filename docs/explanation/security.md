@@ -4,7 +4,7 @@ This document explains the security architecture, threat assumptions, and policy
 
 ## Threat Model Assumptions
 
-The platform is designed for **regulated/sovereign environments** (defense, ANSSI/SecNumCloud-aligned). The threat model assumes:
+The platform is designed for **sovereign environments** with strong security requirements. The threat model assumes:
 
 1. **Untrusted network**: All inter-node communication may be intercepted. Mitigated by Cilium mTLS and eBPF network policies.
 2. **Compromised container images**: Any pulled image may contain vulnerabilities. Mitigated by Trivy scanning, Cosign signature verification, and Harbor as a controlled registry.

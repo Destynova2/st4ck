@@ -32,7 +32,7 @@ Detection de tokens/secrets dans le trafic sortant. Risque d'exfiltration de don
 ## Reconsiderer si
 
 - Phase 2.2 IA legere deploye (Ollama + Open WebUI)
-- Besoin compliance IGI 1300 / SecNumCloud sur l'exfiltration
+- Besoin compliance sur la prevention d'exfiltration de donnees
 - Tetragon network observability ne suffit plus pour le DLP
 
 ## Note

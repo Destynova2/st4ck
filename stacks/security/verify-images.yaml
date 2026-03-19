@@ -1,5 +1,5 @@
 # Kyverno ClusterPolicy — verify container image signatures (Cosign)
-# Mode: enforce — unsigned images from Harbor are blocked
+# Mode: audit until signing pipeline is operational (see ADR-021 P2-13)
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -11,7 +11,7 @@ metadata:
       Verify that container images are signed with Cosign.
       Images from the internal Harbor registry must be signed.
 spec:
-  validationFailureAction: Enforce
+  validationFailureAction: Audit
   background: false
   rules:
     - name: verify-harbor-images

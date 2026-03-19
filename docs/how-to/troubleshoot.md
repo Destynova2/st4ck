@@ -8,7 +8,7 @@
 | `k8s-pki-apply` fails: file not found | `kms-output/` missing | Run `make bootstrap && make bootstrap-export` (needs podman) |
 | `tofu init` fails: connection refused | vault-backend not running | `make bootstrap` or `podman pod start platform` |
 | Kyverno webhooks block deletions | Webhooks persist after pods gone | `make k8s-down` handles this (deletes webhooks first) |
-| OpenBao returns `sealed` | Standalone mode, not initialized | `make openbao-init` (after k8s-pki-apply) |
+| OpenBao returns `sealed` | Standalone mode, not initialized | Check pki stack logs: `kubectl -n secrets logs openbao-infra-0` |
 | `k8s-storage-init` fails | Garage Helm chart not fetched | Auto-handled: depends on `garage-chart` target |
 | Port-forward zombie processes | Previous session not cleaned | `pkill -f 'kubectl port-forward'` (included in k8s-down) |
 | Hydra TLS cert not issued | ClusterIssuer not ready | k8s-pki must be applied before k8s-identity |

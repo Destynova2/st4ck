@@ -28,7 +28,6 @@ All commands are Makefile targets. Run `make help` for the full list.
 | `make kms-stop` | Stop the local OpenBao KMS cluster + vault-backend |
 | `make state-snapshot` | Backup all OpenTofu states via Raft snapshot |
 | `make state-restore SNAPSHOT=path` | Restore from a Raft snapshot file |
-| `make openbao-init` | Initialize and unseal in-cluster OpenBao instances |
 
 ## K8s Stacks (Provider-Agnostic)
 
@@ -49,7 +48,7 @@ Each stack has `-init`, `-apply`, and `-destroy` targets:
 | Command | Description |
 |---------|-------------|
 | `make k8s-init` | `tofu init` all K8s stacks |
-| `make k8s-up` | Deploy all 8 stacks sequentially (strict dependency order) |
+| `make k8s-up` | Deploy all 7 stacks sequentially (strict dependency order) |
 | `make k8s-down` | Destroy all stacks in reverse order |
 
 ## Scaleway

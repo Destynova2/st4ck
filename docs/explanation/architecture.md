@@ -10,7 +10,7 @@ La plateforme suit un **modele de deploiement en deux phases** :
 
 ```mermaid
 graph LR
-    D1[Day 1<br/>OpenTofu] -->|deploie 8 stacks| K8S[Cluster K8s]
+    D1[Day 1<br/>OpenTofu] -->|deploie 7 stacks| K8S[Cluster K8s]
     K8S --> FLUX[Flux v2]
     FLUX -->|reconciliation| K8S
     GIT[Gitea] -->|webhook| FLUX
@@ -37,13 +37,12 @@ graph TB
         CNI[1. k8s-cni<br/>Cilium ~30s]
         PKI[2. k8s-pki<br/>OpenBao + cert-manager ~1min]
         MON[3. k8s-monitoring<br/>VictoriaMetrics ~2min]
-        INIT[4. openbao-init<br/>Transit + SSH CA]
-        IDN[5. k8s-identity<br/>Kratos + Hydra ~1min]
-        SEC[6. k8s-security<br/>Trivy + Tetragon + Kyverno ~2min]
-        STO[7. k8s-storage<br/>Garage + Velero + Harbor ~2min]
-        FLUXB[8. flux-bootstrap<br/>Flux SSH ~30s]
+        IDN[4. k8s-identity<br/>Kratos + Hydra ~1min]
+        SEC[5. k8s-security<br/>Trivy + Tetragon + Kyverno ~2min]
+        STO[6. k8s-storage<br/>Garage + Velero + Harbor ~2min]
+        FLUXB[7. flux-bootstrap<br/>Flux SSH ~30s]
 
-        CNI --> PKI --> MON --> INIT --> IDN --> SEC --> STO --> FLUXB
+        CNI --> PKI --> MON --> IDN --> SEC --> STO --> FLUXB
     end
 
     KMS -.->|state backend + CAs| CNI
@@ -54,8 +53,7 @@ graph TB
 
 - **Cilium en premier** : c'est le CNI. Sans lui, aucun pod ne peut etre schedule.
 - **PKI avant monitoring** : cert-manager doit etre pret pour les certificats TLS.
-- **openbao-init apres PKI** : les pods OpenBao doivent tourner avant l'initialisation.
-- **Identity apres openbao-init** : Hydra a besoin de certificats TLS signes par cert-manager.
+- **Identity apres PKI** : Hydra a besoin de certificats TLS signes par cert-manager.
 - **Security avant storage** : Kyverno doit etre pret avant de deployer les workloads stateful.
 - **Storage apres security** : evite les race conditions (Kyverno webhooks bloquant des pods).
 - **Flux en dernier** : il a besoin de toutes les stacks presentes pour les reconcilier.
@@ -146,7 +144,7 @@ graph TB
     MOD --> OUT[Outscale<br/>FCU]
     MOD --> VMW[VMware<br/>scripts airgap]
 
-    SCW --> K8S_STACKS[8 stacks K8s<br/>provider-agnostic]
+    SCW --> K8S_STACKS[7 stacks K8s<br/>provider-agnostic]
     LOCAL --> K8S_STACKS
     OUT --> K8S_STACKS
     VMW --> K8S_STACKS

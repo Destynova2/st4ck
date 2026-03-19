@@ -25,7 +25,6 @@ graph TB
         CNI[k8s-cni<br/>Cilium]
         PKI[k8s-pki<br/>OpenBao + cert-manager]
         MON[k8s-monitoring<br/>VictoriaMetrics]
-        INIT[openbao-init<br/>Transit + SSH CA]
         IDN[k8s-identity<br/>Kratos + Hydra]
         SEC[k8s-security<br/>Trivy + Tetragon + Kyverno]
         STO[k8s-storage<br/>Garage + Velero + Harbor]
@@ -35,7 +34,7 @@ graph TB
     KMS --> CLUSTER
     IAM --> IMG --> CLUSTER
     IAM --> CI
-    CLUSTER --> CNI --> PKI --> MON --> INIT --> IDN --> SEC --> STO --> FLUX
+    CLUSTER --> CNI --> PKI --> MON --> IDN --> SEC --> STO --> FLUX
     CA -.->|inject sub-CAs| PKI
     VB -.->|state backend| CNI
 ```
@@ -172,7 +171,7 @@ graph TB
     end
 
     subgraph "Cluster K8s (6 noeuds)"
-        CNI[Cilium] --> STACKS[8 stacks...]
+        CNI[Cilium] --> STACKS[7 stacks...]
     end
 
     TF[make scaleway-ci-apply] -->|cloud-init| GITEA
@@ -240,7 +239,6 @@ sequenceDiagram
     OP->>K8S: k8s-cni (Cilium)
     OP->>K8S: k8s-pki (OpenBao + cert-manager + CAs)
     OP->>K8S: k8s-monitoring (VictoriaMetrics)
-    OP->>K8S: openbao-init (Transit + SSH CA)
     OP->>K8S: k8s-identity (Kratos + Hydra + Pomerium)
     OP->>K8S: k8s-security (Trivy + Tetragon + Kyverno)
     OP->>K8S: k8s-storage (Garage + Velero + Harbor)

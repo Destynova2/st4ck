@@ -18,7 +18,7 @@
 
 | Composant | Version | Role | Notes |
 |---|---|---|---|
-| Woodpecker CI | v2 | Pipeline CI/CD push-based | 8 stages sequentiels (validate -> image -> cluster -> wait-api -> stacks) |
+| Woodpecker CI | v3 | Pipeline CI/CD push-based | 13 stages sequentiels (validate -> image -> bootstrap -> cluster -> wait-api -> stacks) |
 | Gitea | 1.x | Serveur Git | VM CI Scaleway, Podman Quadlet + systemd |
 | Harbor | 1.16.2 | Registry conteneurs | S3 Garage backend, Trivy scan integre |
 
@@ -193,4 +193,4 @@ envs/scaleway/
 
 ---
 
-*Total : ~27 composants Helm, 8 stacks Terraform, 3 environnements cloud + 1 air-gap, 1 VM CI Podman Quadlet*
+*Total : ~27 composants Helm, 7 stacks Terraform, 3 environnements cloud + 1 air-gap, 1 VM CI Podman Quadlet*

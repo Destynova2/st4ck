@@ -84,12 +84,12 @@ secret_key      = "<from api-key create>"
 
 ## Architecture
 
-Two-phase deployment: OpenTofu bootstraps infrastructure and 8 Kubernetes stacks in strict sequential order, then Flux v2 takes over day-2 GitOps reconciliation.
+Two-phase deployment: OpenTofu bootstraps infrastructure and 7 Kubernetes stacks in strict sequential order, then Flux v2 takes over day-2 GitOps reconciliation.
 
 ```mermaid
 graph LR
     KMS[kms-bootstrap<br/>local Podman] --> ENV[env-apply<br/>cluster 6 noeuds]
-    ENV --> STACKS[8 stacks K8s<br/>sequentiel ~15min]
+    ENV --> STACKS[7 stacks K8s<br/>sequentiel ~15min]
     STACKS --> FLUX[Flux day-2<br/>GitOps]
 ```
 

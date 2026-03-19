@@ -241,7 +241,7 @@ This is a sovereign infrastructure platform (not user-facing SaaS). Sizing is dr
 | Data Category | Size | Retention | Formula |
 |---------------|------|-----------|---------|
 | etcd (3 CP Raft) | ~2 GiB | Perpetual | K8s objects + state |
-| OpenBao KMS state | ~100 MiB | Perpetual (Raft snapshots) | tfstate x 8 stacks x ~1 MiB |
+| OpenBao KMS state | ~100 MiB | Perpetual (Raft snapshots) | tfstate x 7 stacks x ~1 MiB |
 | VictoriaMetrics | ~5 GiB/month | 30 days default | ~250 active series x 1 sample/15s x 4B |
 | VictoriaLogs | ~2 GiB/month | 30 days default | 6 nodes x ~100 log lines/s x 500B avg |
 | Garage S3 (Velero) | ~10 GiB/month | 90 day backups | Daily full backup ~300 MiB |

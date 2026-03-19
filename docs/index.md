@@ -10,14 +10,14 @@ Deploying a hardened Kubernetes platform in defense/sovereign contexts requires 
 
 - **Platform engineers** deploying Kubernetes in regulated or air-gapped environments
 - **DevOps teams** needing a reproducible, multi-cloud Kubernetes foundation
-- **Security teams** requiring ANSSI/SecNumCloud-aligned infrastructure
+- **Security teams** requiring hardened, sovereign infrastructure
 
 ## How it works
 
 ```mermaid
 graph LR
     KMS[kms-bootstrap<br/>PKI + state backend] --> INFRA[Infrastructure<br/>cluster 6 noeuds]
-    INFRA --> STACKS[8 stacks K8s<br/>sequentiel ~15min]
+    INFRA --> STACKS[7 stacks K8s<br/>sequentiel ~15min]
     STACKS --> FLUX[Flux day-2<br/>GitOps self-healing]
 ```
 

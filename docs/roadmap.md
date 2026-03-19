@@ -230,7 +230,7 @@
 ### Gate 1 — Criteres de passage
 
 - [x] Management cluster 6 noeuds Talos stable (3 CP + 3 workers)
-- [x] Pipeline CI/CD complet (Woodpecker + OpenTofu, 6 stacks)
+- [x] Pipeline CI/CD complet (Woodpecker + OpenTofu, 7 stacks)
 - [x] Harbor registry (S3 Garage backend, Trivy scan integre)
 - [x] Observabilite complete (metriques + logs + alertes)
 - [x] Secrets & PKI (OpenBao infra/app + cert-manager + Root/Intermediate CA)
@@ -240,7 +240,7 @@
 - [x] Cosign (Kyverno verifyImages ClusterPolicy, mode audit)
 - [x] Velero backup/restore teste (`make velero-test` — backup + restore namespace)
 - [x] 1 workload cluster cree/detruit via CAPI (demo Scaleway: `make capi-init && make capi-create && make capi-delete`)
-- [ ] Conformite ANSSI Guide K8s 2024 validee
+
 
 ---
 
@@ -426,7 +426,7 @@ Pipeline complet :
 - [ ] ClickHouse + Kafka operationnels
 - [ ] Cozystack self-service valide par equipes metier
 - [ ] ~500+ images dans Harbor
-- [ ] Conformite complete IGI 1300 / SecNumCloud 3.2
+- [ ] Conformite complete (audit securite interne)
 
 ---
 
@@ -439,7 +439,7 @@ Phase 1.2 CI/CD & Registry (Gitea + Woodpecker + Harbor)          [DONE]
     │
     ├── Phase 1.3 Secrets & Identite (OpenBao x2 + PKI + Ory)     [DONE]
     │       │
-    │       Phase 1.4 Observabilite (VM + Loki + Alloy + Grafana)  [DONE]
+    │       Phase 1.4 Observabilite (VictoriaMetrics + VictoriaLogs + Headlamp)  [DONE]
     │           │
     │           Phase 1.5 Securite (Trivy + Tetragon + Kyverno)    [DONE]
     │               │
@@ -521,12 +521,11 @@ make k8s-up (~15 minutes end-to-end, sequentiel strict)
 ├── 1. k8s-cni-apply        (~30s)  — Cilium CNI
 ├── 2. k8s-pki-apply        (~1 min) — PKI + OpenBao x2 + cert-manager
 ├── 3. k8s-monitoring-apply (~2 min) — vm-k8s-stack + VictoriaLogs + Headlamp
-├── 4. openbao-init                  — Init + unseal OpenBao, Transit engine
-├── 5. k8s-identity-apply   (~1 min) — Kratos + Hydra + Pomerium
+├── 4. k8s-identity-apply   (~1 min) — Kratos + Hydra + Pomerium
 │       └── Secrets auto-generes via random_id (zero tfvars)
-├── 6. k8s-security-apply   (~2 min) — Trivy + Tetragon + Kyverno + Cosign
-├── 7. k8s-storage-apply    (~2 min) — local-path + Garage + Velero + Harbor
-└── 8. flux-bootstrap-apply (~30s)   — Flux SSH + GitRepository
+├── 5. k8s-security-apply   (~2 min) — Trivy + Tetragon + Kyverno + Cosign
+├── 6. k8s-storage-apply    (~2 min) — local-path + Garage + Velero + Harbor
+└── 7. flux-bootstrap-apply (~30s)   — Flux SSH + GitRepository
 
 Post-deploy (optionnel) :
 ├── make scaleway-oidc       — Configure apiServer OIDC (Hydra, talosctl patch)

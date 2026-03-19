@@ -86,6 +86,15 @@ make k8s-security-apply             # Trivy + Tetragon + Kyverno
 make k8s-storage-apply              # Garage + Velero + Harbor
 make flux-bootstrap-apply           # Flux v2 (GitOps day-2)
 
+# Upgrade workflow
+make preflight                      # Pre-upgrade checks (vars, files, connectivity)
+make upgrade                        # Full upgrade: preflight → snapshot → bootstrap → stacks
+make bootstrap-update               # Update bootstrap pod in-place (preserves PVC)
+
+# Arbor (staging tree — pre-pull all artifacts)
+make arbor                          # Pull images + Helm charts → arbor/manifest.json
+make arbor-verify                   # Verify all artifacts present (SHA256 check)
+
 # State management
 make state-snapshot                 # Raft snapshot (backup all states)
 make state-restore SNAPSHOT=f.snap  # Restore from snapshot

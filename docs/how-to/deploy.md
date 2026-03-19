@@ -78,7 +78,6 @@ Each stack can be deployed independently (respecting dependencies):
 make k8s-cni-apply              # Must be first
 make k8s-pki-apply              # Needs CNI + kms-bootstrap
 make k8s-monitoring-apply       # Needs CNI
-make openbao-init               # After k8s-pki-apply
 make k8s-identity-apply         # Needs k8s-pki
 make k8s-security-apply         # Needs k8s-identity
 make k8s-storage-apply          # Needs k8s-identity
