@@ -33,6 +33,18 @@ variable "root_disk_size" {
   default     = 40
 }
 
+# ─── Network ─────────────────────────────────────────────────────────
+
+variable "management_cidrs" {
+  description = "CIDRs allowed to access CI VM (SSH, Gitea, Woodpecker)"
+  type        = list(string)
+
+  validation {
+    condition     = length(var.management_cidrs) > 0
+    error_message = "At least one management CIDR must be specified."
+  }
+}
+
 # ─── Git ──────────────────────────────────────────────────────────────
 
 variable "git_repo_url" {

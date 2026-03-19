@@ -58,9 +58,10 @@ resource "tls_locally_signed_cert" "infra_ca" {
   ]
 }
 
-resource "local_file" "infra_ca_key" {
-  content  = tls_private_key.infra_ca.private_key_pem
-  filename = "${var.output_dir}/infra-ca-key.pem"
+resource "local_sensitive_file" "infra_ca_key" {
+  content         = tls_private_key.infra_ca.private_key_pem
+  filename        = "${var.output_dir}/infra-ca-key.pem"
+  file_permission = "0600"
 }
 
 resource "local_file" "infra_ca_cert" {
@@ -104,9 +105,10 @@ resource "tls_locally_signed_cert" "app_ca" {
   ]
 }
 
-resource "local_file" "app_ca_key" {
-  content  = tls_private_key.app_ca.private_key_pem
-  filename = "${var.output_dir}/app-ca-key.pem"
+resource "local_sensitive_file" "app_ca_key" {
+  content         = tls_private_key.app_ca.private_key_pem
+  filename        = "${var.output_dir}/app-ca-key.pem"
+  file_permission = "0600"
 }
 
 resource "local_file" "app_ca_cert" {

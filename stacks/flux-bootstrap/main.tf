@@ -61,7 +61,7 @@ resource "kubernetes_secret" "flux_ssh_identity" {
   data = {
     identity       = tls_private_key.flux_ssh.private_key_openssh
     "identity.pub" = tls_private_key.flux_ssh.public_key_openssh
-    known_hosts    = var.gitea_known_hosts != "" ? var.gitea_known_hosts : "gitea.ci.internal ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPlaceholderReplaceWithRealKeyAfterGiteaDeploy"
+    known_hosts    = var.gitea_known_hosts
   }
 
   depends_on = [kubernetes_namespace.flux_system]

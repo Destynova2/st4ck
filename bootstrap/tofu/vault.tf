@@ -16,9 +16,10 @@ resource "local_file" "approle_role_id" {
   filename = "${var.output_dir}/approle-role-id.txt"
 }
 
-resource "local_file" "approle_secret_id" {
-  content  = vault_approle_auth_backend_role_secret_id.vault_backend.secret_id
-  filename = "${var.output_dir}/approle-secret-id.txt"
+resource "local_sensitive_file" "approle_secret_id" {
+  content         = vault_approle_auth_backend_role_secret_id.vault_backend.secret_id
+  filename        = "${var.output_dir}/approle-secret-id.txt"
+  file_permission = "0600"
 }
 
 # ─── Tokens ──────────────────────────────────────────────────────────
@@ -38,15 +39,16 @@ resource "vault_token" "autounseal" {
 }
 
 # Write tokens to files (for vault-backend + WP secrets)
-resource "local_file" "vault_backend_token" {
-  content  = vault_token.vault_backend.client_token
-  filename = "${var.output_dir}/vault-backend-token.txt"
+resource "local_sensitive_file" "vault_backend_token" {
+  content         = vault_token.vault_backend.client_token
+  filename        = "${var.output_dir}/vault-backend-token.txt"
+  file_permission = "0600"
 }
 
-
-resource "local_file" "transit_token" {
-  content  = vault_token.autounseal.client_token
-  filename = "${var.output_dir}/transit-token.txt"
+resource "local_sensitive_file" "transit_token" {
+  content         = vault_token.autounseal.client_token
+  filename        = "${var.output_dir}/transit-token.txt"
+  file_permission = "0600"
 }
 
 

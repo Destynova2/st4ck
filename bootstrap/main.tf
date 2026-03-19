@@ -55,10 +55,14 @@ variable "admin_user" {
 }
 
 variable "admin_password" {
-  description = "Admin password for Gitea and Woodpecker"
+  description = "Admin password for Gitea, Woodpecker, and OpenBao bootstrap-admin"
   type        = string
-  default     = "localpass123"
   sensitive   = true
+
+  validation {
+    condition     = length(var.admin_password) >= 16
+    error_message = "admin_password must be at least 16 characters."
+  }
 }
 
 variable "git_repo_url" {
@@ -115,10 +119,17 @@ locals {
       CI_DOMAIN: "${var.domain}"
       CI_WP_HOST: "${var.wp_host}"
       CI_ADMIN: "${var.admin_user}"
-      CI_PASSWORD: "${var.admin_password}"
-      CI_AGENT_SECRET: "${random_password.agent_secret.result}"
       CI_GIT_REPO_URL: "${var.git_repo_url}"
       CI_SCW_PROJECT_ID: "${var.scw_project_id}"
+    ---
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: platform-secrets
+    type: Opaque
+    stringData:
+      CI_PASSWORD: "${var.admin_password}"
+      CI_AGENT_SECRET: "${random_password.agent_secret.result}"
       CI_SCW_IMAGE_ACCESS_KEY: "${var.scw_image_access_key}"
       CI_SCW_IMAGE_SECRET_KEY: "${var.scw_image_secret_key}"
       CI_SCW_CLUSTER_ACCESS_KEY: "${var.scw_cluster_access_key}"

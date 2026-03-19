@@ -79,8 +79,9 @@ resource "terraform_data" "git_push" {
         git clone "${var.git_repo_url}" talos-push 2>/dev/null || true
       fi
       cd talos-push
-      git remote add gitea "http://${var.ci_admin}:${var.ci_password}@platform-gitea:3000/${var.ci_admin}/talos.git" 2>/dev/null || true
-      git push gitea main --force 2>&1 | tail -2
+      git remote add gitea "http://platform-gitea:3000/${var.ci_admin}/talos.git" 2>/dev/null || true
+      git -c credential.helper='!f() { echo "username=${var.ci_admin}"; echo "password=${var.ci_password}"; }; f' \
+        push gitea main --force 2>&1 | tail -2
     SH
   }
 }

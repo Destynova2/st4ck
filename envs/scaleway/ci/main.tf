@@ -29,32 +29,48 @@ resource "scaleway_instance_security_group" "ci" {
   inbound_default_policy  = "drop"
   outbound_default_policy = "accept"
 
-  # Gitea UI
-  inbound_rule {
-    action   = "accept"
-    port     = 3000
-    protocol = "TCP"
+  # SSH — management only
+  dynamic "inbound_rule" {
+    for_each = var.management_cidrs
+    content {
+      action   = "accept"
+      port     = 22
+      protocol = "TCP"
+      ip_range = inbound_rule.value
+    }
   }
 
-  # Gitea SSH
-  inbound_rule {
-    action   = "accept"
-    port     = 2222
-    protocol = "TCP"
+  # Gitea SSH — management only
+  dynamic "inbound_rule" {
+    for_each = var.management_cidrs
+    content {
+      action   = "accept"
+      port     = 2222
+      protocol = "TCP"
+      ip_range = inbound_rule.value
+    }
   }
 
-  # Woodpecker UI
-  inbound_rule {
-    action   = "accept"
-    port     = 8000
-    protocol = "TCP"
+  # Gitea UI — management only
+  dynamic "inbound_rule" {
+    for_each = var.management_cidrs
+    content {
+      action   = "accept"
+      port     = 3000
+      protocol = "TCP"
+      ip_range = inbound_rule.value
+    }
   }
 
-  # SSH
-  inbound_rule {
-    action   = "accept"
-    port     = 22
-    protocol = "TCP"
+  # Woodpecker UI — management only
+  dynamic "inbound_rule" {
+    for_each = var.management_cidrs
+    content {
+      action   = "accept"
+      port     = 8000
+      protocol = "TCP"
+      ip_range = inbound_rule.value
+    }
   }
 }
 

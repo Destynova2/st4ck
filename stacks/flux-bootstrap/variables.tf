@@ -16,7 +16,11 @@ variable "gitea_ssh_url" {
 }
 
 variable "gitea_known_hosts" {
-  description = "SSH known_hosts entry for Gitea (leave empty to skip host key verification)"
+  description = "SSH known_hosts entry for Gitea (from ssh-keyscan)"
   type        = string
-  default     = ""
+
+  validation {
+    condition     = var.gitea_known_hosts != "" && !strcontains(var.gitea_known_hosts, "Placeholder")
+    error_message = "gitea_known_hosts must be set to a real SSH host key (run: ssh-keyscan -t ed25519 <gitea-host>)."
+  }
 }

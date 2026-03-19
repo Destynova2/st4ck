@@ -142,7 +142,7 @@ spec:
         - name: SKIP_CHOWN
           value: "true"
         - name: BAO_ADMIN_PASSWORD
-          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_PASSWORD } }
+          valueFrom: { secretKeyRef: { name: platform-secrets, key: CI_PASSWORD } }
       volumeMounts:
         - name: openbao-config
           mountPath: /config
@@ -189,6 +189,8 @@ spec:
       env:
         - name: GITEA__security__INSTALL_LOCK
           value: "true"
+        - name: GITEA__service__DISABLE_REGISTRATION
+          value: "true"
         - name: GITEA__server__ROOT_URL
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_GITEA_URL } }
         - name: GITEA__server__DOMAIN
@@ -222,7 +224,7 @@ spec:
         - name: WOODPECKER_HOST
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_WP_HOST } }
         - name: WOODPECKER_OPEN
-          value: "true"
+          value: "false"
         - name: WOODPECKER_ADMIN
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_ADMIN } }
         - name: WOODPECKER_GITEA
@@ -312,19 +314,19 @@ spec:
         - name: CI_ADMIN
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_ADMIN } }
         - name: CI_PASSWORD
-          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_PASSWORD } }
+          valueFrom: { secretKeyRef: { name: platform-secrets, key: CI_PASSWORD } }
         - name: CI_WP_HOST
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_WP_HOST } }
         - name: CI_GITEA_URL
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_GITEA_URL } }
         - name: CI_AGENT_SECRET
-          valueFrom: { configMapKeyRef: { name: platform-config, key: CI_AGENT_SECRET } }
+          valueFrom: { secretKeyRef: { name: platform-secrets, key: CI_AGENT_SECRET } }
 
   volumes:
     - name: openbao-config
       configMap: { name: openbao-config }
     - name: bao-data
-      emptyDir: {}  # Ephemeral: all KMS data lost on pod restart (bootstrap is one-shot)
+      persistentVolumeClaim: { claimName: platform-bao-data }
     - name: bao-seal
       configMap: { name: bao-seal-key }
     - name: gitea-data

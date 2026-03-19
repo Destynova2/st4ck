@@ -110,39 +110,30 @@ resource "scaleway_instance_security_group" "talos" {
   inbound_default_policy  = "drop"
   outbound_default_policy = "accept"
 
-  # Talos API
+  # ─── Public ports (accessible from internet) ──────────────────────
+
+  # Talos API (mTLS protected)
   inbound_rule {
     action   = "accept"
     port     = 50000
     protocol = "TCP"
   }
 
-  # Kubernetes API
+  # Kubernetes API (mTLS protected, via LB)
   inbound_rule {
     action   = "accept"
     port     = 6443
     protocol = "TCP"
   }
 
-  # Cilium health checks
-  inbound_rule {
-    action   = "accept"
-    port     = 4240
-    protocol = "TCP"
-  }
+  # ─── Internal ports (VPC only) ────────────────────────────────────
 
-  # Cilium VXLAN overlay
+  # etcd client
   inbound_rule {
     action   = "accept"
-    port     = 8472
-    protocol = "UDP"
-  }
-
-  # Hubble relay
-  inbound_rule {
-    action   = "accept"
-    port     = 4244
+    port     = 2379
     protocol = "TCP"
+    ip_range = scaleway_vpc_private_network.talos.ipv4_subnet[0].subnet
   }
 
   # etcd peer
@@ -150,13 +141,31 @@ resource "scaleway_instance_security_group" "talos" {
     action   = "accept"
     port     = 2380
     protocol = "TCP"
+    ip_range = scaleway_vpc_private_network.talos.ipv4_subnet[0].subnet
   }
 
-  # etcd client
+  # Cilium health checks
   inbound_rule {
     action   = "accept"
-    port     = 2379
+    port     = 4240
     protocol = "TCP"
+    ip_range = scaleway_vpc_private_network.talos.ipv4_subnet[0].subnet
+  }
+
+  # Hubble relay
+  inbound_rule {
+    action   = "accept"
+    port     = 4244
+    protocol = "TCP"
+    ip_range = scaleway_vpc_private_network.talos.ipv4_subnet[0].subnet
+  }
+
+  # Cilium VXLAN overlay
+  inbound_rule {
+    action   = "accept"
+    port     = 8472
+    protocol = "UDP"
+    ip_range = scaleway_vpc_private_network.talos.ipv4_subnet[0].subnet
   }
 
   # kubelet
@@ -164,6 +173,7 @@ resource "scaleway_instance_security_group" "talos" {
     action   = "accept"
     port     = 10250
     protocol = "TCP"
+    ip_range = scaleway_vpc_private_network.talos.ipv4_subnet[0].subnet
   }
 
 }
