@@ -141,12 +141,10 @@ graph TB
 
     MOD --> SCW[Scaleway<br/>4 stages IAM/image/cluster/CI]
     MOD --> LOCAL[Local<br/>libvirt/KVM]
-    MOD --> OUT[Outscale<br/>FCU]
     MOD --> VMW[VMware<br/>scripts airgap]
 
     SCW --> K8S_STACKS[7 stacks K8s<br/>provider-agnostic]
     LOCAL --> K8S_STACKS
-    OUT --> K8S_STACKS
     VMW --> K8S_STACKS
 ```
 
@@ -154,7 +152,6 @@ graph TB
 |---|---|---|
 | Scaleway | scaleway/scaleway | 4 stages (IAM, image, cluster, CI), Load Balancer, Private Network |
 | Local | libvirt | QEMU/KVM VMs, bridge networking |
-| Outscale | outscale | FCU instances |
 | VMware | Scripts shell | Pas de Terraform (pas d'API vSphere), OVA + image cache, IPs statiques |
 
 Toutes les stacks K8s sont provider-agnostiques — elles recoivent uniquement un `kubeconfig_path`.

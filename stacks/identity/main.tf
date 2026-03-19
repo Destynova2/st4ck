@@ -12,10 +12,6 @@ terraform {
       source  = "alekc/kubectl"
       version = "~> 2.1"
     }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.0"
-    }
   }
 }
 
@@ -66,56 +62,52 @@ resource "kubernetes_namespace" "identity" {
   }
 }
 
-# ─── PostgreSQL (persistent storage for Hydra + Kratos) ──────────
+# ─── CloudNativePG Operator ──────────────────────────────────────
 
-resource "random_password" "pg_password" {
-  length  = 32
-  special = false
-}
-
-resource "helm_release" "postgresql" {
-  name             = "identity-pg"
-  repository       = "https://charts.bitnami.com/bitnami"
-  chart            = "postgresql"
-  version          = var.postgresql_version
+resource "helm_release" "cnpg_operator" {
+  name             = "cnpg"
+  repository       = "https://cloudnative-pg.github.io/charts"
+  chart            = "cloudnative-pg"
+  version          = var.cnpg_version
   namespace        = "identity"
   create_namespace = false
-
-  set {
-    name  = "auth.username"
-    value = "identity"
-  }
-
-  set_sensitive {
-    name  = "auth.password"
-    value = random_password.pg_password.result
-  }
-
-  set {
-    name  = "auth.database"
-    value = "identity"
-  }
-
-  set {
-    name  = "primary.persistence.size"
-    value = "2Gi"
-  }
-
-  set {
-    name  = "primary.resources.requests.memory"
-    value = "256Mi"
-  }
-
-  set {
-    name  = "primary.resources.requests.cpu"
-    value = "250m"
-  }
 
   depends_on = [kubernetes_namespace.identity]
 }
 
+# ─── PostgreSQL Cluster (CNPG CRD) ──────────────────────────────
+
+resource "kubectl_manifest" "identity_pg_cluster" {
+  yaml_body = <<-YAML
+    apiVersion: postgresql.cnpg.io/v1
+    kind: Cluster
+    metadata:
+      name: identity-pg
+      namespace: identity
+    spec:
+      instances: 1
+      storage:
+        size: 2Gi
+      bootstrap:
+        initdb:
+          database: identity
+          owner: identity
+  YAML
+
+  depends_on = [helm_release.cnpg_operator]
+}
+
+data "kubernetes_secret" "pg_app" {
+  metadata {
+    name      = "identity-pg-app"
+    namespace = "identity"
+  }
+  depends_on = [kubectl_manifest.identity_pg_cluster]
+}
+
 locals {
-  pg_dsn = "postgres://identity:${random_password.pg_password.result}@identity-pg-postgresql.identity.svc:5432/identity?sslmode=disable"
+  # CNPG uses postgresql:// but Ory expects postgres://, and needs sslmode=disable for in-cluster
+  pg_dsn = "${replace(data.kubernetes_secret.pg_app.data["uri"], "postgresql://", "postgres://")}?sslmode=disable"
 }
 
 # ─── Ory Kratos (identity management) ─────────────────────────────
@@ -132,7 +124,7 @@ resource "helm_release" "kratos" {
     dsn = local.pg_dsn
   })]
 
-  depends_on = [kubernetes_namespace.identity, helm_release.postgresql]
+  depends_on = [kubernetes_namespace.identity, kubectl_manifest.identity_pg_cluster]
 }
 
 # ─── Hydra TLS certificate (for apiServer OIDC) ───────────────────
@@ -175,7 +167,7 @@ resource "helm_release" "hydra" {
     dsn           = local.pg_dsn
   })]
 
-  depends_on = [kubernetes_namespace.identity, kubectl_manifest.hydra_tls_cert, helm_release.postgresql]
+  depends_on = [kubernetes_namespace.identity, kubectl_manifest.hydra_tls_cert, kubectl_manifest.identity_pg_cluster]
 }
 
 # ─── OIDC client registration (kubernetes → Hydra) ────────────────

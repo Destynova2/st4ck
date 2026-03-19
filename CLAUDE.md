@@ -13,7 +13,6 @@ talos/
 │
 ├── envs/                               # Provider-specific infra
 │   ├── local/                          # Provider: libvirt (QEMU/KVM)
-│   ├── outscale/                       # Provider: outscale (FCU)
 │   ├── scaleway/                       # Provider: scaleway (fr-par)
 │   │   ├── iam/                        # Stage 0: scoped IAM apps
 │   │   ├── image/                      # Stage 1: Talos image builder
@@ -45,7 +44,7 @@ talos/
 
 - **Terraform module `talos-cluster`**: generates machine secrets + machine configs
   via the `siderolabs/talos` provider. Each env calls this module then creates
-  infra with its own provider (libvirt, outscale, scaleway).
+  infra with its own provider (libvirt, scaleway).
 - **K8s stacks**: provider-agnostic, use `kubeconfig_path` variable.
   All stacks read from `~/.kube/talos-$(ENV)`.
   Each stack co-locates TF code, Helm values, and Flux manifests in one folder.
@@ -112,7 +111,7 @@ bootstrap (once, podman)
     │ → PKI Root CA + Sub-CAs (kms-output/)
     │ → tfstate backend :8080 (via vault-backend → OpenBao KV v2)
     │
-env-apply (scaleway/local/outscale)
+env-apply (scaleway/local)
     │ → kubeconfig → ~/.kube/talos-$(ENV)
     │
 cni              ← Cilium MUST be first (~30s)

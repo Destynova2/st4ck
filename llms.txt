@@ -1,6 +1,6 @@
 # Talos Linux Multi-Environment Deployment Platform
 
-> Sovereign air-gapped Kubernetes platform built on Talos Linux v1.12. Deploys a management cluster with full observability, PKI, identity (OIDC), security scanning, S3 storage, and GitOps across Scaleway, libvirt/KVM, Outscale, and VMware airgap environments. Uses OpenTofu for infrastructure, Flux v2 for day-2 GitOps, and OpenBao for secrets and state storage.
+> Sovereign air-gapped Kubernetes platform built on Talos Linux v1.12. Deploys a management cluster with full observability, PKI, identity (OIDC), security scanning, S3 storage, and GitOps across Scaleway, libvirt/KVM, and VMware airgap environments. Uses OpenTofu for infrastructure, Flux v2 for day-2 GitOps, and OpenBao for secrets and state storage.
 
 ## Project Context
 - [README.md](README.md): Project overview and quick start

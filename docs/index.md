@@ -27,7 +27,6 @@ graph LR
 |------------|----------|--------|
 | Scaleway | scaleway/scaleway | OpenTofu (4 stages: IAM, image, cluster, CI) |
 | Local dev | libvirt/KVM | OpenTofu (QEMU VMs) |
-| Outscale | outscale/outscale | OpenTofu |
 | VMware airgap | vSphere (no API) | Shell scripts (OVA + static IPs) |
 
 ## Quick start

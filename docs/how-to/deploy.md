@@ -47,13 +47,6 @@ make kms-bootstrap              # Once
 make local-init && make local-up
 ```
 
-## Deploy to Outscale
-
-```bash
-make kms-bootstrap              # Once
-make outscale-init && make outscale-up
-```
-
 ## Deploy to VMware (air-gapped)
 
 The VMware path does not use Terraform. It builds an OVA with embedded container images:

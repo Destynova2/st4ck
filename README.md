@@ -4,7 +4,7 @@ Sovereign, air-gap-capable Kubernetes platform built on [Talos Linux](https://ww
 
 ## What it does
 
-Automates the deployment of a hardened Kubernetes platform across multiple environments (Scaleway, libvirt/KVM, Outscale, VMware air-gap). From bare infrastructure to a fully operational platform with 27 Helm components in under 15 minutes.
+Automates the deployment of a hardened Kubernetes platform across multiple environments (Scaleway, libvirt/KVM, VMware air-gap). From bare infrastructure to a fully operational platform with 27 Helm components in under 15 minutes.
 
 **Key capabilities:**
 
@@ -79,7 +79,6 @@ secret_key      = "<from api-key create>"
 |-------------|----------|--------|
 | Scaleway | scaleway | OpenTofu (4 stages: IAM, image, cluster, CI) |
 | Local | libvirt/KVM | OpenTofu (QEMU VMs) |
-| Outscale | outscale | OpenTofu |
 | VMware air-gap | Shell scripts | OVA with embedded image cache, static IPs |
 
 ## Architecture

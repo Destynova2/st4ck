@@ -16,7 +16,7 @@ All configurable parameters for the Talos platform, organized by layer.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ENV` | scaleway | Provider selection: `scaleway`, `local`, `outscale` |
+| `ENV` | scaleway | Provider selection: `scaleway`, `local` |
 | `TF` | tofu | Terraform/OpenTofu binary |
 | `KC_FILE` | ~/.kube/talos-$(ENV) | Kubeconfig file path |
 | `KMS_OUTPUT` | kms-output | Directory for exported tokens and certificates |

@@ -6,7 +6,7 @@ All commands are Makefile targets. Run `make help` for the full list.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ENV` | `scaleway` | Provider selection: `scaleway`, `local`, `outscale` |
+| `ENV` | `scaleway` | Provider selection: `scaleway`, `local` |
 | `TF` | `tofu` | Terraform binary (OpenTofu) |
 | `KC_FILE` | `~/.kube/talos-$(ENV)` | Kubeconfig file path |
 | `TF_HTTP_PASSWORD` | (from kms-output) | vault-backend token for state backend |
@@ -97,18 +97,6 @@ Each stack has `-init`, `-apply`, and `-destroy` targets:
 | `make local-kubeconfig` | Export kubeconfig |
 | `make local-up` | Full deployment: VMs + K8s stacks |
 | `make local-down` | Full teardown |
-
-## Outscale
-
-| Command | Description |
-|---------|-------------|
-| `make outscale-init` | Init Outscale environment |
-| `make outscale-plan` | Plan Outscale changes |
-| `make outscale-apply` | Create Outscale infrastructure |
-| `make outscale-destroy` | Destroy Outscale infrastructure |
-| `make outscale-kubeconfig` | Export kubeconfig |
-| `make outscale-up` | Full deployment |
-| `make outscale-down` | Full teardown |
 
 ## VMware Air-Gap
 

@@ -1,6 +1,6 @@
 # Talos Linux Multi-Environment Deployment Platform
 
-Sovereign air-gapped Kubernetes platform built on Talos Linux v1.12, deploying a full management cluster with CNI, PKI, identity, monitoring, security, storage, and GitOps stacks across Scaleway, libvirt/KVM, Outscale, and VMware environments.
+Sovereign air-gapped Kubernetes platform built on Talos Linux v1.12, deploying a full management cluster with CNI, PKI, identity, monitoring, security, storage, and GitOps stacks across Scaleway, libvirt/KVM, and VMware environments.
 
 ## Stack
 
@@ -22,7 +22,7 @@ Sovereign air-gapped Kubernetes platform built on Talos Linux v1.12, deploying a
 
 The platform uses a two-phase deployment model. Phase 1 (OpenTofu) bootstraps infrastructure and all Kubernetes stacks in strict dependency order. Phase 2 (Flux) takes over day-2 reconciliation via GitOps.
 
-A shared Terraform module (`modules/talos-cluster`) generates machine secrets and configs via the siderolabs/talos provider. Each environment (Scaleway, local, Outscale, VMware) calls this module and adds its own cloud resources. All Kubernetes stacks are provider-agnostic -- they only need a kubeconfig path.
+A shared Terraform module (`modules/talos-cluster`) generates machine secrets and configs via the siderolabs/talos provider. Each environment (Scaleway, local, VMware) calls this module and adds its own cloud resources. All Kubernetes stacks are provider-agnostic -- they only need a kubeconfig path.
 
 State is stored in OpenBao KV v2 via vault-backend (HTTP backend with locking), running in a local podman pod. Secrets are auto-generated via `random_id` Terraform, stored in encrypted state, zero secrets in Git.
 

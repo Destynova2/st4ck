@@ -17,12 +17,12 @@ variable "hydra_version" {
   default     = "0.60.1"
 }
 
-# ─── PostgreSQL ─────────────────────────────────────────────────────
+# ─── CloudNativePG ─────────────────────────────────────────────────
 
-variable "postgresql_version" {
-  description = "Bitnami PostgreSQL Helm chart version"
+variable "cnpg_version" {
+  description = "CloudNativePG operator Helm chart version"
   type        = string
-  default     = "16.7.4"
+  default     = "0.25.0"
 }
 
 # ─── Pomerium ────────────────────────────────────────────────────────

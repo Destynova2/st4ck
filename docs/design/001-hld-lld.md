@@ -33,7 +33,7 @@
 
 ## 1. Executive Summary
 
-The Talos Sovereign Kubernetes Platform is a multi-environment, infrastructure-as-code system that deploys hardened Kubernetes clusters on Talos Linux v1.12 across multiple providers (Scaleway, local KVM/libvirt, Outscale, VMware airgap). It provides a complete platform stack covering networking (Cilium eBPF), PKI (OpenBao + cert-manager), identity (Kratos/Hydra/Pomerium), security (Trivy/Tetragon/Kyverno), storage (Garage S3/Harbor/Velero), monitoring (VictoriaMetrics/VictoriaLogs/Headlamp), and GitOps (Flux v2).
+The Talos Sovereign Kubernetes Platform is a multi-environment, infrastructure-as-code system that deploys hardened Kubernetes clusters on Talos Linux v1.12 across multiple providers (Scaleway, local KVM/libvirt, VMware airgap). It provides a complete platform stack covering networking (Cilium eBPF), PKI (OpenBao + cert-manager), identity (Kratos/Hydra/Pomerium), security (Trivy/Tetragon/Kyverno), storage (Garage S3/Harbor/Velero), monitoring (VictoriaMetrics/VictoriaLogs/Headlamp), and GitOps (Flux v2).
 
 The design prioritizes sovereign operation: all secrets are auto-generated (zero manual input), state is stored in OpenBao KMS with Raft consensus (no external cloud state backends), PKI uses a private three-tier CA hierarchy, and the system supports fully air-gapped deployments on VMware. OpenTofu handles initial deployment; Flux v2 manages day-2 reconciliation. A single podman pod bootstraps the entire platform (OpenBao 3-node, vault-backend, Gitea, Woodpecker CI) before any cluster exists.
 
@@ -80,7 +80,6 @@ graph TB
 
     Platform -->|Scaleway API| SCW["Scaleway Cloud<br/>fr-par"]
     Platform -->|libvirt API| KVM["Local KVM<br/>QEMU"]
-    Platform -->|Outscale API| OSC["Outscale Cloud<br/>FCU"]
     Platform -->|OVA deploy| VMW["VMware vSphere<br/>air-gapped"]
 
     Platform -->|pulls images| Registries["Container Registries<br/>ghcr.io, docker.io, quay.io"]
@@ -490,7 +489,6 @@ Each environment directory (`envs/<provider>/`) contains provider-specific infra
 |----------|---------|---------------|-------------|-------------------|
 | Scaleway | `envs/scaleway/` | `scaleway/scaleway` | LB flex IP :6443 | cloud-init (user_data) |
 | Local | `envs/local/` | `dmacvicar/libvirt` | VIP :6443 | Talos API push |
-| Outscale | `envs/outscale/` | Outscale FCU | LB/EIP :6443 | cloud-init |
 | VMware | `envs/vmware-airgap/` | Shell scripts | Static IP | OVA deploy + config |
 
 ### Scaleway-Specific Deployment Stages
@@ -1282,7 +1280,7 @@ After initial deployment via OpenTofu, the handoff to Flux follows this pattern:
 | 5 | Kyverno Cosign policy in audit mode only | Open | Move to enforce mode once all images are signed |
 | 6 | No automated certificate rotation for Root/Infra/App CAs | Open | 10-year / 5-year validity; manual re-bootstrap to rotate |
 | 7 | No network encryption (WireGuard) enabled by default in Cilium | Open | Can be enabled via values.yaml; adds CPU overhead |
-| 8 | Outscale and VMware providers less tested than Scaleway/local | Open | VMware is shell-script based (no Terraform) |
+| 8 | VMware provider less tested than Scaleway/local | Open | VMware is shell-script based (no Terraform) |
 | 9 | Sequential deployment adds ~5 min over theoretical parallel minimum | Accepted | Reliability over speed (ADR-005) |
 | 10 | In-cluster OpenBao uses static seal (not transit auto-unseal from KMS) | Open | Transit unseal token is generated but not yet wired to in-cluster OpenBao Helm values |
 

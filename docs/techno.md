@@ -188,9 +188,8 @@ envs/scaleway/
 |---|---|---|---|
 | Scaleway (fr-par) | scaleway | Actif (demo/dev) | 3 CP (DEV1-S) + 3 W (DEV1-M), LB API |
 | Local (libvirt) | libvirt/QEMU | Disponible | Dev local KVM |
-| Outscale (FCU) | outscale | Disponible | Cloud souverain FR |
 | VMware air-gap | Scripts (pas Terraform) | Preparation | OVA + image cache + static IPs |
 
 ---
 
-*Total : ~27 composants Helm, 7 stacks Terraform, 3 environnements cloud + 1 air-gap, 1 VM CI Podman Quadlet*
+*Total : ~27 composants Helm, 7 stacks Terraform, 2 environnements cloud + 1 air-gap, 1 VM CI Podman Quadlet*
