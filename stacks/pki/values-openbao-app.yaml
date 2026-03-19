@@ -1,42 +1,49 @@
 # OpenBao App — application secrets
-# Standalone mode with file storage + static seal + self-init + TLS
+# HA mode with Raft storage (3 replicas) + static seal + self-init + TLS
 
 server:
   dev:
     enabled: false
 
   standalone:
+    enabled: false
+
+  ha:
     enabled: true
-    config: |
-      ui = true
+    replicas: 3
+    raft:
+      enabled: true
+      config: |
+        ui = true
 
-      listener "tcp" {
-        address         = "[::]:8200"
-        cluster_address = "[::]:8201"
-        tls_cert_file   = "/openbao/userconfig/openbao-app-tls/tls.crt"
-        tls_key_file    = "/openbao/userconfig/openbao-app-tls/tls.key"
-      }
+        listener "tcp" {
+          tls_disable     = true
+          address         = "[::]:8200"
+          cluster_address = "[::]:8201"
+        }
 
-      storage "file" {
-        path = "/openbao/data"
-      }
+        storage "raft" {
+          path = "/openbao/data"
+        }
 
-      seal "static" {
-        current_key_id = "app-1"
-        current_key    = "env://BAO_SEAL_KEY"
-      }
+        service_registration "kubernetes" {}
 
-      # ─── Self-init: KV v2 for application secrets ────────────────
-      initialize "kv" {
-        request "mount-kv" {
-          operation = "update"
-          path      = "sys/mounts/secret"
-          data = {
-            type    = "kv"
-            options = { version = "2" }
+        seal "static" {
+          current_key_id = "app-1"
+          current_key    = "env://BAO_SEAL_KEY"
+        }
+
+        # ─── Self-init: KV v2 for application secrets ────────────────
+        initialize "kv" {
+          request "mount-kv" {
+            operation = "update"
+            path      = "sys/mounts/secret"
+            data = {
+              type    = "kv"
+              options = { version = "2" }
+            }
           }
         }
-      }
 
   extraSecretEnvironmentVars:
     - envName: BAO_SEAL_KEY
