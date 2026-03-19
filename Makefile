@@ -15,9 +15,7 @@ KC_FILE := $(HOME)/.kube/talos-$(ENV)
 # Tokens from platform-kms-output volume. Copied to kms-output/ for local use.
 KMS_OUTPUT         := kms-output
 VB_TOKEN_FILE      := $(KMS_OUTPUT)/vault-backend-token.txt
-CS_TOKEN_FILE      := $(KMS_OUTPUT)/cluster-secrets-token.txt
 export TF_HTTP_PASSWORD := $(shell cat $(VB_TOKEN_FILE) 2>/dev/null)
-VAULT_TOKEN        := $(shell cat $(CS_TOKEN_FILE) 2>/dev/null)
 
 # ─── Stack paths ─────────────────────────────────────────────────────
 
@@ -114,13 +112,11 @@ k8s-identity-init: ## terraform init for k8s-identity
 
 k8s-identity-apply: ## Deploy Kratos + Hydra + Pomerium
 	$(TF) -chdir=$(TF_IDENTITY) apply -auto-approve \
-		-var="kubeconfig_path=$(KC_FILE)" \
-		-var="vault_token=$(VAULT_TOKEN)"
+		-var="kubeconfig_path=$(KC_FILE)"
 
 k8s-identity-destroy:
 	$(TF) -chdir=$(TF_IDENTITY) destroy -auto-approve \
-		-var="kubeconfig_path=$(KC_FILE)" \
-		-var="vault_token=$(VAULT_TOKEN)"
+		-var="kubeconfig_path=$(KC_FILE)"
 
 # ─── k8s-security (Trivy + Tetragon + Kyverno) ────────────────────────
 
@@ -153,13 +149,11 @@ k8s-storage-init: garage-chart ## terraform init for k8s-storage (fetches Garage
 
 k8s-storage-apply: ## Deploy local-path + Garage + Velero + Harbor
 	$(TF) -chdir=$(TF_STORAGE) apply -auto-approve \
-		-var="kubeconfig_path=$(KC_FILE)" \
-		-var="vault_token=$(VAULT_TOKEN)"
+		-var="kubeconfig_path=$(KC_FILE)"
 
 k8s-storage-destroy:
 	$(TF) -chdir=$(TF_STORAGE) destroy -auto-approve \
-		-var="kubeconfig_path=$(KC_FILE)" \
-		-var="vault_token=$(VAULT_TOKEN)"
+		-var="kubeconfig_path=$(KC_FILE)"
 
 # ─── Flux bootstrap (installs Flux + GitRepository + root Kustomization) ──
 

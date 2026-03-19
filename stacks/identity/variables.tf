@@ -3,19 +3,6 @@ variable "kubeconfig_path" {
   type        = string
 }
 
-variable "vault_address" {
-  description = "Bootstrap OpenBao address (for reading cluster secrets)"
-  type        = string
-  default     = "http://localhost:8200"
-}
-
-variable "vault_token" {
-  description = "Token for reading cluster secrets from bootstrap OpenBao"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 # ─── Ory ─────────────────────────────────────────────────────────────
 
 variable "kratos_version" {

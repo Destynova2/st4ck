@@ -187,29 +187,10 @@ steps:
     depends_on: [deploy-pki]
     <<: *deploy_only
 
-  # Stacks that read secrets from bootstrap OpenBao
   - name: deploy-identity
     image: *tofu_image
-    secrets: [tf_http_password, vault_token]
-    commands: &deploy_stack_vault
-      - |
-        VB=http://host.containers.internal:8080
-        BAO=http://host.containers.internal:8200
-        vb_init() {
-          tofu init -input=false \
-            -backend-config="address=$$VB/state/$$1" \
-            -backend-config="lock_address=$$VB/state/$$1" \
-            -backend-config="unlock_address=$$VB/state/$$1"
-        }
-        cd envs/scaleway
-        vb_init scaleway >/dev/null
-        tofu output -raw kubeconfig > /tmp/kubeconfig
-        cd /woodpecker/src/stacks/$${STACK}
-        vb_init $${STACK}
-        tofu apply -auto-approve \
-          -var="kubeconfig_path=/tmp/kubeconfig" \
-          -var="vault_address=$$BAO" \
-          -var="vault_token=$${VAULT_TOKEN}"
+    secrets: [tf_http_password]
+    commands: *deploy_stack
     environment:
       STACK: identity
     depends_on: [deploy-monitoring]
@@ -226,8 +207,8 @@ steps:
 
   - name: deploy-storage
     image: *tofu_image
-    secrets: [tf_http_password, vault_token]
-    commands: *deploy_stack_vault
+    secrets: [tf_http_password]
+    commands: *deploy_stack
     environment:
       STACK: storage
     depends_on: [deploy-security]

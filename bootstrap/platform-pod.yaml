@@ -285,13 +285,10 @@ spec:
 
           tofu init -input=false
 
-          # Phase 1: vault tokens + secrets + PKI + Gitea install (no gitea provider)
+          # Phase 1: vault tokens + PKI + Gitea install (no gitea provider)
           eval tofu apply -auto-approve \
             -target=vault_token.vault_backend \
-            -target=vault_token.cluster_secrets \
             -target=vault_token.autounseal \
-            -target=vault_kv_secret_v2.identity \
-            -target=vault_kv_secret_v2.storage \
             -target=tls_self_signed_cert.root_ca \
             -target=tls_locally_signed_cert.infra_ca \
             -target=tls_locally_signed_cert.app_ca \
