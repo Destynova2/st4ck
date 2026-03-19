@@ -84,48 +84,73 @@ resource "helm_release" "garage" {
   depends_on = [helm_release.local_path_provisioner]
 }
 
-# ─── Garage setup (layout, buckets, API keys, K8s secrets) ───────────
+# ─── Garage setup (split into 3 steps for reliability) ───────────────
 # Uses kubectl exec + garage CLI (simpler than the admin API v2).
 
-resource "terraform_data" "garage_setup" {
-  depends_on = [helm_release.garage, kubernetes_namespace.storage]
-
-  input = local.secrets["garage_admin_token"]
+# Step 1: Wait for all 3 Garage pods to be Running
+resource "terraform_data" "garage_wait" {
+  depends_on = [helm_release.garage]
 
   provisioner "local-exec" {
-    environment = {
-      KUBECONFIG = var.kubeconfig_path
-    }
+    environment = { KUBECONFIG = var.kubeconfig_path }
     command = <<-EOT
       set -eu
-
       echo "Waiting for Garage pods..."
       for i in $(seq 1 60); do
-        kubectl -n garage get pod garage-0 -o jsonpath='{.status.phase}' 2>/dev/null | grep -q Running && break
-        echo "  attempt $i/60..." && sleep 5
+        READY=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{.items[*].status.phase}' 2>/dev/null | tr ' ' '\n' | grep -c Running || echo 0)
+        [ "$READY" -ge 3 ] && echo "All 3 Garage pods running." && exit 0
+        echo "  $READY/3 running (attempt $i/60)..." && sleep 5
+      done
+      echo "ERROR: Garage pods not ready after 5 min" && exit 1
+    EOT
+  }
+}
+
+# Step 2: Configure layout (assign nodes + apply)
+resource "terraform_data" "garage_layout" {
+  depends_on = [terraform_data.garage_wait]
+
+  provisioner "local-exec" {
+    environment = { KUBECONFIG = var.kubeconfig_path }
+    command = <<-EOT
+      set -eu
+      GARAGE="kubectl -n garage exec garage-0 -c garage --"
+
+      # Wait for nodes to discover each other via RPC
+      echo "Waiting for node discovery..."
+      for i in $(seq 1 30); do
+        COUNT=$($GARAGE ./garage status 2>/dev/null | grep -c "HEALTHY\|NO ROLE" || echo 0)
+        [ "$COUNT" -ge 3 ] && break
+        echo "  $COUNT/3 nodes (attempt $i/30)..." && sleep 5
       done
 
-      echo "Configuring layout..."
-      NODES=$(kubectl -n garage exec garage-0 -c garage -- ./garage status 2>/dev/null | grep "NO ROLE" | awk '{print $1}')
+      NODES=$($GARAGE ./garage status 2>/dev/null | grep "NO ROLE" | awk '{print $1}')
       if [ -n "$NODES" ]; then
+        echo "Assigning layout..."
         for NODE_ID in $NODES; do
-          kubectl -n garage exec garage-0 -c garage -- ./garage layout assign -z dc1 -c 5G "$NODE_ID"
+          $GARAGE ./garage layout assign -z dc1 -c 5G "$NODE_ID" 2>&1 | tail -1
         done
-        NEXT_VER=$(kubectl -n garage exec garage-0 -c garage -- ./garage layout show 2>/dev/null | grep -oP 'version \K\d+' || echo "1")
-        kubectl -n garage exec garage-0 -c garage -- ./garage layout apply --version "$${NEXT_VER:-1}"
+        $GARAGE ./garage layout apply --version 1 2>&1 | tail -2
       else
         echo "Layout already configured."
       fi
+    EOT
+  }
+}
 
-      echo "Waiting for Garage ready..."
-      for i in $(seq 1 30); do
-        kubectl -n garage exec garage-0 -c garage -- ./garage status 2>/dev/null | grep -q "HEALTHY" && break
-        sleep 5
-      done
+# Step 3: Create buckets, API keys, and K8s secrets
+resource "terraform_data" "garage_buckets_keys" {
+  depends_on = [terraform_data.garage_layout, kubernetes_namespace.storage]
+
+  provisioner "local-exec" {
+    environment = { KUBECONFIG = var.kubeconfig_path }
+    command = <<-EOT
+      set -eu
+      GARAGE="kubectl -n garage exec garage-0 -c garage --"
 
       echo "Creating buckets..."
       for BUCKET in velero-backups harbor-registry; do
-        kubectl -n garage exec garage-0 -c garage -- ./garage bucket create "$BUCKET" 2>/dev/null || true
+        $GARAGE ./garage bucket create "$BUCKET" 2>/dev/null || true
       done
 
       echo "Creating keys and K8s secrets..."
@@ -142,11 +167,11 @@ resource "terraform_data" "garage_setup" {
           continue
         fi
 
-        KEY_INFO=$(kubectl -n garage exec garage-0 -c garage -- ./garage key create "$KEY_NAME" 2>/dev/null)
+        KEY_INFO=$($GARAGE ./garage key create "$KEY_NAME" 2>/dev/null)
         ACCESS=$(echo "$KEY_INFO" | grep "Key ID" | awk '{print $NF}')
         SECRET=$(echo "$KEY_INFO" | grep "Secret key" | awk '{print $NF}')
 
-        kubectl -n garage exec garage-0 -c garage -- ./garage bucket allow --read --write --owner "$BUCKET" --key "$KEY_NAME"
+        $GARAGE ./garage bucket allow --read --write --owner "$BUCKET" --key "$KEY_NAME"
 
         if [ "$SECRET_FMT" = "ini" ]; then
           kubectl -n "$SECRET_NS" create secret generic "$SECRET_NAME" \
@@ -179,13 +204,13 @@ resource "helm_release" "velero" {
     s3_url        = var.s3_url
   })]
 
-  depends_on = [kubernetes_namespace.storage, terraform_data.garage_setup]
+  depends_on = [kubernetes_namespace.storage, terraform_data.garage_buckets_keys]
 }
 
 # ─── Harbor (container registry with Garage S3 backend) ──────────────
 
 data "kubernetes_secret" "harbor_s3" {
-  depends_on = [terraform_data.garage_setup]
+  depends_on = [terraform_data.garage_buckets_keys]
 
   metadata {
     name      = "harbor-s3-credentials"
@@ -217,5 +242,5 @@ resource "helm_release" "harbor" {
     })),
   ]
 
-  depends_on = [kubernetes_namespace.storage, terraform_data.garage_setup]
+  depends_on = [kubernetes_namespace.storage, terraform_data.garage_buckets_keys]
 }
