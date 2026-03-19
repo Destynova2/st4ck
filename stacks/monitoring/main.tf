@@ -110,3 +110,61 @@ resource "helm_release" "headlamp" {
 
   depends_on = [kubernetes_namespace.monitoring]
 }
+
+# ─── Flux alerting rules (VMRule for VictoriaMetrics) ──────────────────
+
+resource "kubernetes_manifest" "flux_alerts" {
+  manifest = {
+    apiVersion = "operator.victoriametrics.com/v1beta1"
+    kind       = "VMRule"
+    metadata = {
+      name      = "flux-alerts"
+      namespace = "monitoring"
+    }
+    spec = {
+      groups = [{
+        name = "flux"
+        rules = [
+          {
+            alert = "FluxGitRepositoryNotReady"
+            expr  = "gotk_resource_info{type=\"GitRepository\", ready=\"False\"} == 1"
+            for   = "10m"
+            labels = {
+              severity = "warning"
+            }
+            annotations = {
+              summary     = "Flux GitRepository {{ $labels.name }} not ready"
+              description = "GitRepository {{ $labels.name }} in {{ $labels.exported_namespace }} has been not ready for 10 minutes."
+            }
+          },
+          {
+            alert = "FluxKustomizationNotReady"
+            expr  = "gotk_resource_info{type=\"Kustomization\", ready=\"False\"} == 1"
+            for   = "10m"
+            labels = {
+              severity = "warning"
+            }
+            annotations = {
+              summary     = "Flux Kustomization {{ $labels.name }} not ready"
+              description = "Kustomization {{ $labels.name }} in {{ $labels.exported_namespace }} has been not ready for 10 minutes."
+            }
+          },
+          {
+            alert = "FluxHelmReleaseNotReady"
+            expr  = "gotk_resource_info{type=\"HelmRelease\", ready=\"False\"} == 1"
+            for   = "15m"
+            labels = {
+              severity = "warning"
+            }
+            annotations = {
+              summary     = "Flux HelmRelease {{ $labels.name }} not ready"
+              description = "HelmRelease {{ $labels.name }} in {{ $labels.exported_namespace }} has been not ready for 15 minutes."
+            }
+          },
+        ]
+      }]
+    }
+  }
+
+  depends_on = [helm_release.vm_k8s_stack]
+}

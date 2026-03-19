@@ -12,6 +12,10 @@ terraform {
       source  = "alekc/kubectl"
       version = "~> 2.1"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
 }
 
@@ -87,7 +91,40 @@ resource "helm_release" "kyverno" {
   depends_on = [kubernetes_namespace.security]
 }
 
-# ─── Cosign image verification policy (audit mode) ─────────────────
+# ─── Cosign keypair (for image signing + verification) ─────────────
+
+resource "tls_private_key" "cosign" {
+  algorithm   = "ECDSA"
+  ecdsa_curve = "P256"
+}
+
+resource "kubernetes_secret" "cosign_public_key" {
+  metadata {
+    name      = "cosign-public-key"
+    namespace = "security"
+  }
+
+  data = {
+    "cosign.pub" = tls_private_key.cosign.public_key_pem
+  }
+
+  depends_on = [kubernetes_namespace.security]
+}
+
+resource "kubernetes_secret" "cosign_private_key" {
+  metadata {
+    name      = "cosign-private-key"
+    namespace = "security"
+  }
+
+  data = {
+    "cosign.key" = tls_private_key.cosign.private_key_pem
+  }
+
+  depends_on = [kubernetes_namespace.security]
+}
+
+# ─── Cosign image verification policy ──────────────────────────────
 
 resource "kubectl_manifest" "cosign_verify_policy" {
   yaml_body = file("${path.module}/verify-images.yaml")

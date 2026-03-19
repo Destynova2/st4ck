@@ -137,15 +137,16 @@ server:
         }
       }
 
-      # ─── Self-init: Audit logging ─────────────────────────────────
+      # ─── Self-init: Audit logging (stdout → VictoriaLogs collector) ──
       initialize "audit" {
-        request "enable-file-audit" {
+        request "enable-stdout-audit" {
           operation = "update"
-          path      = "sys/audit/file"
+          path      = "sys/audit/stdout"
           data = {
             type = "file"
             options = {
-              file_path = "/openbao/audit/audit.log"
+              file_path = "stdout"
+              log_raw   = false
             }
           }
         }
@@ -183,15 +184,11 @@ server:
   extraVolumes:
     - type: secret
       name: openbao-infra-tls
-    - type: "emptyDir"
-      name: openbao-audit
 
   extraVolumeMounts:
     - name: openbao-infra-tls
       mountPath: /openbao/tls
       readOnly: true
-    - name: openbao-audit
-      mountPath: /openbao/audit
 
   dataStorage:
     enabled: true

@@ -172,9 +172,10 @@ flux-bootstrap-apply: ## Install Flux and configure GitOps sync
 		-var="gitea_known_hosts=$(GITEA_KNOWN_HOSTS)"
 
 flux-bootstrap-destroy:
+	$(eval GITEA_KNOWN_HOSTS := $(shell ssh-keyscan -p 2222 -t ed25519 $(BOOTSTRAP_HOST) 2>/dev/null || echo "destroy-noop ssh-ed25519 AAAA"))
 	$(TF) -chdir=$(TF_FLUX) destroy -auto-approve \
 		-var="kubeconfig_path=$(KC_FILE)" \
-		-var="gitea_known_hosts=destroy-placeholder"
+		-var="gitea_known_hosts=$(GITEA_KNOWN_HOSTS)"
 
 # ─── Composite: all k8s stacks ───────────────────────────────────────
 

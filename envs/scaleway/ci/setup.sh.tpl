@@ -9,7 +9,7 @@ WORKDIR="/opt/woodpecker"
 
 mkdir -p "$WORKDIR" /opt/talos/kms-output /tmp/empty-source
 
-# ─── Generate ConfigMap YAML ─────────────────────────────────────────
+# ─── Generate ConfigMap + Secret YAML ──────────────────────────────────
 cat > "$WORKDIR/configmap.yaml" <<CFGEOF
 apiVersion: v1
 kind: ConfigMap
@@ -21,10 +21,17 @@ data:
   CI_DOMAIN: "$PUBLIC_IP"
   CI_WP_HOST: "http://$PUBLIC_IP:8000"
   CI_ADMIN: "$ADMIN"
-  CI_PASSWORD: "$PASSWORD"
-  CI_AGENT_SECRET: "$AGENT_SECRET"
   CI_GIT_REPO_URL: "${git_repo_url}"
   CI_SCW_PROJECT_ID: "${scw_project_id}"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: platform-secrets
+type: Opaque
+stringData:
+  CI_PASSWORD: "$PASSWORD"
+  CI_AGENT_SECRET: "$AGENT_SECRET"
   CI_SCW_IMAGE_ACCESS_KEY: "${scw_image_access_key}"
   CI_SCW_IMAGE_SECRET_KEY: "${scw_image_secret_key}"
   CI_SCW_CLUSTER_ACCESS_KEY: "${scw_cluster_access_key}"
