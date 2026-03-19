@@ -8,8 +8,9 @@ talos/
 ├── vars.mk                            # Shared version variables
 │
 ├── bootstrap/                          # Platform pod (podman) — runs BEFORE cluster
+│   ├── main.tf                         # Bootstrap Terraform module (generates pod + configmap)
 │   ├── platform-pod.yaml               # Single pod: OpenBao 3-node + vault-backend + Gitea + WP
-│   └── local-test.sh                   # One-command local bootstrap (no cloud needed)
+│   └── tofu/                           # Setup sidecar TF: KMS init, CI setup, repo push, secrets
 │
 ├── envs/                               # Provider-specific infra
 │   ├── local/                          # Provider: libvirt (QEMU/KVM)

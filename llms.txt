@@ -31,6 +31,8 @@
 - [ADR-018: Tetragon](docs/adr/018-tetragon-over-falco.md): Why Tetragon over Falco
 - [ADR-019: Matchbox](docs/adr/019-matchbox-bare-metal.md): Bare metal/degraded VM provisioning
 - [ADR-020: Kamaji](docs/adr/020-kamaji-kaas.md): KaaS alternative to Cozystack
+- [ADR-021: Security Hardening](docs/adr/021-security-hardening.md): Consolidated security audit findings and remediations
+- [ADR-022: Production Readiness](docs/adr/022-production-readiness-checklist.md): Production readiness checklist
 
 ## Documentation (Diataxis)
 - [Landing Page](docs/index.md): What this is and where to go
@@ -43,6 +45,7 @@
 - [Architecture](docs/explanation/architecture.md): Two-phase model, state, secrets, PKI, CAPI (Mermaid diagrams)
 - [Bootstrap Mechanics](docs/explanation/bootstrap.md): 5 chicken-and-egg problems and their solutions (Mermaid diagrams)
 - [Security Model](docs/explanation/security.md): Threat model, PKI trust chain, policy inventory
+- [How to Upgrade](docs/how-to/upgrade.md): Upgrade workflow, rollback, arbor staging
 
 ## Infrastructure
 - [Makefile](Makefile): Root orchestration with all deployment targets
@@ -78,3 +81,7 @@
 
 ## Design
 - [HLD/LLD System Design](docs/design/001-hld-lld.md): Complete high-level and low-level design
+- [HLD Talos Platform](docs/hld-talos-platform.md): High-Level Design document (English)
+
+## Scripts
+- [Cosign Sign](scripts/cosign-sign.sh): Image signing pipeline for Woodpecker CI
