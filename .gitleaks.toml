@@ -1,0 +1,7 @@
+title = "Talos gitleaks config"
+
+[allowlist]
+  paths = [
+    '''\.terraform/''',
+    '''\.pre-commit-config\.yaml''',
+  ]
