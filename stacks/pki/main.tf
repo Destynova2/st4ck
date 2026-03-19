@@ -165,6 +165,7 @@ resource "helm_release" "openbao_infra" {
     kubernetes_namespace.secrets,
     kubernetes_secret.openbao_seal_key,
     kubernetes_secret.openbao_admin_password,
+    kubectl_manifest.openbao_infra_cert,
   ]
 }
 
@@ -180,7 +181,11 @@ resource "helm_release" "openbao_app" {
 
   values = [file("${path.module}/values-openbao-app.yaml")]
 
-  depends_on = [kubernetes_namespace.secrets, kubernetes_secret.openbao_seal_key]
+  depends_on = [
+    kubernetes_namespace.secrets,
+    kubernetes_secret.openbao_seal_key,
+    kubectl_manifest.openbao_app_cert,
+  ]
 }
 
 # ─── cert-manager — automatic TLS from infra sub-CA ────────────────
@@ -226,4 +231,54 @@ resource "kubectl_manifest" "cluster_issuer" {
   yaml_body = file("${path.module}/cluster-issuer.yaml")
 
   depends_on = [helm_release.cert_manager, kubernetes_secret.cert_manager_ca]
+}
+
+# ─── TLS certificates for in-cluster OpenBao ──────────────────────────
+
+resource "kubectl_manifest" "openbao_infra_cert" {
+  yaml_body = <<-YAML
+    apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: openbao-infra-tls
+      namespace: secrets
+    spec:
+      secretName: openbao-infra-tls
+      issuerRef:
+        name: internal-ca
+        kind: ClusterIssuer
+      dnsNames:
+        - openbao-infra
+        - openbao-infra.secrets
+        - openbao-infra.secrets.svc
+        - openbao-infra.secrets.svc.cluster.local
+      duration: 8760h    # 1 year
+      renewBefore: 720h  # 30 days
+  YAML
+
+  depends_on = [kubectl_manifest.cluster_issuer, kubernetes_namespace.secrets]
+}
+
+resource "kubectl_manifest" "openbao_app_cert" {
+  yaml_body = <<-YAML
+    apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: openbao-app-tls
+      namespace: secrets
+    spec:
+      secretName: openbao-app-tls
+      issuerRef:
+        name: internal-ca
+        kind: ClusterIssuer
+      dnsNames:
+        - openbao-app
+        - openbao-app.secrets
+        - openbao-app.secrets.svc
+        - openbao-app.secrets.svc.cluster.local
+      duration: 8760h
+      renewBefore: 720h
+  YAML
+
+  depends_on = [kubectl_manifest.cluster_issuer, kubernetes_namespace.secrets]
 }

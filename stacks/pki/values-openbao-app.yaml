@@ -11,9 +11,10 @@ server:
       ui = true
 
       listener "tcp" {
-        tls_disable     = true
         address         = "[::]:8200"
         cluster_address = "[::]:8201"
+        tls_cert_file   = "/openbao/tls/tls.crt"
+        tls_key_file    = "/openbao/tls/tls.key"
       }
 
       storage "file" {
@@ -41,6 +42,15 @@ server:
     - envName: BAO_SEAL_KEY
       secretName: openbao-seal-key
       secretKey: key
+
+  extraVolumes:
+    - type: secret
+      name: openbao-app-tls
+
+  extraVolumeMounts:
+    - name: openbao-app-tls
+      mountPath: /openbao/tls
+      readOnly: true
 
   dataStorage:
     enabled: true

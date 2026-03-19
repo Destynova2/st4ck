@@ -12,10 +12,11 @@ ENV     ?= scaleway
 KC_FILE := $(HOME)/.kube/talos-$(ENV)
 
 # ─── Bootstrap OpenBao (vault-backend → KV v2) ──────────────────────
-# Tokens from platform-kms-output volume. Copied to kms-output/ for local use.
+# AppRole credentials from platform-kms-output volume.
+# vault-backend authenticates to OpenBao via AppRole (auto-renewable, no expiry).
 KMS_OUTPUT         := kms-output
-VB_TOKEN_FILE      := $(KMS_OUTPUT)/vault-backend-token.txt
-export TF_HTTP_PASSWORD := $(shell cat $(VB_TOKEN_FILE) 2>/dev/null)
+export TF_HTTP_USERNAME := $(shell cat $(KMS_OUTPUT)/approle-role-id.txt 2>/dev/null)
+export TF_HTTP_PASSWORD := $(shell cat $(KMS_OUTPUT)/approle-secret-id.txt 2>/dev/null)
 
 # ─── Stack paths ─────────────────────────────────────────────────────
 

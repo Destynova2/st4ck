@@ -12,6 +12,10 @@ terraform {
       source  = "alekc/kubectl"
       version = "~> 2.1"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -22,8 +26,7 @@ terraform {
 data "terraform_remote_state" "pki" {
   backend = "http"
   config = {
-    address  = "http://localhost:8080/state/pki"
-    username = "TOKEN"
+    address = "http://localhost:8080/state/pki"
   }
 }
 
@@ -63,6 +66,58 @@ resource "kubernetes_namespace" "identity" {
   }
 }
 
+# ─── PostgreSQL (persistent storage for Hydra + Kratos) ──────────
+
+resource "random_password" "pg_password" {
+  length  = 32
+  special = false
+}
+
+resource "helm_release" "postgresql" {
+  name             = "identity-pg"
+  repository       = "https://charts.bitnami.com/bitnami"
+  chart            = "postgresql"
+  version          = var.postgresql_version
+  namespace        = "identity"
+  create_namespace = false
+
+  set {
+    name  = "auth.username"
+    value = "identity"
+  }
+
+  set_sensitive {
+    name  = "auth.password"
+    value = random_password.pg_password.result
+  }
+
+  set {
+    name  = "auth.database"
+    value = "identity"
+  }
+
+  set {
+    name  = "primary.persistence.size"
+    value = "2Gi"
+  }
+
+  set {
+    name  = "primary.resources.requests.memory"
+    value = "256Mi"
+  }
+
+  set {
+    name  = "primary.resources.requests.cpu"
+    value = "250m"
+  }
+
+  depends_on = [kubernetes_namespace.identity]
+}
+
+locals {
+  pg_dsn = "postgres://identity:${random_password.pg_password.result}@identity-pg-postgresql.identity.svc:5432/identity?sslmode=disable"
+}
+
 # ─── Ory Kratos (identity management) ─────────────────────────────
 
 resource "helm_release" "kratos" {
@@ -73,9 +128,11 @@ resource "helm_release" "kratos" {
   namespace        = "identity"
   create_namespace = false
 
-  values = [file("${path.module}/values-kratos.yaml")]
+  values = [templatefile("${path.module}/values-kratos.yaml", {
+    dsn = local.pg_dsn
+  })]
 
-  depends_on = [kubernetes_namespace.identity]
+  depends_on = [kubernetes_namespace.identity, helm_release.postgresql]
 }
 
 # ─── Hydra TLS certificate (for apiServer OIDC) ───────────────────
@@ -115,9 +172,10 @@ resource "helm_release" "hydra" {
 
   values = [templatefile("${path.module}/values-hydra.yaml", {
     system_secret = local.secrets["hydra_system_secret"]
+    dsn           = local.pg_dsn
   })]
 
-  depends_on = [kubernetes_namespace.identity, kubectl_manifest.hydra_tls_cert]
+  depends_on = [kubernetes_namespace.identity, kubectl_manifest.hydra_tls_cert, helm_release.postgresql]
 }
 
 # ─── OIDC client registration (kubernetes → Hydra) ────────────────

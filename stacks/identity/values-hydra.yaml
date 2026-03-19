@@ -1,12 +1,11 @@
 # Ory Hydra — OAuth2 / OIDC server
-# Dev mode: SQLite in-memory, no external DB
-# TLS on public endpoint (required for K8s apiServer OIDC)
+# Production mode: PostgreSQL, TLS on public endpoint
 
 hydra:
-  dev: true
+  dev: false
 
   config:
-    dsn: "memory"
+    dsn: "${dsn}"
 
     serve:
       public:

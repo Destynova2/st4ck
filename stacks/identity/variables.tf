@@ -17,6 +17,14 @@ variable "hydra_version" {
   default     = "0.60.1"
 }
 
+# ─── PostgreSQL ─────────────────────────────────────────────────────
+
+variable "postgresql_version" {
+  description = "Bitnami PostgreSQL Helm chart version"
+  type        = string
+  default     = "16.7.4"
+}
+
 # ─── Pomerium ────────────────────────────────────────────────────────
 
 variable "pomerium_version" {

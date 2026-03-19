@@ -1,11 +1,11 @@
 # Ory Kratos — Identity management
-# Dev mode: SQLite in-memory, no external DB
+# Production mode: PostgreSQL
 
 kratos:
-  development: true
+  development: false
 
   config:
-    dsn: "memory"
+    dsn: "${dsn}"
 
     serve:
       public:
