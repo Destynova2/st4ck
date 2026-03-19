@@ -1,5 +1,5 @@
 # local-path-provisioner — default StorageClass
-# Uses host path for simple persistent volumes
+# Upstream Rancher chart (deploy/chart/local-path-provisioner)
 
 storageClass:
   name: local-path

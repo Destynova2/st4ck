@@ -29,6 +29,16 @@ All commands are Makefile targets. Run `make help` for the full list.
 | `make state-snapshot` | Backup all OpenTofu states via Raft snapshot |
 | `make state-restore SNAPSHOT=path` | Restore from a Raft snapshot file |
 
+## Upgrade & Staging
+
+| Command | Description |
+|---------|-------------|
+| `make preflight` | Pre-upgrade checks (variables, files, connectivity, TF validate) |
+| `make upgrade` | Full upgrade: preflight, snapshot, bootstrap-update, provider apply, k8s-up |
+| `make bootstrap-update` | Update running bootstrap pod in-place (preserves PVC data) |
+| `make arbor` | Pre-stage all images, Helm charts for deployment (writes `arbor/manifest.json`) |
+| `make arbor-verify` | Verify arbor staging tree (SHA256 checks on all artifacts) |
+
 ## K8s Stacks (Provider-Agnostic)
 
 Each stack has `-init`, `-apply`, and `-destroy` targets:
@@ -144,7 +154,8 @@ Each stack has `-init`, `-apply`, and `-destroy` targets:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `TF_HTTP_PASSWORD` | Yes (auto-set) | vault-backend token. Set automatically from `kms-output/vault-backend-token.txt` |
+| `TF_HTTP_USERNAME` | Yes (auto-set) | AppRole role-id. Set automatically from `kms-output/approle-role-id.txt` |
+| `TF_HTTP_PASSWORD` | Yes (auto-set) | AppRole secret-id. Set automatically from `kms-output/approle-secret-id.txt` |
 | `SCW_ACCESS_KEY` | For Scaleway | Scaleway API access key (set per-target from IAM outputs) |
 | `SCW_SECRET_KEY` | For Scaleway | Scaleway API secret key (set per-target from IAM outputs) |
 | `KUBECONFIG` | For kubectl | Path to kubeconfig file |

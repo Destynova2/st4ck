@@ -156,7 +156,7 @@ spec:
     # ═══ vault-backend (TF state HTTP → OpenBao KV v2) ═══════════════
     # No token needed at startup — each TF client sends creds per request.
     - name: vault-backend
-      image: docker.io/gherynos/vault-backend@sha256:fb654a3f344ec38edf93e31b95c81a531d3a22178e31d00c25fef2b3dcbffa03
+      image: __VAULT_BACKEND_IMAGE__
       ports:
         - containerPort: 8080
           hostPort: 8080

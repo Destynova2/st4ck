@@ -108,8 +108,10 @@ See [Bootstrap mechanics](docs/explanation/bootstrap.md) for the chicken-and-egg
 | Architecture deep dive | [Architecture](docs/explanation/architecture.md) |
 | Bootstrap chicken-and-egg problems | [Bootstrap Mechanics](docs/explanation/bootstrap.md) |
 | Security model and policies | [Security Model](docs/explanation/security.md) |
+| Upgrade an existing deployment | [Upgrade Guide](docs/how-to/upgrade.md) |
 | Troubleshoot a problem | [Troubleshooting](docs/how-to/troubleshoot.md) |
 | Full component inventory | [Technology Stack](docs/techno.md) |
+| High-level system design | [HLD](docs/hld-talos-platform.md) |
 | Architecture decisions (ADRs) | [docs/adr/](docs/adr/) |
 | AI agent context | [AGENTS.md](AGENTS.md) |
 

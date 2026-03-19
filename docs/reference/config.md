@@ -27,7 +27,8 @@ All configurable parameters for the Talos platform, organized by layer.
 
 | Variable | Required | Source | Description |
 |----------|----------|--------|-------------|
-| `TF_HTTP_PASSWORD` | Yes (auto) | kms-output/vault-backend-token.txt | vault-backend authentication token |
+| `TF_HTTP_USERNAME` | Yes (auto) | kms-output/approle-role-id.txt | AppRole role-id for vault-backend auth |
+| `TF_HTTP_PASSWORD` | Yes (auto) | kms-output/approle-secret-id.txt | AppRole secret-id for vault-backend auth |
 | `VAULT_TOKEN` | For identity/storage | kms-output/cluster-secrets-token.txt | OpenBao token for secret reads |
 | `SCW_ACCESS_KEY` | For Scaleway | IAM stage output | Scaleway API access key (set per-target) |
 | `SCW_SECRET_KEY` | For Scaleway | IAM stage output | Scaleway API secret key (set per-target) |
@@ -169,4 +170,4 @@ backend "http" {
 }
 ```
 
-Authentication via `TF_HTTP_PASSWORD` environment variable (auto-set from `kms-output/vault-backend-token.txt`).
+Authentication via AppRole: `TF_HTTP_USERNAME` (role-id from `kms-output/approle-role-id.txt`) and `TF_HTTP_PASSWORD` (secret-id from `kms-output/approle-secret-id.txt`). Both are auto-set by the Makefile.

@@ -71,6 +71,12 @@ variable "git_repo_url" {
   default     = "file:///source"
 }
 
+variable "vault_backend_image" {
+  description = "Container image for vault-backend (use localhost/vault-backend:<commit> for local build)"
+  type        = string
+  default     = "docker.io/gherynos/vault-backend@sha256:fb654a3f344ec38edf93e31b95c81a531d3a22178e31d00c25fef2b3dcbffa03"
+}
+
 variable "scw_project_id" {
   type    = string
   default = "dummy"
@@ -144,7 +150,11 @@ locals {
   YAML
 
   pod_yaml = replace(
-    file("${path.module}/platform-pod.yaml"),
+    replace(
+      file("${path.module}/platform-pod.yaml"),
+      "__VAULT_BACKEND_IMAGE__",
+      var.vault_backend_image
+    ),
     "__SOURCE_DIR__",
     var.source_dir
   )

@@ -55,9 +55,7 @@ resource "kubernetes_namespace" "storage" {
 
 resource "helm_release" "local_path_provisioner" {
   name             = "local-path-provisioner"
-  repository       = "https://charts.containeroo.ch"
-  chart            = "local-path-provisioner"
-  version          = var.local_path_provisioner_version
+  chart            = "${path.module}/chart-local-path"
   namespace        = "storage"
   create_namespace = false
 

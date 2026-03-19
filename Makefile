@@ -28,6 +28,7 @@ TF_SECURITY   := stacks/security
 TF_STORAGE    := stacks/storage
 TF_FLUX       := stacks/flux-bootstrap
 GARAGE_CHART  := stacks/storage/chart
+LPP_CHART     := stacks/storage/chart-local-path
 
 # ─── Provider paths ──────────────────────────────────────────────────
 
@@ -137,7 +138,7 @@ k8s-security-destroy:
 # ─── k8s-storage (local-path + Garage + Velero + Harbor) ──────────────
 # Self-contained: generates harbor_admin_password internally.
 
-.PHONY: k8s-storage-init k8s-storage-apply k8s-storage-destroy garage-chart
+.PHONY: k8s-storage-init k8s-storage-apply k8s-storage-destroy garage-chart lpp-chart
 
 garage-chart: ## Fetch Garage Helm chart (v2.2.0) from upstream
 	@mkdir -p $(GARAGE_CHART)
@@ -145,7 +146,13 @@ garage-chart: ## Fetch Garage Helm chart (v2.2.0) from upstream
 		tar -xz --strip-components=4 -C $(GARAGE_CHART) "garage/script/helm/garage/"
 	@echo "Garage Helm chart fetched to $(GARAGE_CHART)/"
 
-k8s-storage-init: garage-chart ## terraform init for k8s-storage (fetches Garage chart)
+lpp-chart: ## Fetch local-path-provisioner Helm chart (v0.0.35) from Rancher upstream
+	@mkdir -p $(LPP_CHART)
+	@curl -sL "https://github.com/rancher/local-path-provisioner/archive/refs/tags/v0.0.35.tar.gz" | \
+		tar -xz --strip-components=3 -C $(LPP_CHART) "local-path-provisioner-0.0.35/deploy/chart/local-path-provisioner/"
+	@echo "local-path-provisioner Helm chart fetched to $(LPP_CHART)/"
+
+k8s-storage-init: garage-chart lpp-chart ## terraform init for k8s-storage (fetches charts)
 	$(TF) -chdir=$(TF_STORAGE) init
 
 k8s-storage-apply: ## Deploy local-path + Garage + Velero + Harbor
@@ -464,11 +471,20 @@ scaleway-nuke: ## DANGEROUS: destroy everything including IAM and image
 # Source: bootstrap/
 # ═══════════════════════════════════════════════════════════════════════
 
-.PHONY: bootstrap bootstrap-init bootstrap-stop bootstrap-update bootstrap-export bootstrap-tunnel kms-bootstrap kms-stop state-snapshot state-restore
+.PHONY: vault-backend-build bootstrap bootstrap-init bootstrap-stop bootstrap-update bootstrap-export bootstrap-tunnel kms-bootstrap kms-stop state-snapshot state-restore
 
 # Aliases (backward compat)
 kms-bootstrap: bootstrap
 kms-stop: bootstrap-stop
+
+VAULT_BACKEND_COMMIT := 224c7a17a943ba3d3d5b137a78b915f1ea8c79ff
+
+vault-backend-build: ## Build vault-backend from source (podman)
+	podman build -t localhost/vault-backend:$(VAULT_BACKEND_COMMIT) \
+		--build-arg VAULT_BACKEND_COMMIT=$(VAULT_BACKEND_COMMIT) \
+		bootstrap/vault-backend/
+	podman tag localhost/vault-backend:$(VAULT_BACKEND_COMMIT) localhost/vault-backend:latest
+	@echo "Built localhost/vault-backend:$(VAULT_BACKEND_COMMIT)"
 
 TF_BOOTSTRAP   := bootstrap
 BOOTSTRAP_DIR  ?= /tmp/platform-local
@@ -598,9 +614,12 @@ ARBOR_DIR := arbor
 
 .PHONY: arbor arbor-verify
 
-arbor: ## Pre-stage all images, Helm charts, and git repo for deployment
+arbor: vault-backend-build ## Pre-stage all images, Helm charts, and git repo for deployment
 	@echo "=== Arbor: staging deployment artifacts ==="
 	@mkdir -p $(ARBOR_DIR)/charts
+	@echo ""
+	@echo "--- Building vault-backend from source (already done) ---"
+	@echo "  localhost/vault-backend:$(VAULT_BACKEND_COMMIT)"
 	@echo ""
 	@echo "--- Pulling container images from platform-pod.yaml ---"
 	@grep -E '^\s+image:' bootstrap/platform-pod.yaml \

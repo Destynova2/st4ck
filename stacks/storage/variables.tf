@@ -3,12 +3,6 @@ variable "kubeconfig_path" {
   type        = string
 }
 
-variable "local_path_provisioner_version" {
-  description = "local-path-provisioner Helm chart version"
-  type        = string
-  default     = "0.0.35"
-}
-
 variable "velero_version" {
   description = "Velero Helm chart version"
   type        = string

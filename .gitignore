@@ -25,6 +25,7 @@ kms-output/
 
 # Fetched Helm charts (upstream dependencies)
 stacks/storage/chart/
+stacks/storage/chart-local-path/
 
 # Arbor staging tree (pre-pulled images + charts)
 arbor/

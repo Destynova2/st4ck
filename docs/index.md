@@ -58,8 +58,10 @@ See [Getting Started](tutorials/getting-started.md) for a detailed walkthrough.
 | All Makefile targets and config options | [Command Reference](reference/commands.md) |
 | All configurable parameters | [Configuration Reference](reference/config.md) |
 | CI/CD pipeline details | [CI/CD Reference](reference/ci-cd.md) |
+| Upgrade an existing deployment | [Upgrade Guide](how-to/upgrade.md) |
 | Troubleshoot a problem | [Troubleshooting](how-to/troubleshoot.md) |
 | Why a specific technology was chosen | [ADRs](adr/) |
 | Full component inventory | [Technology Stack](techno.md) |
+| High-level system design | [HLD](hld-talos-platform.md) |
 | Implementation timeline | [Roadmap](roadmap.md) |
 | How to contribute | [CONTRIBUTING.md](../CONTRIBUTING.md) |
