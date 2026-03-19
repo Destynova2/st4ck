@@ -85,7 +85,7 @@ resource "kubectl_manifest" "identity_pg_cluster" {
       name: identity-pg
       namespace: identity
     spec:
-      instances: 1
+      instances: 3
       storage:
         size: 2Gi
       bootstrap:

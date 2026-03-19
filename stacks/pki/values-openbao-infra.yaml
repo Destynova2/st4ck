@@ -1,5 +1,5 @@
 # OpenBao Infra — PKI backend + infrastructure secrets
-# Standalone mode with file storage + static seal + self-init
+# Standalone mode with file storage + static seal + self-init + TLS
 
 server:
   dev:
@@ -13,8 +13,8 @@ server:
       listener "tcp" {
         address         = "[::]:8200"
         cluster_address = "[::]:8201"
-        tls_cert_file   = "/openbao/tls/tls.crt"
-        tls_key_file    = "/openbao/tls/tls.key"
+        tls_cert_file   = "/openbao/userconfig/openbao-infra-tls/tls.crt"
+        tls_key_file    = "/openbao/userconfig/openbao-infra-tls/tls.key"
       }
 
       storage "file" {
@@ -137,7 +137,7 @@ server:
         }
       }
 
-      # ─── Self-init: Audit logging (stdout → VictoriaLogs collector) ──
+      # ─── Self-init: Audit logging (stdout → VictoriaLogs) ────────
       initialize "audit" {
         request "enable-stdout-audit" {
           operation = "update"
@@ -184,11 +184,6 @@ server:
   extraVolumes:
     - type: secret
       name: openbao-infra-tls
-
-  extraVolumeMounts:
-    - name: openbao-infra-tls
-      mountPath: /openbao/tls
-      readOnly: true
 
   dataStorage:
     enabled: true

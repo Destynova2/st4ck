@@ -1,5 +1,5 @@
 # OpenBao App — application secrets
-# Standalone mode with file storage + static seal + self-init
+# Standalone mode with file storage + static seal + self-init + TLS
 
 server:
   dev:
@@ -13,8 +13,8 @@ server:
       listener "tcp" {
         address         = "[::]:8200"
         cluster_address = "[::]:8201"
-        tls_cert_file   = "/openbao/tls/tls.crt"
-        tls_key_file    = "/openbao/tls/tls.key"
+        tls_cert_file   = "/openbao/userconfig/openbao-app-tls/tls.crt"
+        tls_key_file    = "/openbao/userconfig/openbao-app-tls/tls.key"
       }
 
       storage "file" {
@@ -46,11 +46,6 @@ server:
   extraVolumes:
     - type: secret
       name: openbao-app-tls
-
-  extraVolumeMounts:
-    - name: openbao-app-tls
-      mountPath: /openbao/tls
-      readOnly: true
 
   dataStorage:
     enabled: true
