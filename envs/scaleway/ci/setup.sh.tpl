@@ -6,6 +6,14 @@ WORKDIR="/opt/woodpecker"
 
 mkdir -p "$WORKDIR" /opt/talos/kms-output /tmp/empty-source
 
+# Wait for tofu to be installed by cloud-init
+echo "Waiting for tofu..."
+for i in $(seq 1 60); do
+  command -v tofu >/dev/null 2>&1 && break
+  echo "  attempt $i/60..." && sleep 5
+done
+command -v tofu >/dev/null 2>&1 || { echo "ERROR: tofu not found"; exit 1; }
+
 cd /opt/talos/repo/bootstrap
 
 tofu init -input=false
