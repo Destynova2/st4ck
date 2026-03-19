@@ -71,16 +71,17 @@ resource "terraform_data" "seed_openbao_secrets" {
     command = <<-EOT
       set -eu
 
-      echo "Waiting for OpenBao Infra..."
+      BAO="kubectl -n secrets exec openbao-infra-0 -c openbao -- env BAO_ADDR=http://127.0.0.1:8200"
+
+      echo "Waiting for OpenBao Infra API..."
       for i in $(seq 1 60); do
-        kubectl -n secrets get pod openbao-infra-0 -o jsonpath='{.status.phase}' 2>/dev/null | grep -q Running && break
+        $BAO bao status >/dev/null 2>&1 && break
         echo "  attempt $i/60..." && sleep 5
       done
 
-      BAO="kubectl -n secrets exec openbao-infra-0 -c openbao -- env BAO_ADDR=http://127.0.0.1:8200"
-
       echo "Logging in..."
-      $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1
+      $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1 || \
+        { echo "ERROR: OpenBao login failed"; exit 1; }
 
       # Idempotent: skip if already seeded
       if $BAO bao kv get secret/identity/hydra >/dev/null 2>&1; then
