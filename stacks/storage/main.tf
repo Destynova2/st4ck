@@ -130,7 +130,9 @@ resource "terraform_data" "garage_layout" {
         for NODE_ID in $NODES; do
           $GARAGE ./garage layout assign -z dc1 -c 5G "$NODE_ID" 2>&1 | tail -1
         done
-        $GARAGE ./garage layout apply --version 1 2>&1 | tail -2
+        CURRENT_VER=$($GARAGE ./garage layout show 2>/dev/null | grep "layout version" | awk '{print $NF}' || echo 0)
+        NEXT_VER=$((CURRENT_VER + 1))
+        $GARAGE ./garage layout apply --version $NEXT_VER 2>&1 | tail -2
       else
         echo "Layout already configured."
       fi
@@ -147,6 +149,13 @@ resource "terraform_data" "garage_buckets_keys" {
     command = <<-EOT
       set -eu
       GARAGE="kubectl -n garage exec garage-0 -c garage --"
+
+      echo "Waiting for Garage ready (post-layout)..."
+      for i in $(seq 1 60); do
+        READY=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{range .items[*]}{.status.containerStatuses[0].ready}{"\n"}{end}' 2>/dev/null | grep -c true || echo 0)
+        [ "$READY" -ge 3 ] && echo "All 3 Garage pods ready." && break
+        echo "  $READY/3 ready (attempt $i/60)..." && sleep 5
+      done
 
       echo "Creating buckets..."
       for BUCKET in velero-backups harbor-registry; do
