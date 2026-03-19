@@ -38,7 +38,7 @@ variable "root_disk_size" {
 variable "git_repo_url" {
   description = "Public Git repository URL to clone and mirror into Gitea"
   type        = string
-  default     = "https://github.com/Destynova2/talos.git"
+  default     = "https://github.com/Destynova2/st4ck.git"
 }
 
 # ─── Gitea ────────────────────────────────────────────────────────────

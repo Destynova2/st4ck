@@ -25,8 +25,8 @@ For local deployments:
 ## Step 1: Clone the repository
 
 ```bash
-git clone git@github.com:Destynova2/talos.git
-cd talos
+git clone git@github.com:Destynova2/st4ck.git
+cd st4ck
 ```
 
 ## Step 2: Bootstrap the platform pod

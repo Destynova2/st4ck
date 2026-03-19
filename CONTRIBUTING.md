@@ -2,7 +2,7 @@
 
 ## Getting started
 
-1. Clone the repository: `git clone git@github.com:Destynova2/talos.git`
+1. Clone the repository: `git clone git@github.com:Destynova2/st4ck.git`
 2. Follow the [Getting Started tutorial](docs/tutorials/getting-started.md) to set up a working environment
 3. Read [CLAUDE.md](CLAUDE.md) for architecture context and conventions
 
