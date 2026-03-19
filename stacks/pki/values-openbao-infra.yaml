@@ -1,6 +1,9 @@
 # OpenBao Infra — PKI backend + infrastructure secrets
 # HA mode with Raft storage (3 replicas) + static seal + self-init + TLS
 
+global:
+  tlsDisable: false
+
 server:
   dev:
     enabled: false
@@ -17,9 +20,10 @@ server:
         ui = true
 
         listener "tcp" {
-          tls_disable     = true
           address         = "[::]:8200"
           cluster_address = "[::]:8201"
+          tls_cert_file   = "/openbao/userconfig/openbao-infra-tls/tls.crt"
+          tls_key_file    = "/openbao/userconfig/openbao-infra-tls/tls.key"
         }
 
         storage "raft" {

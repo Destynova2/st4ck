@@ -16,7 +16,7 @@ variable "kms_output_dir" {
 variable "openbao_version" {
   description = "OpenBao Helm chart version"
   type        = string
-  default     = "0.25.6"
+  default     = "0.26.1"
 }
 
 # ─── cert-manager ────────────────────────────────────────────────────
