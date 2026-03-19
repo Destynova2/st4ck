@@ -44,7 +44,7 @@ binaryData:
 SEALEOF
 
 # ─── Patch source path and start ────────────────────────────────────
-sed 's|__SOURCE_DIR__|/tmp/empty-source|g' \
+sed 's|__SOURCE_DIR__|/opt/talos/repo|g' \
   /opt/talos/repo/bootstrap/platform-pod.yaml > "$WORKDIR/platform-pod.yaml"
 
 podman play kube "$WORKDIR/platform-pod.yaml" \
