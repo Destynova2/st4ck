@@ -458,7 +458,7 @@ scaleway-nuke: ## DANGEROUS: destroy everything including IAM and image
 # Source: bootstrap/
 # ═══════════════════════════════════════════════════════════════════════
 
-.PHONY: bootstrap bootstrap-init bootstrap-stop bootstrap-export bootstrap-tunnel kms-bootstrap kms-stop state-snapshot state-restore
+.PHONY: bootstrap bootstrap-init bootstrap-stop bootstrap-update bootstrap-export bootstrap-tunnel kms-bootstrap kms-stop state-snapshot state-restore
 
 # Aliases (backward compat)
 kms-bootstrap: bootstrap
@@ -513,6 +513,174 @@ state-restore: ## Restore OpenBao Raft snapshot (SNAPSHOT=path)
 			--data-binary @$(SNAPSHOT) \
 			http://127.0.0.1:8200/v1/sys/storage/raft/snapshot && \
 		echo "Raft snapshot restored from $(SNAPSHOT)"
+
+# ═══════════════════════════════════════════════════════════════════════
+# Upgrade workflow (preflight + upgrade + bootstrap-update)
+# ═══════════════════════════════════════════════════════════════════════
+
+.PHONY: preflight upgrade bootstrap-update
+
+preflight: ## Pre-upgrade checks (variables, files, connectivity, validate)
+	@echo "=== Preflight checks ==="
+	@FAIL=0; \
+	printf "  %-45s" "TF_VAR_admin_password set:"; \
+	if [ -n "$${TF_VAR_admin_password:-}" ]; then echo "OK"; else echo "FAIL (export TF_VAR_admin_password)"; FAIL=1; fi; \
+	printf "  %-45s" "kms-output/approle-role-id.txt:"; \
+	if [ -f "$(KMS_OUTPUT)/approle-role-id.txt" ]; then echo "OK"; else echo "FAIL"; FAIL=1; fi; \
+	printf "  %-45s" "kms-output/approle-secret-id.txt:"; \
+	if [ -f "$(KMS_OUTPUT)/approle-secret-id.txt" ]; then echo "OK"; else echo "FAIL"; FAIL=1; fi; \
+	printf "  %-45s" "vault-backend reachable (:8080):"; \
+	if curl -so /dev/null -w '%{http_code}' http://localhost:8080/state/test 2>/dev/null | grep -qE '^(2|4)'; then echo "OK"; else echo "FAIL (run make bootstrap)"; FAIL=1; fi; \
+	echo ""; \
+	echo "  Validating stacks..."; \
+	for dir in $(STACKS); do \
+		printf "    %-43s" "$$dir:"; \
+		rm -rf "$$dir/.terraform" "$$dir/.terraform.lock.hcl"; \
+		if $(TF) -chdir="$$dir" init -backend=false -input=false >/dev/null 2>&1 \
+			&& $(TF) -chdir="$$dir" validate >/dev/null 2>&1; then \
+			echo "OK"; \
+		else echo "FAIL"; FAIL=1; fi; \
+	done; \
+	echo ""; \
+	if [ $$FAIL -eq 0 ]; then echo "=== All preflight checks passed ==="; \
+	else echo "=== PREFLIGHT FAILED — fix errors above ==="; exit 1; fi
+
+upgrade: preflight ## Full upgrade: preflight → snapshot → bootstrap-update → provider → k8s
+	@echo ""
+	@echo "========================================="
+	@echo "  Upgrade — ENV=$(ENV)"
+	@echo "========================================="
+	@echo ""
+	@echo "--- Taking state snapshot (backup) ---"
+	$(MAKE) state-snapshot
+	@echo ""
+	@if git diff HEAD~1 --name-only 2>/dev/null | grep -q '^bootstrap/'; then \
+		echo "--- bootstrap/ changed — updating platform pod ---"; \
+		$(MAKE) bootstrap-update; \
+		echo ""; \
+	else \
+		echo "--- bootstrap/ unchanged — skipping ---"; \
+		echo ""; \
+	fi
+	@echo "--- Applying provider $(ENV) ---"
+	$(MAKE) $(ENV)-apply
+	@echo ""
+	@echo "--- Deploying all k8s stacks ---"
+	$(MAKE) k8s-up
+	@echo ""
+	@echo "========================================="
+	@echo "  Upgrade complete (ENV=$(ENV))"
+	@echo "========================================="
+	@echo "  Changed files (last commit):"
+	@git diff HEAD~1 --stat 2>/dev/null || echo "  (could not determine)"
+	@echo "========================================="
+
+bootstrap-update: ## Update running bootstrap pod in-place (preserves PVC data)
+	@command -v podman >/dev/null 2>&1 || { echo "Error: podman required"; exit 1; }
+	@test -f "$(BOOTSTRAP_DIR)/platform-pod.yaml" || { echo "Error: $(BOOTSTRAP_DIR)/platform-pod.yaml not found. Run make bootstrap first."; exit 1; }
+	@test -f "$(BOOTSTRAP_DIR)/configmap.yaml" || { echo "Error: $(BOOTSTRAP_DIR)/configmap.yaml not found. Run make bootstrap first."; exit 1; }
+	@echo "--- Updating platform pod (--replace) ---"
+	podman play kube --replace $(BOOTSTRAP_DIR)/platform-pod.yaml \
+		--configmap=$(BOOTSTRAP_DIR)/configmap.yaml
+	@echo "--- Platform pod updated (PVC data preserved) ---"
+
+# ═══════════════════════════════════════════════════════════════════════
+# Arbor (staging tree — pre-pull images, charts, git)
+# ═══════════════════════════════════════════════════════════════════════
+
+ARBOR_DIR := arbor
+
+.PHONY: arbor arbor-verify
+
+arbor: ## Pre-stage all images, Helm charts, and git repo for deployment
+	@echo "=== Arbor: staging deployment artifacts ==="
+	@mkdir -p $(ARBOR_DIR)/charts
+	@echo ""
+	@echo "--- Pulling container images from platform-pod.yaml ---"
+	@grep -E '^\s+image:' bootstrap/platform-pod.yaml \
+		| sed 's/.*image:\s*//' | sort -u | while read -r img; do \
+		echo "  podman pull $$img"; \
+		podman pull "$$img"; \
+	done
+	@echo ""
+	@echo "--- Pulling Helm charts from stacks ---"
+	@for dir in stacks/*/; do \
+		stack=$$(basename "$$dir"); \
+		vars="$$dir/variables.tf"; \
+		main="$$dir/main.tf"; \
+		[ -f "$$main" ] || continue; \
+		grep -E 'repository\s*=' "$$main" | sed 's/.*=\s*"\(.*\)"/\1/' | while read -r repo; do \
+			chart=$$(grep -A1 "repository.*$$repo" "$$main" | grep 'chart\s*=' | head -1 | sed 's/.*=\s*"\(.*\)"/\1/'); \
+			[ -z "$$chart" ] && continue; \
+			echo "$$chart" | grep -q '/' && continue; \
+			version=$$(grep -B5 "chart.*$$chart" "$$main" | grep 'version\s*=' | head -1 | sed 's/.*=\s*"\{0,1\}\(var\.\)\{0,1\}//;s/"\{0,1\}\s*$$//' ); \
+			if echo "$$version" | grep -q '^var\.'; then \
+				varname=$$(echo "$$version" | sed 's/var\.//'); \
+				version=$$(grep -A3 "variable.*$$varname" "$$vars" | grep 'default' | sed 's/.*=\s*"\(.*\)"/\1/'); \
+			fi; \
+			[ -z "$$version" ] && continue; \
+			echo "  helm pull $$chart ($$version) from $$repo"; \
+			helm pull "$$chart" --repo "$$repo" --version "$$version" \
+				-d $(ARBOR_DIR)/charts 2>/dev/null || \
+			echo "    WARN: failed to pull $$chart $$version from $$repo"; \
+		done; \
+	done
+	@echo ""
+	@echo "--- Generating manifest ---"
+	@{ \
+		echo '{'; \
+		echo '  "generated": "'$$(date -u +%Y-%m-%dT%H:%M:%SZ)'",' ; \
+		echo '  "images": ['; \
+		grep -E '^\s+image:' bootstrap/platform-pod.yaml \
+			| sed 's/.*image:\s*//' | sort -u | while read -r img; do \
+			digest=$$(podman image inspect "$$img" --format '{{index .Digest}}' 2>/dev/null || echo "unknown"); \
+			echo "    {\"image\": \"$$img\", \"sha256\": \"$$digest\"},"; \
+		done; \
+		echo '    null'; \
+		echo '  ],'; \
+		echo '  "charts": ['; \
+		for f in $(ARBOR_DIR)/charts/*.tgz; do \
+			[ -f "$$f" ] || continue; \
+			sha=$$(shasum -a 256 "$$f" | cut -d' ' -f1); \
+			echo "    {\"file\": \"$$(basename $$f)\", \"sha256\": \"$$sha\"},"; \
+		done; \
+		echo '    null'; \
+		echo '  ]'; \
+		echo '}'; \
+	} > $(ARBOR_DIR)/manifest.json
+	@echo "  Manifest written to $(ARBOR_DIR)/manifest.json"
+	@echo ""
+	@echo "=== Arbor staging complete ==="
+
+arbor-verify: ## Verify arbor staging tree is complete
+	@echo "=== Arbor verification ==="
+	@FAIL=0; \
+	echo ""; \
+	echo "--- Container images ---"; \
+	grep -E '^\s+image:' bootstrap/platform-pod.yaml \
+		| sed 's/.*image:\s*//' | sort -u | while read -r img; do \
+		printf "  %-60s" "$$img:"; \
+		if podman image exists "$$img" 2>/dev/null; then echo "OK"; \
+		else echo "MISSING"; FAIL=1; fi; \
+	done; \
+	echo ""; \
+	echo "--- Helm charts ---"; \
+	if [ ! -f "$(ARBOR_DIR)/manifest.json" ]; then \
+		echo "  FAIL: $(ARBOR_DIR)/manifest.json not found (run make arbor first)"; \
+		exit 1; \
+	fi; \
+	for f in $(ARBOR_DIR)/charts/*.tgz; do \
+		[ -f "$$f" ] || continue; \
+		sha_actual=$$(shasum -a 256 "$$f" | cut -d' ' -f1); \
+		basename_f=$$(basename "$$f"); \
+		sha_expected=$$(grep "$$basename_f" $(ARBOR_DIR)/manifest.json | sed 's/.*sha256.*: *"\([a-f0-9]*\)".*/\1/' | head -1); \
+		printf "  %-60s" "$$basename_f:"; \
+		if [ "$$sha_actual" = "$$sha_expected" ]; then echo "OK"; \
+		else echo "SHA256 MISMATCH"; FAIL=1; fi; \
+	done; \
+	echo ""; \
+	if [ $$FAIL -eq 0 ]; then echo "=== Arbor verification passed ==="; \
+	else echo "=== VERIFICATION FAILED ==="; exit 1; fi
 
 # ═══════════════════════════════════════════════════════════════════════
 # Day-2 operations (post-deploy)

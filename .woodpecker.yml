@@ -98,6 +98,27 @@ steps:
     depends_on: [wait-image-upload]
     <<: *deploy_only
 
+  # ─── Update bootstrap (conditional: only if bootstrap/ changed) ───
+  - name: update-bootstrap
+    image: *tofu_image
+    secrets: [tf_http_username, tf_http_password]
+    commands:
+      - |
+        VB=http://host.containers.internal:8080
+        cd bootstrap
+        tofu init -input=false \
+          -backend-config="address=$$VB/state/bootstrap" \
+          -backend-config="lock_address=$$VB/state/bootstrap" \
+          -backend-config="unlock_address=$$VB/state/bootstrap"
+        tofu apply -auto-approve \
+          -var="source_dir=/woodpecker/src" \
+          -var="bootstrap_dir=/tmp/platform-ci"
+    when:
+      - event: push
+        branch: main
+        path: "bootstrap/**"
+    depends_on: [validate]
+
   # ─── Deploy cluster ───────────────────────────────────────────────
   - name: deploy-cluster
     image: *tofu_image

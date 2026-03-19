@@ -26,6 +26,9 @@ kms-output/
 # Fetched Helm charts (upstream dependencies)
 stacks/storage/chart/
 
+# Arbor staging tree (pre-pulled images + charts)
+arbor/
+
 # Build artifacts
 image-cache.oci
 *.ova
