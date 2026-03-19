@@ -47,13 +47,11 @@ Zero secrets in Git. All auto-generated, stored in OpenBao, synced by ESO.
 |-------------|----------|--------|
 | Scaleway | `scaleway/scaleway` | OpenTofu (4 stages: IAM → image → cluster → CI) |
 | Local | `dmacvicar/libvirt` | OpenTofu (QEMU/KVM VMs) |
-| Outscale | `outscale/outscale` | OpenTofu (FCU) |
 | VMware air-gap | Shell scripts | OVA + embedded image cache + static IPs |
 
 ```bash
 make scaleway-up                # Cloud
 make ENV=local local-up         # Local KVM
-make ENV=outscale outscale-up   # Outscale
 ```
 
 ## Architecture

@@ -6,7 +6,6 @@ TF := tofu
 # Set ENV to switch provider:
 #   make ENV=local local-up       → libvirt/KVM
 #   make scaleway-up              → Scaleway (default)
-#   make ENV=outscale outscale-up → Outscale
 
 ENV     ?= scaleway
 KC_FILE := $(HOME)/.kube/talos-$(ENV)
@@ -33,7 +32,6 @@ LPP_CHART     := stacks/storage/chart-local-path
 # ─── Provider paths ──────────────────────────────────────────────────
 
 TF_LOCAL    := envs/local
-TF_OUTSCALE := envs/outscale
 TF_SCALEWAY := envs/scaleway
 TF_SCW_IAM  := envs/scaleway/iam
 TF_SCW_IMAGE := envs/scaleway/image
@@ -246,33 +244,6 @@ local-down: ## Destroy local k8s stacks + cluster
 	$(MAKE) ENV=local k8s-down
 	$(MAKE) local-destroy
 
-# ═══════════════════════════════════════════════════════════════════════
-# Outscale
-# ═══════════════════════════════════════════════════════════════════════
-
-.PHONY: outscale-init outscale-plan outscale-apply outscale-destroy outscale-kubeconfig outscale-up outscale-down
-
-outscale-init: ## terraform init for Outscale
-	$(TF) -chdir=$(TF_OUTSCALE) init
-
-outscale-plan: ## terraform plan for Outscale
-	$(TF) -chdir=$(TF_OUTSCALE) plan
-
-outscale-apply: ## terraform apply for Outscale
-	$(TF) -chdir=$(TF_OUTSCALE) apply -auto-approve
-
-outscale-destroy: ## terraform destroy for Outscale
-	$(TF) -chdir=$(TF_OUTSCALE) destroy -auto-approve
-
-outscale-kubeconfig: ## Write kubeconfig from Outscale env
-	@$(TF) -chdir=$(TF_OUTSCALE) output -raw kubeconfig > $(HOME)/.kube/talos-outscale
-
-outscale-up: outscale-apply outscale-kubeconfig ## Create Outscale cluster + deploy k8s stacks
-	$(MAKE) ENV=outscale k8s-up
-
-outscale-down: ## Destroy Outscale k8s stacks + cluster
-	$(MAKE) ENV=outscale k8s-down
-	$(MAKE) outscale-destroy
 
 # ═══════════════════════════════════════════════════════════════════════
 # Scaleway — IAM (stage 0)
