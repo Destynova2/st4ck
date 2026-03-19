@@ -43,7 +43,6 @@
 - [Architecture](docs/explanation/architecture.md): Two-phase model, state, secrets, PKI, CAPI (Mermaid diagrams)
 - [Bootstrap Mechanics](docs/explanation/bootstrap.md): 5 chicken-and-egg problems and their solutions (Mermaid diagrams)
 - [Security Model](docs/explanation/security.md): Threat model, PKI trust chain, policy inventory
-- [VMware Airgap Guide](docs/vmware-deploy-instructions.txt): Air-gapped VMware deployment
 
 ## Infrastructure
 - [Makefile](Makefile): Root orchestration with all deployment targets
@@ -78,4 +77,4 @@
 - [Storage Values](stacks/storage/values-harbor.yaml): Harbor registry Helm values
 
 ## Design
-- [Design Doc Template](docs/design/000-template.md): Template for pre-implementation design docs
+- [HLD/LLD System Design](docs/design/001-hld-lld.md): Complete high-level and low-level design
