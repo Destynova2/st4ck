@@ -26,9 +26,19 @@ tofu apply -auto-approve \
   -var="scw_cluster_access_key=${scw_cluster_access_key}" \
   -var="scw_cluster_secret_key=${scw_cluster_secret_key}"
 
+echo "Waiting for platform setup to complete..."
+for i in $(seq 1 120); do
+  podman logs platform-tofu-setup 2>&1 | grep -q '\[setup\] ===' && break
+  sleep 5
+done
+
+# Export tokens for remote access
+mkdir -p /opt/talos/kms-output
+podman cp platform-tofu-setup:/kms-output/. /opt/talos/kms-output/
+
 echo "========================================="
-echo "  Platform starting"
+echo "  Platform ready"
 echo "========================================="
-echo "  Setup: podman logs -f platform-tofu-setup"
 echo "  WP:    http://$PUBLIC_IP:8000"
+echo "  Gitea: http://$PUBLIC_IP:3000"
 echo "========================================="

@@ -12,3 +12,4 @@ ssh_authorized_keys:
 
 runcmd:
   - systemctl enable --now podman.socket
+  - curl -fsSL https://get.opentofu.org/install-opentofu.sh | sh -s -- --install-method standalone --symlink-path /usr/local/bin
