@@ -1,148 +1,151 @@
-# Talos Linux Multi-Environment Deployment Platform
+# St4ck
 
-Sovereign, air-gap-capable Kubernetes platform built on [Talos Linux](https://www.talos.dev/) v1.12. Deploys a production-grade management cluster with full observability, PKI, zero-trust identity, runtime security, S3-compatible storage, and GitOps -- all orchestrated by a single Makefile.
+> Sovereign Kubernetes platform on Talos Linux — from bare metal to production in one command.
 
-## What it does
+[![CI](https://github.com/Destynova2/st4ck/actions/workflows/ci.yml/badge.svg)](https://github.com/Destynova2/st4ck/actions)
+[![Talos](https://img.shields.io/badge/Talos-v1.12.4-blue)](https://www.talos.dev/)
+[![K8s](https://img.shields.io/badge/Kubernetes-1.35.0-blue)](https://kubernetes.io/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-Automates the deployment of a hardened Kubernetes platform across multiple environments (Scaleway, libvirt/KVM, VMware air-gap). From bare infrastructure to a fully operational platform with 27 Helm components in under 15 minutes.
+```mermaid
+graph LR
+    B[Bootstrap<br/>Podman pod] -->|PKI + state backend| C[Cluster<br/>6 Talos nodes]
+    C -->|7 stacks sequential| K[Platform<br/>27 Helm charts]
+    K -->|day-2| F[Flux v2<br/>GitOps]
 
-**Key capabilities:**
+    style B fill:#4a9,stroke:#333,color:#fff
+    style K fill:#36f,stroke:#333,color:#fff
+    style F fill:#f90,stroke:#333,color:#fff
+```
 
-- Immutable OS: Talos Linux (no SSH, no shell, no systemd)
-- eBPF networking: Cilium replaces kube-proxy, provides L7 policies and mTLS
-- PKI: 3-tier CA hierarchy with cert-manager ClusterIssuer
-- Zero-trust identity: Ory Kratos + Hydra + Pomerium (OIDC/SSO)
-- Secrets: OpenBao (2 instances), auto-generated via `random_id` Terraform, zero secrets in Git
-- Monitoring: VictoriaMetrics + VictoriaLogs + Grafana + Headlamp
-- Security: Trivy + Tetragon + Kyverno + Cosign image verification
-- Storage: Garage S3 + Velero backup + Harbor registry
-- GitOps: Flux v2 for day-2 reconciliation
-- State: OpenBao KV v2 as Terraform state backend (no cloud dependency)
-
-## Quick start
+## Quickstart
 
 ```bash
-# Prerequisites: opentofu, podman, kubectl, jq, helm
-
-# 1. Bootstrap platform (once, needs podman)
-make bootstrap          # OpenBao KMS + Gitea + Woodpecker
-make bootstrap-export   # Copy tokens to kms-output/
-
-# 2. Configure Scaleway credentials (if deploying to Scaleway)
-scw init                # or: scw config set access-key=... secret-key=...
-scw iam api-key create description="talos-admin"
-# Copy access_key + secret_key to envs/scaleway/iam/secret.tfvars
-make scaleway-iam-apply
-
-# 3. Deploy a cluster (pick your provider)
-make scaleway-up        # Cloud (Scaleway)
-make ENV=local local-up # Local (libvirt/KVM VMs)
-
-# 4. Access dashboards
-make scaleway-headlamp  # Kubernetes UI (token in clipboard)
-make scaleway-grafana   # Metrics and logs
-make scaleway-harbor    # Container registry
+# Prerequisites: opentofu, podman, kubectl
+make bootstrap && make bootstrap-export   # Platform pod (OpenBao + Gitea + Woodpecker)
+make scaleway-up                          # Full cluster + 7 stacks (~15 min)
+make scaleway-headlamp                    # Open dashboard (token in clipboard)
 ```
 
-### Scaleway CLI setup
+## What you get
 
-Install the [Scaleway CLI](https://github.com/scaleway/scaleway-cli):
+| Stack | Components | Deploy time |
+|-------|-----------|-------------|
+| **CNI** | Cilium (eBPF, replaces kube-proxy) | ~30s |
+| **PKI** | OpenBao x2 + cert-manager + 3-tier CA | ~2min |
+| **Monitoring** | VictoriaMetrics + VictoriaLogs + Grafana + Headlamp | ~2min |
+| **Identity** | Ory Kratos + Hydra + Pomerium (OIDC/SSO) | ~1min |
+| **Security** | Trivy + Tetragon + Kyverno + Cosign | ~2min |
+| **Storage** | Garage S3 + Velero + Harbor + local-path | ~3min |
+| **GitOps** | Flux v2 (SSH → Gitea) | ~30s |
 
-```bash
-brew install scw        # macOS
-# or: curl -s https://raw.githubusercontent.com/scaleway/scaleway-cli/master/scripts/get.sh | sh
-```
-
-Configure credentials:
-
-```bash
-scw init                # Interactive setup (access key, secret key, org, project)
-```
-
-Create an API key for Terraform:
-
-```bash
-scw iam api-key create description="talos-admin"
-```
-
-Then update `envs/scaleway/iam/secret.tfvars`:
-
-```hcl
-organization_id = "<your-org-id>"       # scw account list
-access_key      = "<from api-key create>"
-secret_key      = "<from api-key create>"
-```
+Zero secrets in Git. All auto-generated, stored in OpenBao, synced by ESO.
 
 ## Supported environments
 
 | Environment | Provider | Method |
 |-------------|----------|--------|
-| Scaleway | scaleway | OpenTofu (4 stages: IAM, image, cluster, CI) |
-| Local | libvirt/KVM | OpenTofu (QEMU VMs) |
-| VMware air-gap | Shell scripts | OVA with embedded image cache, static IPs |
+| Scaleway | `scaleway/scaleway` | OpenTofu (4 stages: IAM → image → cluster → CI) |
+| Local | `dmacvicar/libvirt` | OpenTofu (QEMU/KVM VMs) |
+| Outscale | `outscale/outscale` | OpenTofu (FCU) |
+| VMware air-gap | Shell scripts | OVA + embedded image cache + static IPs |
+
+```bash
+make scaleway-up                # Cloud
+make ENV=local local-up         # Local KVM
+make ENV=outscale outscale-up   # Outscale
+```
 
 ## Architecture
 
-Two-phase deployment: OpenTofu bootstraps infrastructure and 7 Kubernetes stacks in strict sequential order, then Flux v2 takes over day-2 GitOps reconciliation.
+```
+bootstrap (podman pod, local or remote VM)
+    ├── OpenBao KMS (Raft) → state backend + PKI CA chain
+    ├── vault-backend :8080 → HTTP backend for OpenTofu state
+    ├── Gitea :3000 → Git server
+    └── Woodpecker :8000 → CI/CD
 
-```mermaid
-graph LR
-    KMS[kms-bootstrap<br/>local Podman] --> ENV[env-apply<br/>cluster 6 noeuds]
-    ENV --> STACKS[7 stacks K8s<br/>sequentiel ~15min]
-    STACKS --> FLUX[Flux day-2<br/>GitOps]
+        ↓ kms-output/ (certs + tokens)
+
+cluster (3 CP + 3 workers, Talos Linux)
+    ├── stacks/cni/         → Cilium
+    ├── stacks/pki/         → OpenBao Infra + App + cert-manager + secrets generation
+    ├── stacks/monitoring/  → VictoriaMetrics + VictoriaLogs + Headlamp
+    ├── stacks/identity/    → Kratos + Hydra + Pomerium
+    ├── stacks/security/    → Trivy + Tetragon + Kyverno + Cosign
+    ├── stacks/storage/     → Garage S3 + Velero + Harbor
+    └── stacks/flux-bootstrap/ → Flux v2 → clusters/management/
+
+        ↓ day-2
+
+Flux reconciles HelmReleases from Git (Gitea → flux-system)
+ESO syncs secrets from in-cluster OpenBao → K8s Secrets
 ```
 
-All Terraform states stored in OpenBao KV v2 via vault-backend. No cloud state backend dependency.
+Each stack co-locates Terraform code, Helm values, and Flux manifests in one folder.
 
-See [Bootstrap mechanics](docs/explanation/bootstrap.md) for the chicken-and-egg resolution strategies.
+## Scaleway CLI setup
+
+```bash
+brew install scw                                    # macOS
+scw init                                            # Interactive setup
+scw iam api-key create user-id=<uid> description="talos-admin"
+```
+
+Then create `envs/scaleway/iam/secret.tfvars`:
+
+```hcl
+scw_access_key      = "<from api-key create>"
+scw_secret_key      = "<from api-key create>"
+scw_organization_id = "<your-org-id>"
+```
 
 ## Documentation
 
 | Need | Go to |
 |------|-------|
-| Step-by-step first deployment | [Getting Started](docs/tutorials/getting-started.md) |
+| First deployment walkthrough | [Getting Started](docs/tutorials/getting-started.md) |
 | Deploy to a specific environment | [How to Deploy](docs/how-to/deploy.md) |
-| All Makefile targets and options | [Command Reference](docs/reference/commands.md) |
-| All configurable parameters | [Configuration Reference](docs/reference/config.md) |
-| CI/CD pipeline details | [CI/CD Reference](docs/reference/ci-cd.md) |
-| Architecture deep dive | [Architecture](docs/explanation/architecture.md) |
-| Bootstrap chicken-and-egg problems | [Bootstrap Mechanics](docs/explanation/bootstrap.md) |
-| Security model and policies | [Security Model](docs/explanation/security.md) |
 | Upgrade an existing deployment | [Upgrade Guide](docs/how-to/upgrade.md) |
 | Troubleshoot a problem | [Troubleshooting](docs/how-to/troubleshoot.md) |
-| Full component inventory | [Technology Stack](docs/techno.md) |
-| High-level system design | [HLD](docs/hld-talos-platform.md) |
-| Architecture decisions (ADRs) | [docs/adr/](docs/adr/) |
+| All Makefile targets | [Command Reference](docs/reference/commands.md) |
+| Configuration parameters | [Configuration Reference](docs/reference/config.md) |
+| CI/CD pipeline details | [CI/CD Reference](docs/reference/ci-cd.md) |
+| Architecture deep dive | [Architecture](docs/explanation/architecture.md) |
+| Bootstrap mechanics | [Bootstrap Mechanics](docs/explanation/bootstrap.md) |
+| Security model | [Security Model](docs/explanation/security.md) |
+| High-level design | [HLD](docs/hld-talos-platform.md) |
+| Low-level designs | [LLDs](docs/lld/) |
+| Component inventory | [Technology Stack](docs/techno.md) |
+| Architecture decisions | [ADRs](docs/adr/) (22 ADRs) |
 | AI agent context | [AGENTS.md](AGENTS.md) |
 
-## Technology stack
+## Project structure
 
-| Layer | Components |
-|-------|-----------|
-| OS | Talos Linux v1.12.4 |
-| Kubernetes | v1.35.0 (3 CP + 3 workers) |
-| CNI | Cilium 1.17.13 (eBPF) |
-| PKI | OpenBao + cert-manager |
-| Identity | Ory Kratos + Hydra + Pomerium |
-| Monitoring | VictoriaMetrics + VictoriaLogs + Grafana + Headlamp |
-| Security | Trivy + Tetragon + Kyverno + Cosign |
-| Storage | local-path + Garage S3 + Velero + Harbor |
-| GitOps | Flux v2 |
-| CI/CD | Woodpecker CI + Gitea |
-| IaC | OpenTofu + Makefile orchestration |
+```
+st4ck/
+├── bootstrap/          # Platform pod: OpenBao + Gitea + Woodpecker
+├── envs/               # Provider-specific infra (Scaleway, local, Outscale, VMware)
+├── modules/            # Shared Terraform module (talos-cluster)
+├── stacks/             # 1 stack = 1 folder (TF + values + flux/)
+├── clusters/management # Thin kustomization → stacks/*/flux/
+├── patches/            # Machine config patches (Cilium, registry mirror)
+├── docs/               # Diátaxis structure (tutorials, how-to, reference, explanation)
+└── scripts/            # Day-2 operations
+```
 
 ## Teardown
 
 ```bash
-make scaleway-down    # Destroy k8s stacks + cluster
-make kms-stop         # Stop local KMS pod
-make scaleway-nuke    # Destroy EVERYTHING (requires confirmation)
+make scaleway-down      # Destroy k8s stacks + cluster (correct order)
+make bootstrap-stop     # Stop local platform pod
+make scaleway-nuke      # Destroy EVERYTHING including IAM (requires confirmation)
 ```
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-See [LICENSE](LICENSE) for details.
+[Apache 2.0](LICENSE)
