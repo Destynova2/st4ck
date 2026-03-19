@@ -137,6 +137,20 @@ server:
         }
       }
 
+      # ─── Self-init: Audit logging ─────────────────────────────────
+      initialize "audit" {
+        request "enable-file-audit" {
+          operation = "update"
+          path      = "sys/audit/file"
+          data = {
+            type = "file"
+            options = {
+              file_path = "/openbao/audit/audit.log"
+            }
+          }
+        }
+      }
+
       # ─── Self-init: Admin userpass (break-glass access) ─────────
       initialize "admin" {
         request "mount-userpass" {
@@ -169,11 +183,15 @@ server:
   extraVolumes:
     - type: secret
       name: openbao-infra-tls
+    - type: "emptyDir"
+      name: openbao-audit
 
   extraVolumeMounts:
     - name: openbao-infra-tls
       mountPath: /openbao/tls
       readOnly: true
+    - name: openbao-audit
+      mountPath: /openbao/audit
 
   dataStorage:
     enabled: true

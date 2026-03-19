@@ -109,6 +109,9 @@ resource "terraform_data" "garage_wait" {
 resource "terraform_data" "garage_layout" {
   depends_on = [terraform_data.garage_wait]
 
+  # Re-run if Garage helm release changes
+  triggers_replace = [helm_release.garage.metadata[0].revision]
+
   provisioner "local-exec" {
     environment = { KUBECONFIG = var.kubeconfig_path }
     command = <<-EOT
@@ -143,6 +146,9 @@ resource "terraform_data" "garage_layout" {
 resource "terraform_data" "garage_buckets_keys" {
   depends_on = [terraform_data.garage_layout, kubernetes_namespace.storage]
 
+  # Re-run on helm revision change; scripts are idempotent (check before create)
+  triggers_replace = [helm_release.garage.metadata[0].revision]
+
   provisioner "local-exec" {
     environment = { KUBECONFIG = var.kubeconfig_path }
     command = <<-EOT
@@ -175,7 +181,7 @@ resource "terraform_data" "garage_buckets_keys" {
           continue
         fi
 
-        KEY_INFO=$($GARAGE ./garage key create "$KEY_NAME" 2>/dev/null)
+        KEY_INFO=$($GARAGE ./garage key info "$KEY_NAME" 2>/dev/null || $GARAGE ./garage key create "$KEY_NAME" 2>/dev/null)
         ACCESS=$(echo "$KEY_INFO" | grep "Key ID" | awk '{print $NF}')
         SECRET=$(echo "$KEY_INFO" | grep "Secret key" | awk '{print $NF}')
 

@@ -11,7 +11,7 @@ metadata:
       Verify that container images are signed with Cosign.
       Images from the internal Harbor registry must be signed.
 spec:
-  validationFailureAction: Audit
+  validationFailureAction: Enforce
   background: false
   rules:
     - name: verify-harbor-images

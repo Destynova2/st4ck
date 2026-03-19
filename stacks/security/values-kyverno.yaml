@@ -3,7 +3,7 @@
 
 replicaCount: 1
 
-# Ignore webhook failures so Kyverno being down doesn't block all deployments
+# Fail-closed: if Kyverno is down, block admission to prevent policy bypass
 admissionController:
   replicas: 1
   container:
@@ -14,7 +14,7 @@ admissionController:
       limits:
         memory: 384Mi
   webhookConfiguration:
-    failurePolicy: Ignore
+    failurePolicy: Fail
 
 backgroundController:
   replicas: 1
