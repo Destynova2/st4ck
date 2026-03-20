@@ -202,9 +202,14 @@ k8s-up: ## Deploy all k8s stacks (sequential — parallel caused PVC/webhook rac
 
 k8s-down: ## Destroy all k8s stacks (correct order)
 	@curl -so /dev/null -w '%{http_code}' http://localhost:8080/state/test 2>/dev/null | grep -qE '^(2|4)' || { echo "ERROR: vault-backend not reachable at :8080. Run 'make bootstrap' first."; exit 1; }
+	@echo "--- Re-initializing backends ---"
+	@for dir in $(TF_FLUX) $(TF_STORAGE) $(TF_SECURITY) $(TF_IDENTITY) $(TF_MONITORING) $(TF_PKI) $(TF_CNI); do \
+		$(TF) -chdir=$$dir init -input=false -reconfigure >/dev/null 2>&1 || true; \
+	done
 	@# Remove Kyverno webhooks first to prevent them blocking other deletions
 	@KUBECONFIG=$(KC_FILE) kubectl delete mutatingwebhookconfiguration -l app.kubernetes.io/instance=kyverno --ignore-not-found 2>/dev/null || true
 	@KUBECONFIG=$(KC_FILE) kubectl delete validatingwebhookconfiguration -l app.kubernetes.io/instance=kyverno --ignore-not-found 2>/dev/null || true
+	-$(MAKE) flux-bootstrap-destroy
 	-$(MAKE) k8s-storage-destroy
 	-$(MAKE) k8s-security-destroy
 	-$(MAKE) k8s-identity-destroy
@@ -332,6 +337,7 @@ scaleway-apply: ## terraform apply for Scaleway cluster
 		-var="project_id=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw project_id)"
 
 scaleway-destroy: ## terraform destroy for Scaleway cluster
+	@$(TF) -chdir=$(TF_SCALEWAY) init -input=false -reconfigure >/dev/null 2>&1 || true
 	SCW_ACCESS_KEY=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw cluster_access_key) \
 	SCW_SECRET_KEY=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw cluster_secret_key) \
 	$(TF) -chdir=$(TF_SCALEWAY) destroy -auto-approve \
