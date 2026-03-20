@@ -25,6 +25,20 @@ variable "cnpg_version" {
   default     = "0.25.0"
 }
 
+# ─── CNPG Backup ──────────────────────────────────────────────────────
+
+variable "cnpg_backup_bucket" {
+  description = "S3 bucket name for CNPG barman backups (Garage)"
+  type        = string
+  default     = "cnpg-backups"
+}
+
+variable "cnpg_s3_url" {
+  description = "S3 endpoint URL for CNPG backups (Garage)"
+  type        = string
+  default     = "http://garage-s3.garage.svc.cluster.local:3900"
+}
+
 # ─── Pomerium ────────────────────────────────────────────────────────
 
 variable "pomerium_version" {

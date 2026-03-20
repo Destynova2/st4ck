@@ -92,9 +92,42 @@ resource "kubectl_manifest" "identity_pg_cluster" {
         initdb:
           database: identity
           owner: identity
+      backup:
+        barmanObjectStore:
+          destinationPath: "s3://cnpg-backups/identity-pg"
+          endpointURL: "http://garage-s3.garage.svc.cluster.local:3900"
+          s3Credentials:
+            accessKeyId:
+              name: cnpg-s3-credentials
+              key: access_key
+            secretAccessKey:
+              name: cnpg-s3-credentials
+              key: secret_key
+        retentionPolicy: "14d"
   YAML
 
   depends_on = [helm_release.cnpg_operator]
+}
+
+# ─── CNPG ScheduledBackup (daily at 02:00 UTC) ──────────────────
+
+resource "kubectl_manifest" "identity_pg_scheduled_backup" {
+  yaml_body = <<-YAML
+    apiVersion: postgresql.cnpg.io/v1
+    kind: ScheduledBackup
+    metadata:
+      name: identity-pg-daily
+      namespace: identity
+    spec:
+      schedule: "0 2 * * *"
+      backupOwnerReference: self
+      cluster:
+        name: identity-pg
+      method: barmanObjectStore
+      immediate: true
+  YAML
+
+  depends_on = [kubectl_manifest.identity_pg_cluster]
 }
 
 data "kubernetes_secret" "pg_app" {

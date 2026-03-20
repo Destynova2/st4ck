@@ -161,13 +161,14 @@ resource "terraform_data" "garage_buckets_keys" {
       done
 
       echo "Creating buckets..."
-      for BUCKET in velero-backups harbor-registry; do
+      for BUCKET in velero-backups harbor-registry cnpg-backups; do
         $GARAGE ./garage bucket create "$BUCKET" 2>/dev/null || true
       done
 
       echo "Creating keys and K8s secrets..."
       for ENTRY in "velero-key:velero-backups:storage:velero-s3-credentials:ini" \
-                    "harbor-key:harbor-registry:storage:harbor-s3-credentials:plain"; do
+                    "harbor-key:harbor-registry:storage:harbor-s3-credentials:plain" \
+                    "cnpg-key:cnpg-backups:identity:cnpg-s3-credentials:plain"; do
         KEY_NAME=$(echo "$ENTRY" | cut -d: -f1)
         BUCKET=$(echo "$ENTRY" | cut -d: -f2)
         SECRET_NS=$(echo "$ENTRY" | cut -d: -f3)

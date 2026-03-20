@@ -513,6 +513,55 @@ state-restore: ## Restore OpenBao Raft snapshot (SNAPSHOT=path)
 			http://127.0.0.1:8200/v1/sys/storage/raft/snapshot && \
 		echo "Raft snapshot restored from $(SNAPSHOT)"
 
+# ─── Disaster Recovery ──────────────────────────────────────────────
+
+.PHONY: dr-backup dr-backup-kms dr-backup-cnpg dr-verify-backup
+
+DR_BACKUP_DIR ?= $(HOME)/talos-dr-backups
+
+dr-backup-kms: ## Backup kms-output/ + Raft snapshot to DR directory
+	@BACKUP_DIR=$(DR_BACKUP_DIR)/$$(date +%Y%m%d-%H%M%S) && \
+		mkdir -p $$BACKUP_DIR && \
+		cp -r $(KMS_OUTPUT) $$BACKUP_DIR/kms-output && \
+		ROOT_TOKEN=$$(cat $(KMS_OUTPUT)/root-token.txt) && \
+		curl -sf -H "X-Vault-Token: $$ROOT_TOKEN" \
+			http://127.0.0.1:8200/v1/sys/storage/raft/snapshot \
+			-o $$BACKUP_DIR/raft.snap && \
+		echo "DR backup saved to $$BACKUP_DIR/" && \
+		ls -lh $$BACKUP_DIR/
+
+dr-backup-cnpg: ## Trigger an immediate CNPG barman backup
+	@KUBECONFIG=$(KC_FILE) kubectl -n identity apply -f - <<< '{"apiVersion":"postgresql.cnpg.io/v1","kind":"Backup","metadata":{"name":"identity-pg-manual-'"$$(date +%s)"'","namespace":"identity"},"spec":{"method":"barmanObjectStore","cluster":{"name":"identity-pg"}}}' && \
+		echo "Manual CNPG backup triggered."
+
+dr-backup: dr-backup-kms ## Full DR backup (Raft + kms-output + CNPG trigger)
+	@if KUBECONFIG=$(KC_FILE) kubectl get namespace identity >/dev/null 2>&1; then \
+		$(MAKE) dr-backup-cnpg; \
+	else \
+		echo "Cluster not reachable, skipping CNPG backup."; \
+	fi
+	@echo ""
+	@echo "=== DR backup complete ==="
+	@echo "Store $(DR_BACKUP_DIR)/ off-site (encrypted)."
+
+dr-verify-backup: ## Verify DR backup integrity
+	@test -d "$(DR_BACKUP_DIR)" || { echo "No backups found at $(DR_BACKUP_DIR)"; exit 1; }
+	@LATEST=$$(ls -td $(DR_BACKUP_DIR)/*/ 2>/dev/null | head -1) && \
+		test -n "$$LATEST" || { echo "No backup directories found"; exit 1; } && \
+		echo "Latest backup: $$LATEST" && \
+		FAIL=0 && \
+		printf "  %-45s" "raft.snap:" && \
+		if [ -f "$$LATEST/raft.snap" ]; then echo "OK ($$(du -h "$$LATEST/raft.snap" | cut -f1))"; else echo "MISSING"; FAIL=1; fi && \
+		printf "  %-45s" "kms-output/root-token.txt:" && \
+		if [ -f "$$LATEST/kms-output/root-token.txt" ]; then echo "OK"; else echo "MISSING"; FAIL=1; fi && \
+		printf "  %-45s" "kms-output/approle-role-id.txt:" && \
+		if [ -f "$$LATEST/kms-output/approle-role-id.txt" ]; then echo "OK"; else echo "MISSING"; FAIL=1; fi && \
+		printf "  %-45s" "kms-output/root-ca.pem:" && \
+		if [ -f "$$LATEST/kms-output/root-ca.pem" ]; then echo "OK"; else echo "MISSING"; FAIL=1; fi && \
+		printf "  %-45s" "kms-output/infra-ca.pem:" && \
+		if [ -f "$$LATEST/kms-output/infra-ca.pem" ]; then echo "OK"; else echo "MISSING"; FAIL=1; fi && \
+		if [ $$FAIL -eq 0 ]; then echo "=== Backup verification passed ==="; else echo "=== VERIFICATION FAILED ==="; exit 1; fi
+
 # ═══════════════════════════════════════════════════════════════════════
 # Upgrade workflow (preflight + upgrade + bootstrap-update)
 # ═══════════════════════════════════════════════════════════════════════
