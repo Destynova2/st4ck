@@ -8,7 +8,7 @@
 
 ## 1. Resume executif
 
-Ce document definit l'architecture d'autoscaling hybride combinant bare metal (Scaleway Elastic Metal ou on-prem) et cloud (Scaleway VMs + GPUs). L'objectif : utiliser le bare metal en priorite (cout fixe, performance maximale), deborder automatiquement sur le cloud (cout variable, billed/min), et rapatrier les workloads vers le bare metal des que la capacite le permet. Le management cluster Talos orchestre l'ensemble via Kamaji (tenant control planes), CAPI (provisioning), Cluster Autoscaler (scaling), et un cost controller custom (migration cloud → bare metal).
+Ce document definit l'architecture d'autoscaling hybride combinant bare metal (Scaleway Elastic Metal ou on-prem) et cloud (Scaleway VMs + GPUs). L'objectif : utiliser le bare metal en priorite (cout fixe, performance maximale), deborder automatiquement sur le cloud (cout variable, billed/min), et rapatrier les workloads vers le bare metal des que la capacite le permet. Le management cluster Talos orchestre l'ensemble via Kamaji (tenant control planes), CAPI (provisioning), Karpenter avec le provider CAPI (scaling + consolidation), et NFD (hardware discovery).
 
 ---
 
@@ -41,37 +41,34 @@ graph TB
     subgraph "Management Cluster (Talos bare metal, 3 CP)"
         KAMAJI["Kamaji<br/>Tenant CPs as pods"]
         CAPI["CAPI Controllers<br/>CAPS + CABPT + Kamaji CP"]
-        CA["Cluster Autoscaler<br/>Priority Expander"]
-        CC["Cost Controller<br/>(custom)"]
-        DESCH["Descheduler<br/>(cloud → bare metal)"]
+        KARP["Karpenter<br/>+ CAPI Provider<br/>(NodePool weights)"]
         NFD_CTRL["NFD Controller"]
     end
 
-    subgraph "Pool 1 — Bare Metal (priorite 50)"
+    subgraph "Pool 1 — Bare Metal (NodePool weight 50)"
         BM1["worker-bm-1<br/>Elastic Metal DEV1-L<br/>NVMe, 64 GB"]
         BM2["worker-bm-2<br/>Elastic Metal DEV1-L"]
         BM3["worker-bm-3<br/>Elastic Metal DEV1-L"]
         NFD1["NFD labels:<br/>nvme=true, cpu-gen=zen3"]
     end
 
-    subgraph "Pool 2 — Cloud VM (priorite 30)"
+    subgraph "Pool 2 — Cloud VM (NodePool weight 30)"
         VM1["worker-vm-1<br/>Scaleway PRO2-M<br/>8 vCPU, 32 GB"]
         VM2["worker-vm-N<br/>(scale 0→50)"]
         NFD2["NFD labels:<br/>nvme=false, cpu-gen=epyc"]
     end
 
-    subgraph "Pool 3 — Cloud GPU (priorite 10)"
+    subgraph "Pool 3 — Cloud GPU (NodePool weight 10)"
         GPU1["worker-gpu-1<br/>Scaleway GPU-3070-S<br/>L4 24 GB"]
         GPU2["worker-gpu-N<br/>(scale 0→8)"]
         NFD3["NFD labels:<br/>gpu=nvidia-l4, vram=24g"]
     end
 
-    CA -->|"scale up/down"| CAPI
+    KARP -->|"provision via CAPI"| CAPI
     CAPI -->|"CAPS Scaleway"| VM1
     CAPI -->|"CAPS Scaleway"| GPU1
     CAPI -->|"CABPT Talos"| BM1
-    CC -->|"migration trigger"| DESCH
-    DESCH -->|"drain + reschedule"| VM1
+    KARP -->|"consolidation"| VM1
     NFD_CTRL -->|"labels"| BM1
     NFD_CTRL -->|"labels"| VM1
     NFD_CTRL -->|"labels"| GPU1
@@ -79,8 +76,8 @@ graph TB
 
 ### 3.2 MachineDeployments (pools de noeuds)
 
-| Pool | Priorite | Min | Max | Type instance | Facturation | Usage |
-|------|----------|-----|-----|---------------|-------------|-------|
+| Pool | NodePool weight | Min | Max | Type instance | Facturation | Usage |
+|------|----------------|-----|-----|---------------|-------------|-------|
 | bare-metal | 50 (prefere) | 3 | 6 | Elastic Metal DEV1-L | Horaire (~0.10 EUR/h) | Charge soutenue, stockage, ingress |
 | cloud-vm | 30 | 0 | 50 | PRO2-M / PRO2-L | Minute (~0.04 EUR/h) | Burst compute, CI, batch |
 | cloud-gpu | 10 | 0 | 8 | GPU-3070-S (L4) / H100 | Minute (~1.10 EUR/h L4) | Inference ML, training |
@@ -169,128 +166,175 @@ spec:
                     values: ["bare-metal"]
 ```
 
-### 3.4 Scheduling cost-aware — Priority Expander
+### 3.4 Scheduling cost-aware — Karpenter NodePool weights
 
-Le Cluster Autoscaler utilise le **priority expander** pour choisir le pool le moins cher capable de satisfaire les pods pending.
+Karpenter utilise les **NodePool weights** pour choisir le pool le moins cher capable de satisfaire les pods pending. Quand plusieurs NodePools matchent, Karpenter selectionne celui avec le poids le plus eleve.
 
 ```yaml
-apiVersion: v1
-kind: ConfigMap
+apiVersion: karpenter.sh/v1
+kind: NodePool
 metadata:
-  name: cluster-autoscaler-priority-expander
-  namespace: kube-system
-data:
-  priorities: |
-    50:
-      - bare-metal-.*
-    30:
-      - cloud-vm-.*
-    10:
-      - cloud-gpu-.*
+  name: bare-metal
+spec:
+  weight: 50    # Priorite maximale — bare metal prefere
+  template:
+    spec:
+      requirements:
+        - key: st4ck.io/pool
+          operator: In
+          values: ["bare-metal"]
+      nodeClassRef:
+        group: infrastructure.cluster.x-k8s.io
+        kind: CAPINodeClass
+        name: bare-metal
+  limits:
+    cpu: "48"       # 6 noeuds x 8 cores
+    memory: "384Gi" # 6 noeuds x 64 GB
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 30m   # Delai long — bare metal boot lent, cout horaire
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: cloud-vm
+spec:
+  weight: 30    # Priorite moyenne — burst compute
+  template:
+    spec:
+      requirements:
+        - key: st4ck.io/pool
+          operator: In
+          values: ["cloud-vm"]
+      nodeClassRef:
+        group: infrastructure.cluster.x-k8s.io
+        kind: CAPINodeClass
+        name: cloud-vm
+  limits:
+    cpu: "400"       # 50 noeuds x 8 vCPU
+    memory: "1600Gi" # 50 noeuds x 32 GB
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 10m   # Liberation rapide — facturation a la minute
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: cloud-gpu
+spec:
+  weight: 10    # Priorite basse — GPU on-demand uniquement
+  template:
+    spec:
+      requirements:
+        - key: st4ck.io/pool
+          operator: In
+          values: ["cloud-gpu"]
+        - key: nvidia.com/gpu
+          operator: Exists
+      nodeClassRef:
+        group: infrastructure.cluster.x-k8s.io
+        kind: CAPINodeClass
+        name: cloud-gpu
+  limits:
+    nvidia.com/gpu: "8"
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 5m    # Tres couteux — liberer des que possible
 ```
 
 **Logique de scaling :**
 
-1. Pods pending → Cluster Autoscaler evalue les pools
-2. Priority expander trie : bare metal (50) → cloud VM (30) → GPU (10)
-3. Le pool avec la priorite la plus haute ET la capacite suffisante est choisi
-4. Si bare metal est plein (max atteint ou scale-up impossible) → cloud VM
+1. Pods pending → Karpenter evalue les NodePools dont les requirements matchent
+2. NodePool weights trient : bare metal (50) → cloud VM (30) → GPU (10)
+3. Le NodePool avec le poids le plus eleve ET les requirements satisfaits est choisi
+4. Si bare metal est plein (limits atteintes) → cloud VM
 5. Si les pods requierent des GPUs (resource request `nvidia.com/gpu`) → cloud GPU exclusivement
 
-### 3.5 Cost Controller — Migration cloud vers bare metal
+### 3.5 Karpenter consolidation — Migration cloud vers bare metal
 
-Le cost controller est un operateur custom (CRD + controller Go) qui surveille le runtime des pods sur les noeuds cloud et declenche une migration vers le bare metal quand un seuil est depasse.
+Karpenter gere nativement la consolidation : il identifie les noeuds sous-utilises et regroupe les workloads sur moins de noeuds, liberant les noeuds vides. Grace aux NodePool weights, la consolidation favorise automatiquement le bare metal.
 
-```mermaid
-flowchart TD
-    START["Cost Controller Loop<br/>(toutes les 5 min)"] --> SCAN["Scanner tous les pods<br/>sur noeuds cloud-vm"]
-    SCAN --> CHECK{"Pod runtime<br/>sur cloud > 12h ?"}
+**Mecanisme :**
 
-    CHECK -->|Non| WAIT["Attendre prochain cycle"]
-    CHECK -->|Oui| CAP{"Capacite bare metal<br/>disponible ?"}
+1. Karpenter surveille en continu l'utilisation de chaque noeud
+2. Quand un noeud cloud-vm est sous-utilise (< 50% CPU/memoire), Karpenter evalue si ses pods peuvent etre places sur des noeuds existants
+3. Si de la capacite bare metal est disponible (weight 50 > weight 30), les pods sont migres vers le bare metal
+4. Le noeud cloud vide est termine (drain graceful + suppression via CAPI)
+5. Pas besoin de CRD custom, de Descheduler, ou d'operateur Go — Karpenter gere tout nativement
 
-    CAP -->|Non| METRICS["Emettre metrique<br/>cost_migration_blocked"]
-    CAP -->|Oui| STATELESS{"Pod stateless ?<br/>(no PVC)"}
+**Consolidation avancee — remplacement de petites VMs par moins de grosses :**
 
-    STATELESS -->|Oui| ANNOTATE["Annoter pod:<br/>st4ck.io/migrate=bare-metal"]
-    STATELESS -->|Non| PDB{"PDB respecte ?<br/>(minAvailable ok)"}
+Karpenter peut aussi remplacer N petites VMs par M grosses VMs (N > M) quand c'est plus efficace. Par exemple, 4x PRO2-M (8 vCPU) → 2x PRO2-L (16 vCPU) si le bin-packing est meilleur.
 
-    PDB -->|Non| DEFER["Reporter migration<br/>+ alerte"]
-    PDB -->|Oui| DRAIN["Cordon noeud cloud<br/>+ drain graceful"]
+**Parametres de consolidation par pool :**
 
-    ANNOTATE --> DESCH_TRIGGER["Descheduler evicte le pod<br/>(nodeAffinity mismatch)"]
-    DRAIN --> DESCH_TRIGGER
+| Pool | consolidateAfter | Raison |
+|------|-----------------|--------|
+| bare-metal | 30 min | Eviter les oscillations (boot lent, cout horaire) |
+| cloud-vm | 10 min | Facturation a la minute, liberation rapide |
+| cloud-gpu | 5 min | Tres couteux, liberer des que possible |
 
-    DESCH_TRIGGER --> RESCHEDULE["Scheduler replace le pod<br/>sur bare metal (priorite 50)"]
-    RESCHEDULE --> VERIFY["Verifier pod Running<br/>sur bare metal"]
-    VERIFY --> SCALEDOWN{"Noeud cloud<br/>vide ?"}
+### 3.6 Karpenter + CAPI Provider
 
-    SCALEDOWN -->|Oui| REMOVE["Cluster Autoscaler<br/>scale-down noeud cloud"]
-    SCALEDOWN -->|Non| WAIT
+Le provider `karpenter-provider-cluster-api` (kubernetes-sigs) permet a Karpenter d'utiliser Cluster API comme backend d'infrastructure. Cela decouple Karpenter d'AWS et le rend compatible avec tout provider CAPI (Scaleway, bare metal, etc.).
 
-    METRICS --> WAIT
-    DEFER --> WAIT
-    REMOVE --> WAIT
+**Architecture :**
+
+```
+Karpenter Core
+    │
+    ▼
+karpenter-provider-cluster-api
+    │ → CAPINodeClass (custom resource)
+    │
+    ▼
+CAPI Controllers
+    ├── CAPS (Scaleway) → VMs + Elastic Metal
+    └── CABPT (Talos) → Machine configs
 ```
 
-**CRD CostPolicy :**
+**CAPINodeClass (reference dans chaque NodePool) :**
 
 ```yaml
-apiVersion: autoscaling.st4ck.io/v1alpha1
-kind: CostPolicy
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: CAPINodeClass
 metadata:
-  name: cloud-to-baremetal
+  name: cloud-vm
 spec:
-  sourcePool: cloud-vm
-  targetPool: bare-metal
-  thresholds:
-    maxCloudRuntime: 12h      # Migrer apres 12h sur cloud
-    evaluationInterval: 5m    # Frequence de scan
-  migration:
-    strategy: rolling         # Stateless: rolling update
-    maxUnavailable: 1         # Maximum 1 pod migre a la fois
-    gracePeriodSeconds: 300   # 5 min de grace pour le drain
-  exclusions:
-    namespaces:               # Ne pas migrer ces namespaces
-      - kube-system
-      - monitoring
-    labels:
-      st4ck.io/pin-cloud: "true"  # Label pour forcer le cloud
+  machineDeploymentRef:
+    name: cloud-vm
+    namespace: capi-system
+  # Le provider CAPI traduit en MachineDeployment.spec.replicas
 ```
 
-### 3.6 GPU on-demand — Scale from zero
+**Avantages par rapport a Cluster Autoscaler :**
 
-L'architecture GPU combine NVIDIA GPU Operator, NFD et le Cluster Autoscaler pour un scaling 0 → N transparent.
+| Critere | Cluster Autoscaler | Karpenter + CAPI |
+|---------|-------------------|-----------------|
+| Scheduling | Reactive (pods pending) | Reactive + proactif (consolidation) |
+| Cost optimization | Priority expander (ConfigMap) | NodePool weights + consolidation native |
+| Migration cloud → BM | Necessite cost controller custom + Descheduler | Natif via consolidation + weights |
+| Configuration | Node groups statiques | NodePools flexibles, instance diversity |
+| Bin-packing | Basique | Avance (remplacement N petits → M gros noeuds) |
+| Composants a maintenir | CA + cost controller Go + Descheduler | Karpenter seul |
+
+### 3.7 GPU on-demand — Scale from zero
+
+L'architecture GPU combine NVIDIA GPU Operator, NFD et Karpenter pour un scaling 0 → N transparent.
 
 **Sequence de scaling GPU :**
 
 1. Un pod avec `resources.limits: nvidia.com/gpu: 1` est cree → Pending
-2. Cluster Autoscaler detecte le pod unschedulable
-3. Priority expander selectionne le pool `cloud-gpu` (seul pool avec GPU)
-4. CAPI provisionne un noeud Scaleway GPU via CAPS
+2. Karpenter detecte le pod unschedulable
+3. Le NodePool `cloud-gpu` est le seul avec `nvidia.com/gpu: Exists` → selectionne
+4. Karpenter provisionne un noeud Scaleway GPU via le CAPI provider
 5. Le noeud demarre avec un **taint startup** : `st4ck.io/gpu-validating:NoSchedule`
 6. NVIDIA GPU Operator installe les drivers + device plugin
 7. NFD detecte le GPU et applique les labels
 8. Le DaemonSet validateur (benchmark) verifie le GPU (cuda-smi + matmul test)
 9. Si le benchmark passe → le taint est supprime → le pod est schedule
 
-```yaml
-# Configuration Cluster Autoscaler pour scale-from-zero GPU
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: cluster-autoscaler-gpu-config
-  namespace: kube-system
-data:
-  # Template pour le node group GPU (infere par CAPI)
-  nodes: |
-    - --nodes=0:8:cloud-gpu
-      --scale-down-delay-after-add=10m
-      --scale-down-unneeded-time=10m
-      --gpu-total=0:8:nvidia.com/gpu
-```
-
-### 3.7 Node benchmarking — Taint gate
+### 3.8 Node benchmarking — Taint gate
 
 Chaque nouveau noeud est tainted au demarrage et ne recoit du trafic qu'apres validation.
 
@@ -373,7 +417,7 @@ spec:
             sizeLimit: 2Gi
 ```
 
-### 3.8 Downscaling safety — Buffer pods et delais
+### 3.9 Downscaling safety — Buffer pods et delais
 
 **Buffer pods (pause containers) :**
 
@@ -410,15 +454,7 @@ spec:
               topologyKey: kubernetes.io/hostname
 ```
 
-**Delais de scale-down :**
-
-| Pool | scale-down-delay-after-add | scale-down-unneeded-time | Raison |
-|------|---------------------------|-------------------------|--------|
-| bare-metal | 30 min | 30 min | Eviter les oscillations (boot lent, cout horaire) |
-| cloud-vm | 10 min | 10 min | Facturation a la minute, liberation rapide |
-| cloud-gpu | 5 min | 10 min | Tres couteux, liberer des que possible |
-
-### 3.9 Priority preemption tiers
+### 3.10 Priority preemption tiers
 
 ```yaml
 ---
@@ -468,7 +504,7 @@ description: "Capacity reservation — evicted first to make room"
 | tactical | Oui | Oui | Non | Non |
 | buffer | Oui | Oui | Oui | Non |
 
-### 3.10 Reseau hybride — KubeSpan
+### 3.11 Reseau hybride — KubeSpan
 
 KubeSpan est integre nativement dans Talos et fournit un mesh WireGuard automatique entre tous les noeuds, y compris ceux derriere du NAT.
 
@@ -509,7 +545,7 @@ cloud-vm       ←──VPC direct──→ cloud-gpu (meme VPC)
 
 Scaleway a **zero frais d'egress**, ce qui rend le trafic inter-pool economiquement neutre.
 
-### 3.11 Ingress — bare metal first
+### 3.12 Ingress — bare metal first
 
 Les noeuds bare metal gerent exclusivement le trafic externe (ingress) :
 
@@ -578,7 +614,99 @@ Le bare metal devient rentable des que la charge est soutenue (> 50% d'utilisati
 
 ---
 
-## 5. Composants CAPI
+## 5. Isolation multi-tenant
+
+### 5.1 Exigence cle
+
+L'operateur de la plateforme KaaS doit pouvoir upgrader, patcher, backup/restore, scaler les clusters tenants — mais ne doit **pas** pouvoir lire les Secrets, ConfigMaps sensibles, ni exec dans les pods des tenants.
+
+### 5.2 Kamaji et l'isolation des donnees tenant
+
+Kamaji fournit une isolation "hard multi-tenancy" : chaque tenant dispose de son propre control plane (kube-apiserver, controller-manager, scheduler) tournant comme pods dans le management cluster. Cependant, l'operateur du management cluster a acces aux pods du control plane, et donc potentiellement au datastore (etcd/PostgreSQL) contenant les secrets des tenants.
+
+**Options de datastore Kamaji :**
+
+| Backend | Isolation | Encryption at rest |
+|---------|-----------|-------------------|
+| kamaji-etcd (multi-tenant) | RBAC par prefix de cle — un tenant ne voit pas les donnees d'un autre | Possible via etcd encryption |
+| kamaji-etcd (dedie par tenant) | Fort — datastore separe par tenant | Possible via etcd encryption |
+| PostgreSQL (kine) | Schema/DB par tenant possible | Encryption via TDE ou disque |
+
+### 5.3 EncryptionConfiguration par tenant
+
+Chaque TenantControlPlane Kamaji execute son propre kube-apiserver. Il est donc possible de configurer une **EncryptionConfiguration distincte par tenant**, avec une cle de chiffrement unique par tenant.
+
+**Mecanisme :**
+
+1. Le kube-apiserver de chaque tenant recoit sa propre `EncryptionConfiguration` via un Secret Kubernetes monte dans le pod
+2. Les Secrets et ConfigMaps du tenant sont chiffres dans etcd avec une cle que l'operateur ne connait pas
+3. L'operateur peut toujours backup/restore le datastore etcd (sauvegarde opaque chiffree)
+4. Seul le kube-apiserver du tenant (avec la bonne cle) peut dechiffrer les donnees
+
+```yaml
+# EncryptionConfiguration par tenant (montee dans le pod kube-apiserver)
+apiVersion: apiserver.config.k8s.io/v1
+kind: EncryptionConfiguration
+resources:
+  - resources:
+      - secrets
+      - configmaps
+    providers:
+      - kms:
+          apiVersion: v2
+          name: tenant-kms
+          endpoint: unix:///var/run/kms/kms.sock  # KMS plugin par tenant
+      - identity: {}  # Fallback lecture (donnees non chiffrees legacy)
+```
+
+**Option KMS externe par tenant :**
+
+Chaque tenant peut fournir ses propres credentials KMS (OpenBao, AWS KMS, GCP KMS), garantissant que l'operateur n'a jamais acces aux KEK (Key Encryption Keys) du tenant.
+
+### 5.4 Comparaison Kamaji vs vCluster
+
+| Critere | Kamaji | vCluster |
+|---------|--------|---------|
+| Isolation control plane | Fort — kube-apiserver dedie par tenant | Fort — API server virtuel par tenant |
+| Isolation workers | Fort — worker nodes dedies par tenant | Faible — partage des workers du host cluster |
+| Isolation reseau | Fort (noeuds separes) | Moyen (namespace-level, NetworkPolicies) |
+| Encryption per-tenant | Oui — EncryptionConfig par kube-apiserver | Oui — EncryptionConfig dans le vCluster |
+| Operator data access | Acces au datastore (mitige par KMS per-tenant) | Acces aux Secrets syncronises dans le host (mitige par KMS) |
+| Overhead | Faible — CP comme pods (~200 MB/tenant) | Faible — syncer + API server (~150 MB/tenant) |
+| Worker isolation | Natif (nodes dedies) | Necessite des constructions supplementaires |
+
+**vCluster** offre une isolation plus legere (tout tourne sur les memes workers), mais les workloads des tenants partagent les noeuds du host cluster. Les PersistentVolumes et les Secrets synchronises dans le host sont accessibles a l'operateur.
+
+**Kamaji** offre une isolation plus forte car chaque tenant a ses propres worker nodes, mais necessite plus de ressources infrastructure.
+
+### 5.5 Approche recommandee (simplest secure)
+
+L'approche la plus simple offrant une securite suffisante pour un KaaS :
+
+1. **Kamaji avec etcd dedie par tenant** (ou prefix isole avec RBAC strict)
+2. **EncryptionConfiguration par tenant** avec provider KMS — chaque tenant a une cle de chiffrement gere par un KMS externe (OpenBao in-cluster avec policy par tenant)
+3. **RBAC management cluster** : le ServiceAccount de l'operateur n'a pas de droits `get/list` sur les Secrets dans les namespaces des tenant CPs
+4. **Admission policy (Kyverno)** : bloquer `kubectl exec` vers les pods des tenants depuis le management cluster
+5. **Network policies** : isoler le trafic entre tenant workers et management cluster (sauf le traffic control plane necessaire)
+
+**Ce que l'operateur PEUT faire :**
+
+- Upgrader les versions Kubernetes des tenants (modifier TenantControlPlane spec)
+- Scaler les workers (modifier MachineDeployment replicas via Karpenter/CAPI)
+- Backup/restore etcd (sauvegarde opaque — donnees chiffrees)
+- Patcher les noeuds (rolling update via CAPI/Talos)
+- Monitorer les metriques (CPU, memoire, reseau) sans voir les donnees applicatives
+
+**Ce que l'operateur NE PEUT PAS faire :**
+
+- Lire les Secrets Kubernetes des tenants (chiffres avec une cle KMS tenant-only)
+- Exec dans les pods des tenants (bloque par admission policy)
+- Acceder aux ConfigMaps sensibles (chiffres at rest)
+- Dechiffrer les backups etcd (la KEK est dans le KMS du tenant)
+
+---
+
+## 6. Composants CAPI
 
 ### Stack CAPI dans le management cluster
 
@@ -588,19 +716,20 @@ Le bare metal devient rentable des que la charge est soutenue (> 50% d'utilisati
 | CAPS (Scaleway) | v0.2.0 | Infrastructure provider — provisionne VMs et Elastic Metal |
 | CABPT (Talos) | v0.6+ | Bootstrap provider — genere machine configs Talos |
 | Kamaji CP provider | v1.0+ | Control plane provider — tenant CPs comme pods |
-| Cluster Autoscaler | v1.31+ | Scale up/down des MachineDeployments |
+| Karpenter + CAPI provider | v1.1+ | Autoscaling + consolidation via CAPI MachineDeployments |
 
-### Interaction CAPI ↔ Cluster Autoscaler
+### Interaction Karpenter ↔ CAPI
 
 ```
 Pod Pending
     │
     ▼
-Cluster Autoscaler
-    │ → priority expander (bare-metal 50 → cloud-vm 30 → cloud-gpu 10)
+Karpenter
+    │ → NodePool weights (bare-metal 50 → cloud-vm 30 → cloud-gpu 10)
     │
     ▼
-CAPI MachineDeployment.spec.replicas++
+karpenter-provider-cluster-api
+    │ → Traduit en CAPI MachineDeployment.spec.replicas++
     │
     ▼
 CAPS → Scaleway API → Instance creee
@@ -612,59 +741,83 @@ CABPT → Machine config Talos injecte
 Noeud boot → join cluster → NFD labels → benchmark → taint removed → Pod scheduled
 ```
 
+**Consolidation (scale-down) :**
+
+```
+Karpenter detecte noeud sous-utilise
+    │
+    ▼
+Evaluation : pods replaçables sur noeuds existants ?
+    │ → Prefere bare metal (weight 50) si capacite disponible
+    │
+    ▼
+Drain graceful du noeud cloud
+    │
+    ▼
+karpenter-provider-cluster-api
+    │ → MachineDeployment.spec.replicas--
+    │
+    ▼
+CAPS → Scaleway API → Instance supprimee
+```
+
 ---
 
-## 6. Alternatives considerees
+## 7. Alternatives considerees
 
 | Option | Avantages | Inconvenients | Decision |
 |--------|-----------|---------------|----------|
-| **Priority expander + cost controller (choisi)** | Controle fin, migration automatique cloud → BM | Operateur custom a maintenir | **Retenu** |
-| Karpenter | Provisioning rapide, consolide | Pas de support CAPI/Talos, AWS-centric | Rejete |
+| **Karpenter + CAPI provider (choisi)** | Consolidation native, cost-aware via weights, zero custom code | Provider CAPI experimental, pas encore GA | **Retenu** |
+| Cluster Autoscaler + cost controller custom | Mature, bien documente | Necessite operateur Go custom (~2000 LOC) + Descheduler | Rejete |
 | VPA seul (sans scaling horizontal) | Simple | Ne gere pas le scaling de noeuds | Rejete |
 | Scaling manuel + alertes | Zero complexite | Temps de reaction humain = gaspillage | Rejete |
 | Full cloud (pas de bare metal) | Simplicite operationnelle | 3-5x plus cher en charge soutenue | Rejete |
 | Full bare metal (pas de cloud) | Cout fixe previsible | Impossible de gerer les pics, GPU non rentable | Rejete |
 | Cilium WireGuard (au lieu de KubeSpan) | Integre dans la CNI existante | Pas de NAT traversal, echec en hybride | Rejete |
 | Live migration (kubevirt) | Zero downtime theorique | Immature pour conteneurs, complexe | Rejete |
+| vCluster (au lieu de Kamaji) | Isolation legere, rapide a deployer | Workers partages — isolation plus faible pour KaaS | Rejete pour KaaS (garde pour dev/test) |
 
 ---
 
-## 7. Consequences
+## 8. Consequences
 
 ### Positives
 
 - **Cout optimise** : bare metal pour la charge de base (3-5x moins cher), cloud pour le burst uniquement
 - **Scaling automatique** : 0 intervention humaine pour les pics (< 5 min pour un noeud cloud VM)
+- **Consolidation native** : Karpenter migre automatiquement les workloads cloud vers le bare metal sans custom code
 - **GPU on-demand** : scale from zero, paiement a la minute, pas de GPU idle
 - **Hardware-aware** : NFD garantit que les workloads atterrissent sur du hardware adapte
-- **Migration automatique** : le cost controller rapatrie les workloads longue duree vers le bare metal
 - **Zero egress** : Scaleway ne facture pas le trafic sortant (economie significative en hybride)
 - **Reseau transparent** : KubeSpan fournit un mesh WireGuard sans configuration reseau manuelle
 - **Preemption claire** : 4 tiers de priorite evitent les evictions non controlees
+- **Zero custom code** : Karpenter remplace le cost controller custom Go + Descheduler
+- **Isolation tenant** : EncryptionConfiguration per-tenant + KMS garantit que l'operateur ne peut pas lire les donnees tenant
 
 ### Negatives
 
-- **Complexite operationnelle** : 6 composants supplementaires dans le management cluster (Kamaji, CAPI, CA, cost controller, descheduler, NFD)
-- **Cost controller custom** : operateur Go a developper et maintenir (~2000 LOC estime)
+- **karpenter-provider-cluster-api experimental** : pas encore GA, risque de bugs ou breaking changes
 - **CAPS Scaleway v0.2.0** : provider CAPI jeune, risque de bugs ou fonctionnalites manquantes
 - **Temps de boot bare metal** : 5-15 min (Elastic Metal) vs 1-2 min (VM) — le bare metal ne peut pas absorber les pics instantanes
 - **Benchmark gate** : ajoute 1-2 min de latence avant qu'un noeud accepte du trafic
 - **KubeSpan overhead** : ~5% de throughput en moins vs trafic direct (chiffrement WireGuard)
+- **KMS per-tenant** : ajoute de la complexite operationnelle (gestion des cles, rotation)
 
 ### Risques
 
 | Risque | Probabilite | Impact | Mitigation |
 |--------|-------------|--------|-----------|
+| karpenter-provider-cluster-api instable | Moyenne | Eleve | Tests intensifs en staging, fallback Cluster Autoscaler |
 | CAPS Scaleway instable (v0.2.0) | Moyenne | Eleve | Tests intensifs en staging, fallback Terraform |
-| Oscillation scale-up/down (flapping) | Moyenne | Moyen | Buffer pods + delais de scale-down differencies |
-| Cost controller bug (migration prematuree) | Faible | Moyen | Mode dry-run initial, metriques Prometheus |
+| Oscillation scale-up/down (flapping) | Moyenne | Moyen | Buffer pods + consolidateAfter differencies par pool |
 | GPU Operator incompatibilite Talos | Faible | Eleve | Valider la matrice kernel/driver avant deploy |
 | KubeSpan STUN failure (NAT type 3) | Faible | Eleve | Relay via noeud bare metal (IP publique stable) |
 | Noeud defaillant passe le benchmark | Tres faible | Eleve | Monitoring continu post-validation (Tetragon + node-problem-detector) |
+| Fuite de cle KMS tenant | Faible | Eleve | Rotation automatique des KEK, audit logs OpenBao |
 
 ---
 
-## 8. Plan d'implementation
+## 9. Plan d'implementation
 
 | Phase | Tache | Effort | Prerequis |
 |-------|-------|--------|-----------|
@@ -672,29 +825,31 @@ Noeud boot → join cluster → NFD labels → benchmark → taint removed → P
 | Phase 2 | PriorityClasses (4 tiers) + buffer pods | 0.5 jour | - |
 | Phase 3 | CAPI controllers (core + CAPS + CABPT) | 2 jours | - |
 | Phase 4 | Kamaji CP provider + tenant test | 2 jours | Phase 3 |
-| Phase 5 | Cluster Autoscaler + priority expander | 1 jour | Phase 3 |
-| Phase 6 | MachineDeployments (bare-metal, cloud-vm, cloud-gpu) | 2 jours | Phase 3, 5 |
+| Phase 5 | Karpenter + karpenter-provider-cluster-api | 2 jours | Phase 3 |
+| Phase 6 | NodePools (bare-metal, cloud-vm, cloud-gpu) + CAPINodeClasses | 2 jours | Phase 3, 5 |
 | Phase 7 | NVIDIA GPU Operator + scale-from-zero GPU | 2 jours | Phase 1, 6 |
 | Phase 8 | Node validator DaemonSet (fio + stress-ng + iperf3) | 2 jours | Phase 1 |
-| Phase 9 | Cost controller (CRD + operateur Go) | 5 jours | Phase 1, 5, 6 |
-| Phase 10 | Descheduler integration (cloud → bare metal) | 1 jour | Phase 9 |
-| Phase 11 | KubeSpan activation + tests hybrides | 1 jour | Phase 6 |
-| Phase 12 | Ingress bare-metal-only (Cilium DSR) | 0.5 jour | Phase 6 |
-| Phase 13 | Tests end-to-end (scaling, migration, GPU, failover) | 3 jours | Toutes |
-| **Total** | | **~23 jours** | |
+| Phase 9 | KubeSpan activation + tests hybrides | 1 jour | Phase 6 |
+| Phase 10 | Ingress bare-metal-only (Cilium DSR) | 0.5 jour | Phase 6 |
+| Phase 11 | Isolation tenant : EncryptionConfig per-tenant + KMS OpenBao | 3 jours | Phase 4 |
+| Phase 12 | Isolation tenant : RBAC + Kyverno admission policies | 1 jour | Phase 11 |
+| Phase 13 | Tests end-to-end (scaling, consolidation, GPU, failover, isolation) | 3 jours | Toutes |
+| **Total** | | **~22 jours** | |
 
 ---
 
-## 9. Questions ouvertes
+## 10. Questions ouvertes
 
 | # | Question | Proprietaire | Statut |
 |---|----------|-------------|--------|
 | 1 | CAPS Scaleway v0.2.0 supporte-t-il Elastic Metal via CAPI ? | Equipe plateforme | A valider |
-| 2 | Seuil optimal pour la migration cloud → bare metal (12h ? 8h ? 24h ?) | Equipe plateforme | A mesurer |
+| 2 | karpenter-provider-cluster-api : quand la GA ? Stabilite suffisante pour prod ? | Equipe plateforme | A evaluer |
 | 3 | Quel backend etcd pour Kamaji ? (PostgreSQL partage vs etcd dedie) | Equipe plateforme | A decider |
 | 4 | GPU Operator sur Talos : kernel module loading sans systemd ? | Equipe plateforme | A tester |
 | 5 | KubeSpan performance avec 50+ noeuds cloud (overhead mesh) ? | Equipe plateforme | A benchmarker |
 | 6 | Buffer pods : 2 replicas suffisent-ils ? Predictive scaling via Prometheus ? | Equipe plateforme | A evaluer |
+| 7 | KMS per-tenant : OpenBao policies par tenant ou KMS externe (cloud) ? | Equipe plateforme | A decider |
+| 8 | Rotation des KEK tenant : automatique (CronJob) ou manuelle ? | Equipe plateforme | A definir |
 
 ---
 
@@ -706,12 +861,14 @@ Noeud boot → join cluster → NFD labels → benchmark → taint removed → P
 |-------|-----------|
 | CABPT | Cluster API Bootstrap Provider Talos — genere les machine configs Talos pour CAPI |
 | CAPI | Cluster API — framework Kubernetes pour le lifecycle management de clusters |
+| CAPINodeClass | Custom resource du provider Karpenter CAPI — reference un MachineDeployment |
 | CAPS | Cluster API Provider Scaleway — infrastructure provider pour Scaleway |
-| Descheduler | Composant qui evicte les pods mal places pour re-scheduling optimal |
 | DSR | Direct Server Return — le retour client bypasse le load balancer |
+| KEK | Key Encryption Key — cle maitre dans le KMS qui chiffre les DEK |
+| Karpenter | Autoscaler Kubernetes — provisionne des noeuds via NodePools avec consolidation native |
 | KubeSpan | Mesh WireGuard integre a Talos (NAT traversal, zero config) |
 | NFD | Node Feature Discovery — detecte le hardware et applique des labels Kubernetes |
-| Priority Expander | Plugin Cluster Autoscaler qui choisit le node group par priorite |
+| NodePool | Resource Karpenter definissant un groupe de noeuds avec requirements et weight |
 
 ### B. References
 
@@ -721,7 +878,12 @@ Noeud boot → join cluster → NFD labels → benchmark → taint removed → P
 - [Cluster API Book](https://cluster-api.sigs.k8s.io/)
 - [CAPS Scaleway](https://github.com/scaleway/cluster-api-provider-scaleway)
 - [Kamaji](https://github.com/clastix/kamaji)
+- [Kamaji etcd](https://github.com/clastix/kamaji-etcd)
 - [Node Feature Discovery](https://kubernetes-sigs.github.io/node-feature-discovery/)
-- [Cluster Autoscaler Priority Expander](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/expander/priority/readme.md)
+- [Karpenter](https://karpenter.sh/)
+- [karpenter-provider-cluster-api](https://github.com/kubernetes-sigs/karpenter-provider-cluster-api)
+- [Karpenter + CAPI integration proposal](https://github.com/kubernetes-sigs/cluster-api/blob/main/docs/community/20231018-karpenter-integration.md)
 - [KubeSpan](https://www.talos.dev/v1.12/talos-guides/network/kubespan/)
+- [Kubernetes EncryptionConfiguration](https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/)
+- [Kubernetes KMS provider](https://kubernetes.io/docs/tasks/administer-cluster/kms-provider/)
 - [Scaleway Pricing](https://www.scaleway.com/en/pricing/)
