@@ -8,7 +8,7 @@
 
 ## 1. Resume executif
 
-Ce document definit l'architecture d'autoscaling hybride combinant bare metal (Scaleway Elastic Metal ou on-prem) et cloud (Scaleway VMs + GPUs). L'objectif : utiliser le bare metal en priorite (cout fixe, performance maximale), deborder automatiquement sur le cloud (cout variable, billed/min), et rapatrier les workloads vers le bare metal des que la capacite le permet. Le management cluster Talos orchestre l'ensemble via Kamaji (tenant control planes), CAPI (provisioning), Karpenter avec le provider CAPI (scaling + consolidation), et NFD (hardware discovery).
+Ce document definit l'architecture d'autoscaling hybride combinant cloud VMs (premiere intention, boot rapide, facturation/min) et bare metal (active par consolidation quand le workload est soutenu >2h). Le modele est **inverse du traditionnel** : le cloud VM est le premier choix (scale-to-zero, pas de gaspillage), le bare metal intervient par consolidation naturelle de Karpenter quand le prix/vCPU/h est plus bas sur du bare metal mensuel. Le management cluster Talos orchestre l'ensemble via Kamaji (tenant control planes), CAPI (provisioning), Karpenter avec le provider CAPI (scaling + consolidation), et NFD (hardware discovery).
 
 ---
 
@@ -22,7 +22,7 @@ La plateforme dispose d'un cluster Talos statique (3 CP + 3 workers) deploye sur
 
 | Contrainte | Explication |
 |-----------|-------------|
-| Cout maitrise | Le bare metal est 3-5x moins cher que le cloud VM pour une charge soutenue |
+| Cout maitrise | Le bare metal mensuel est ~50% moins cher que le cloud VM pour une charge soutenue (break-even a 365h/mois) |
 | Burst rapide | Les pics de charge (CI, inference ML, evenements) necessitent des noeuds en < 5 min |
 | GPU on-demand | Les workloads ML/inference necessitent des GPUs L4/H100, mais pas en permanence |
 | Zero gaspillage | Les noeuds cloud inutilises doivent etre liberes rapidement (billed/min) |
@@ -34,53 +34,82 @@ La plateforme dispose d'un cluster Talos statique (3 CP + 3 workers) deploye sur
 
 ### 3.1 Architecture cible
 
-Le management cluster Talos bare metal (3 CP) heberge les composants d'orchestration. Les workloads tournent sur 3 pools de noeuds avec des priorites differentes.
+Le management cluster Talos (3 CP) heberge les composants d'orchestration. Les workloads tournent sur 8 pools de noeuds specialises, tous avec `minValues: 0` (full scale-to-zero). Le modele est **cloud-first** : les VMs sont le premier choix (boot rapide, facturation/min), le bare metal est active par consolidation quand le workload est soutenu.
 
 ```mermaid
 graph TB
-    subgraph "Management Cluster (Talos bare metal, 3 CP)"
+    subgraph "Management Cluster (Talos, 3 CP)"
         KAMAJI["Kamaji<br/>Tenant CPs as pods"]
         CAPI["CAPI Controllers<br/>CAPS + CABPT + Kamaji CP"]
         KARP["Karpenter<br/>+ CAPI Provider<br/>(NodePool weights)"]
         NFD_CTRL["NFD Controller"]
     end
 
-    subgraph "Pool 1 — Bare Metal (NodePool weight 50)"
-        BM1["worker-bm-1<br/>Elastic Metal DEV1-L<br/>NVMe, 64 GB"]
-        BM2["worker-bm-2<br/>Elastic Metal DEV1-L"]
-        BM3["worker-bm-3<br/>Elastic Metal DEV1-L"]
-        NFD1["NFD labels:<br/>nvme=true, cpu-gen=zen3"]
+    subgraph "Pool 1 — Burst VM (weight 60, cheapest)"
+        BURST1["BASIC2-A4C-8G / BASIC2-A8C-16G<br/>(shared vCPU, dev/CI)"]
     end
 
-    subgraph "Pool 2 — Cloud VM (NodePool weight 30)"
-        VM1["worker-vm-1<br/>Scaleway PRO2-M<br/>8 vCPU, 32 GB"]
-        VM2["worker-vm-N<br/>(scale 0→50)"]
-        NFD2["NFD labels:<br/>nvme=false, cpu-gen=epyc"]
+    subgraph "Pool 2 — General VM (weight 50, first choice)"
+        GEN1["POP2-4C-16G / POP2-8C-32G / POP2-16C-64G<br/>(dedicated vCPU, balanced)"]
     end
 
-    subgraph "Pool 3 — Cloud GPU (NodePool weight 10)"
-        GPU1["worker-gpu-1<br/>Scaleway GPU-3070-S<br/>L4 24 GB"]
-        GPU2["worker-gpu-N<br/>(scale 0→8)"]
-        NFD3["NFD labels:<br/>gpu=nvidia-l4, vram=24g"]
+    subgraph "Pool 3 — Compute VM (weight 40)"
+        COMP1["POP2-HC-8C-16G / POP2-HC-16C-32G<br/>(CPU-optimized)"]
+    end
+
+    subgraph "Pool 4 — Memory VM (weight 40)"
+        MEM1["POP2-HM-4C-32G / POP2-HM-8C-64G<br/>(memory-optimized)"]
+    end
+
+    subgraph "Pool 5 — Bare Metal (weight 30, consolidation)"
+        BM1["EM-I220E / EM-I420E / EM-I620E<br/>(sustained workloads, monthly billing)"]
+    end
+
+    subgraph "Pool 6 — Storage BM (weight 30)"
+        STOR1["EM-L520E<br/>(NVMe storage nodes)"]
+    end
+
+    subgraph "Pool 7 — GPU Inference (weight 10)"
+        GPUI["L4-1-24G / L4-2-24G / L40S-1-48G<br/>(on-demand inference)"]
+    end
+
+    subgraph "Pool 8 — GPU Training (weight 10)"
+        GPUT["H100-1-80G / H100-SXM-2-80G<br/>(on-demand training)"]
     end
 
     KARP -->|"provision via CAPI"| CAPI
-    CAPI -->|"CAPS Scaleway"| VM1
-    CAPI -->|"CAPS Scaleway"| GPU1
-    CAPI -->|"CABPT Talos"| BM1
-    KARP -->|"consolidation"| VM1
+    CAPI -->|"CAPS Scaleway"| GEN1
+    CAPI -->|"CAPS Scaleway"| BURST1
+    CAPI -->|"CAPS Scaleway"| COMP1
+    CAPI -->|"CAPS Scaleway"| MEM1
+    CAPI -->|"CAPS Scaleway"| BM1
+    CAPI -->|"CAPS Scaleway"| STOR1
+    CAPI -->|"CAPS Scaleway"| GPUI
+    CAPI -->|"CAPS Scaleway"| GPUT
+    KARP -->|"consolidation<br/>VM→BM when sustained"| BM1
+    NFD_CTRL -->|"labels"| GEN1
     NFD_CTRL -->|"labels"| BM1
-    NFD_CTRL -->|"labels"| VM1
-    NFD_CTRL -->|"labels"| GPU1
+    NFD_CTRL -->|"labels"| GPUI
 ```
 
-### 3.2 MachineDeployments (pools de noeuds)
+### 3.2 NodePools (pools de noeuds)
 
-| Pool | NodePool weight | Min | Max | Type instance | Facturation | Usage |
-|------|----------------|-----|-----|---------------|-------------|-------|
-| bare-metal | 50 (prefere) | 3 | 6 | Elastic Metal DEV1-L | Horaire (~0.10 EUR/h) | Charge soutenue, stockage, ingress |
-| cloud-vm | 30 | 0 | 50 | PRO2-M / PRO2-L | Minute (~0.04 EUR/h) | Burst compute, CI, batch |
-| cloud-gpu | 10 | 0 | 8 | GPU-3070-S (L4) / H100 | Minute (~1.10 EUR/h L4) | Inference ML, training |
+Tous les pools ont `minValues: 0` — full scale-to-zero capability. Le cloud VM est le **premier choix** (weight le plus eleve parmi les pools generaux). Le bare metal est active par consolidation Karpenter quand le workload est soutenu >2h car son prix/vCPU/h est plus bas en commitment mensuel.
+
+| Pool | Weight | Min | Max | Types instance Scaleway | Facturation | Usage |
+|------|--------|-----|-----|------------------------|-------------|-------|
+| **general** | 50 | 0 | 50 | POP2-4C-16G, POP2-8C-32G, POP2-16C-64G | Minute | Premier choix — dedicated vCPU, balanced |
+| **compute** | 40 | 0 | 30 | POP2-HC-8C-16G, POP2-HC-16C-32G | Minute | CPU-optimized, compilations, batch |
+| **memory** | 40 | 0 | 20 | POP2-HM-4C-32G, POP2-HM-8C-64G | Minute | Memory-optimized, caches, databases |
+| **burst** | 60 | 0 | 100 | BASIC2-A4C-8G, BASIC2-A8C-16G | Minute | Le moins cher — shared vCPU, dev/CI |
+| **bare-metal** | 30 | 0 | 6 | EM-I220E, EM-I420E, EM-I620E | Horaire (mensuel prefere) | Consolide par Karpenter quand soutenu |
+| **storage** | 30 | 0 | 4 | EM-L520E | Horaire (mensuel prefere) | NVMe storage nodes |
+| **gpu-inference** | 10 | 0 | 8 | L4-1-24G, L4-2-24G, L40S-1-48G | Minute | On-demand inference ML |
+| **gpu-training** | 10 | 0 | 4 | H100-1-80G, H100-SXM-2-80G | Minute | On-demand training ML |
+
+**Pourquoi le modele est inverse (cloud-first) :**
+
+Les workloads courts (<1h) sont moins chers sur VM (facturation a la minute). Le bare metal a l'heure perd de l'argent pour les bursts courts. La consolidation Karpenter migre naturellement les workloads soutenus vers le bare metal car le prix/vCPU/h y est plus bas (en engagement mensuel). Le bare metal mensuel est ~50% moins cher que le VM equivalent.
 
 ### 3.3 Node Feature Discovery (NFD)
 
@@ -168,51 +197,57 @@ spec:
 
 ### 3.4 Scheduling cost-aware — Karpenter NodePool weights
 
-Karpenter utilise les **NodePool weights** pour choisir le pool le moins cher capable de satisfaire les pods pending. Quand plusieurs NodePools matchent, Karpenter selectionne celui avec le poids le plus eleve.
+Karpenter utilise les **NodePool weights** pour choisir le pool le moins cher capable de satisfaire les pods pending. Quand plusieurs NodePools matchent, Karpenter selectionne celui avec le poids le plus eleve. Le modele cloud-first signifie que les VMs sont preferees pour le provisionnement initial, et la consolidation migre vers le bare metal quand le workload est soutenu.
 
 ```yaml
 apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
-  name: bare-metal
+  name: burst
 spec:
-  weight: 50    # Priorite maximale — bare metal prefere
+  weight: 60    # Priorite maximale — le moins cher (shared vCPU)
   template:
     spec:
       requirements:
         - key: st4ck.io/pool
           operator: In
-          values: ["bare-metal"]
+          values: ["burst"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["BASIC2-A4C-8G", "BASIC2-A8C-16G"]
       nodeClassRef:
         group: infrastructure.cluster.x-k8s.io
         kind: CAPINodeClass
-        name: bare-metal
+        name: burst
   limits:
-    cpu: "48"       # 6 noeuds x 8 cores
-    memory: "384Gi" # 6 noeuds x 64 GB
+    cpu: "800"
+    memory: "1600Gi"
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
-    consolidateAfter: 30m   # Delai long — bare metal boot lent, cout horaire
+    consolidateAfter: 10m
 ---
 apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
-  name: cloud-vm
+  name: general
 spec:
-  weight: 30    # Priorite moyenne — burst compute
+  weight: 50    # Premier choix pour workloads production
   template:
     spec:
       requirements:
         - key: st4ck.io/pool
           operator: In
-          values: ["cloud-vm"]
+          values: ["general"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["POP2-4C-16G", "POP2-8C-32G", "POP2-16C-64G"]
       nodeClassRef:
         group: infrastructure.cluster.x-k8s.io
         kind: CAPINodeClass
-        name: cloud-vm
+        name: general
   limits:
-    cpu: "400"       # 50 noeuds x 8 vCPU
-    memory: "1600Gi" # 50 noeuds x 32 GB
+    cpu: "800"
+    memory: "3200Gi"
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
     consolidateAfter: 10m   # Liberation rapide — facturation a la minute
@@ -220,59 +255,244 @@ spec:
 apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
-  name: cloud-gpu
+  name: compute
 spec:
-  weight: 10    # Priorite basse — GPU on-demand uniquement
+  weight: 40    # CPU-optimized
   template:
     spec:
       requirements:
         - key: st4ck.io/pool
           operator: In
-          values: ["cloud-gpu"]
+          values: ["compute"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["POP2-HC-8C-16G", "POP2-HC-16C-32G"]
+      nodeClassRef:
+        group: infrastructure.cluster.x-k8s.io
+        kind: CAPINodeClass
+        name: compute
+  limits:
+    cpu: "480"
+    memory: "960Gi"
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 10m
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: memory
+spec:
+  weight: 40    # Memory-optimized
+  template:
+    spec:
+      requirements:
+        - key: st4ck.io/pool
+          operator: In
+          values: ["memory"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["POP2-HM-4C-32G", "POP2-HM-8C-64G"]
+      nodeClassRef:
+        group: infrastructure.cluster.x-k8s.io
+        kind: CAPINodeClass
+        name: memory
+  limits:
+    cpu: "160"
+    memory: "1280Gi"
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 10m
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: bare-metal
+spec:
+  weight: 30    # Active par consolidation — pas en premier choix
+  template:
+    spec:
+      requirements:
+        - key: st4ck.io/pool
+          operator: In
+          values: ["bare-metal"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["EM-I220E", "EM-I420E", "EM-I620E"]
+      nodeClassRef:
+        group: infrastructure.cluster.x-k8s.io
+        kind: CAPINodeClass
+        name: bare-metal
+  limits:
+    cpu: "384"      # 6 x 64 cores
+    memory: "3456Gi" # 6 x 576 GB
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 120m  # 2h — ne consolider que si workload vraiment soutenu
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: storage
+spec:
+  weight: 30    # NVMe storage bare metal
+  template:
+    spec:
+      requirements:
+        - key: st4ck.io/pool
+          operator: In
+          values: ["storage"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["EM-L520E"]
+      nodeClassRef:
+        group: infrastructure.cluster.x-k8s.io
+        kind: CAPINodeClass
+        name: storage
+  limits:
+    cpu: "128"
+    memory: "1024Gi"
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 120m
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: gpu-inference
+spec:
+  weight: 10    # GPU on-demand uniquement
+  template:
+    spec:
+      requirements:
+        - key: st4ck.io/pool
+          operator: In
+          values: ["gpu-inference"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["L4-1-24G", "L4-2-24G", "L40S-1-48G"]
         - key: nvidia.com/gpu
           operator: Exists
       nodeClassRef:
         group: infrastructure.cluster.x-k8s.io
         kind: CAPINodeClass
-        name: cloud-gpu
+        name: gpu-inference
   limits:
     nvidia.com/gpu: "8"
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
     consolidateAfter: 5m    # Tres couteux — liberer des que possible
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: gpu-training
+spec:
+  weight: 10    # GPU on-demand uniquement
+  template:
+    spec:
+      requirements:
+        - key: st4ck.io/pool
+          operator: In
+          values: ["gpu-training"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["H100-1-80G", "H100-SXM-2-80G"]
+        - key: nvidia.com/gpu
+          operator: Exists
+      nodeClassRef:
+        group: infrastructure.cluster.x-k8s.io
+        kind: CAPINodeClass
+        name: gpu-training
+  limits:
+    nvidia.com/gpu: "4"
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 5m
+```
+
+**Instance selection decision tree :**
+
+```mermaid
+flowchart TD
+    A["Pod arrives (Pending)"] --> B{"GPU requested?"}
+    B -->|Yes| C{"Training or Inference?"}
+    C -->|"Inference<br/>(L4/L40S)"| D["gpu-inference pool<br/>weight 10"]
+    C -->|"Training<br/>(H100)"| E["gpu-training pool<br/>weight 10"]
+    B -->|No| F{"Resource profile?"}
+    F -->|"High CPU:mem ratio"| G["compute pool<br/>weight 40"]
+    F -->|"High mem:CPU ratio"| H["memory pool<br/>weight 40"]
+    F -->|"Balanced"| I{"Priority class?"}
+    I -->|"tactical (CI/dev)"| J["burst pool<br/>weight 60"]
+    I -->|"operational+"| K["general pool<br/>weight 50"]
+    F -->|"NVMe storage"| L["storage pool<br/>weight 30"]
+    K --> M{"Workload sustained >2h?"}
+    J --> M
+    M -->|"Yes (consolidation)"| N["bare-metal pool<br/>weight 30<br/>EM-I220E/I420E/I620E"]
+    M -->|"No"| O["Keep on VM"]
 ```
 
 **Logique de scaling :**
 
 1. Pods pending → Karpenter evalue les NodePools dont les requirements matchent
-2. NodePool weights trient : bare metal (50) → cloud VM (30) → GPU (10)
+2. NodePool weights trient : burst (60) → general (50) → compute/memory (40) → bare-metal/storage (30) → GPU (10)
 3. Le NodePool avec le poids le plus eleve ET les requirements satisfaits est choisi
-4. Si bare metal est plein (limits atteintes) → cloud VM
-5. Si les pods requierent des GPUs (resource request `nvidia.com/gpu`) → cloud GPU exclusivement
+4. **Cloud VM en premier** : boot rapide (1-2 min), facturation a la minute, zero gaspillage
+5. **Consolidation vers bare metal** : quand Karpenter detecte un workload soutenu >2h, il consolide sur du bare metal (prix/vCPU/h plus bas en mensuel)
+6. Si les pods requierent des GPUs (resource request `nvidia.com/gpu`) → GPU pool exclusivement
+7. Tous les pools scale-to-zero : aucun noeud idle si pas de workload
 
-### 3.5 Karpenter consolidation — Migration cloud vers bare metal
+### 3.5 Karpenter consolidation — Migration VM vers bare metal
 
-Karpenter gere nativement la consolidation : il identifie les noeuds sous-utilises et regroupe les workloads sur moins de noeuds, liberant les noeuds vides. Grace aux NodePool weights, la consolidation favorise automatiquement le bare metal.
+Karpenter gere nativement la consolidation : il identifie les noeuds sous-utilises et regroupe les workloads sur moins de noeuds, liberant les noeuds vides. Dans le modele cloud-first, la consolidation joue un role cle : elle migre naturellement les workloads soutenus vers le bare metal car le prix/vCPU/h y est plus bas.
 
 **Mecanisme :**
 
 1. Karpenter surveille en continu l'utilisation de chaque noeud
-2. Quand un noeud cloud-vm est sous-utilise (< 50% CPU/memoire), Karpenter evalue si ses pods peuvent etre places sur des noeuds existants
-3. Si de la capacite bare metal est disponible (weight 50 > weight 30), les pods sont migres vers le bare metal
-4. Le noeud cloud vide est termine (drain graceful + suppression via CAPI)
-5. Pas besoin de CRD custom, de Descheduler, ou d'operateur Go — Karpenter gere tout nativement
+2. Un pod arrive → provisionne sur VM (weight 50/60, boot 1-2 min, facturation/min)
+3. Quand un workload est soutenu >2h sur VM, Karpenter evalue si le bare metal (weight 30 mais prix/vCPU/h plus bas) est plus efficace
+4. Karpenter provisionne un noeud bare metal, migre les pods, termine la VM
+5. Si le workload diminue, le bare metal est libere (si hourly) ou conserve (si engagement mensuel)
+6. Pas besoin de CRD custom, de Descheduler, ou d'operateur Go — Karpenter gere tout nativement
 
 **Consolidation avancee — remplacement de petites VMs par moins de grosses :**
 
-Karpenter peut aussi remplacer N petites VMs par M grosses VMs (N > M) quand c'est plus efficace. Par exemple, 4x PRO2-M (8 vCPU) → 2x PRO2-L (16 vCPU) si le bin-packing est meilleur.
+Karpenter peut aussi remplacer N petites VMs par M grosses VMs (N > M) quand c'est plus efficace. Par exemple, 4x POP2-4C-16G → 1x POP2-16C-64G si le bin-packing est meilleur. Ou consolider 3x POP2-16C-64G → 1x EM-I420E (bare metal mensuel, 44% moins cher).
 
 **Parametres de consolidation par pool :**
 
 | Pool | consolidateAfter | Raison |
 |------|-----------------|--------|
-| bare-metal | 30 min | Eviter les oscillations (boot lent, cout horaire) |
-| cloud-vm | 10 min | Facturation a la minute, liberation rapide |
-| cloud-gpu | 5 min | Tres couteux, liberer des que possible |
+| burst | 10 min | Shared vCPU, CI/dev — liberer des que idle |
+| general | 10 min | Facturation a la minute, liberation rapide |
+| compute | 10 min | Facturation a la minute |
+| memory | 10 min | Facturation a la minute |
+| bare-metal | 120 min | Ne consolider que si workload vraiment soutenu (2h) |
+| storage | 120 min | NVMe bare metal, donnees persistantes |
+| gpu-inference | 5 min | Tres couteux — liberer des que possible |
+| gpu-training | 5 min | Tres couteux — liberer des que possible |
+
+**Seuils de terminaison :**
+
+| Pool | Idle → terminaison | Engagement | Politique |
+|------|-------------------|------------|-----------|
+| Cloud VM (burst/general/compute/memory) | >10 min idle | Aucun | Terminer immediatement |
+| Bare metal (hourly) | >120 min idle | Aucun | Terminer |
+| Bare metal (monthly) | >120 min idle | Mensuel | Conserver (deja paye) |
+| GPU (inference/training) | >5 min idle | Aucun | Terminer immediatement |
+
+**Disruption budgets :**
+
+```yaml
+disruption:
+  budgets:
+    # Pas de disruption pendant les heures de bureau
+    - nodes: "0"
+      schedule: "0 8 * * 1-5"   # Lun-Ven 8h
+      duration: 10h              # Jusqu'a 18h
+    # Hors heures : disruption normale
+    - nodes: "10%"
+```
 
 ### 3.6 Karpenter + CAPI Provider
 
@@ -578,39 +798,121 @@ spec:
 
 ---
 
-## 4. Estimation des couts
+## 4. Strategie de pricing Scaleway
 
-### Scaleway pricing (mars 2026, region fr-par)
+### 4.1 Faits cles du pricing
 
-| Ressource | Type | Prix | Facturation |
-|-----------|------|------|-------------|
-| Elastic Metal DEV1-L | 8 cores, 64 GB, 2x 1 TB NVMe | ~0.10 EUR/h (~73 EUR/mois) | Horaire |
-| PRO2-M | 8 vCPU, 32 GB | ~0.04 EUR/h (~29 EUR/mois) | Minute |
-| PRO2-L | 16 vCPU, 64 GB | ~0.08 EUR/h (~58 EUR/mois) | Minute |
-| GPU-3070-S (L4 24 GB) | 8 vCPU, 32 GB, 1x L4 | ~1.10 EUR/h | Minute |
-| GPU H100 | 24 vCPU, 192 GB, 1x H100 | ~3.50 EUR/h | Minute |
-| Egress | Tout trafic sortant | **0 EUR** | - |
+| Facteur | Detail |
+|---------|--------|
+| **Bare metal mensuel vs horaire** | Le commitment mensuel est ~50% moins cher que le tarif horaire |
+| **Bare metal vs VM equivalent** | EM-I620E (64C/576G): EUR 599.99/mo vs POP2-64C-256G: EUR 1,715.50/mo = **65% d'economie** |
+| **Break-even bare metal mensuel** | Rentable si le workload tourne >50% du mois (>365h sur 730h) |
+| **Egress Scaleway** | **EUR 0** — aucun frais de bande passante sortante |
+| **Facturation VM** | Par minute (granularite fine, zero gaspillage sur bursts courts) |
+| **Facturation bare metal** | Par heure (granularite plus grosse, penalisant pour bursts <1h) |
 
-### Scenarios de cout mensuel
+### 4.2 Catalogue d'instances (region fr-par, mars 2026)
 
-| Scenario | Bare metal (3) | Cloud VM (moy.) | GPU (moy.) | Total/mois |
-|----------|---------------|-----------------|------------|------------|
-| Charge faible | 3 x 73 = 219 EUR | 0 (scale to zero) | 0 | **219 EUR** |
-| Charge normale | 3 x 73 = 219 EUR | 2 x 29 = 58 EUR | 0 | **277 EUR** |
-| Burst CI/batch | 3 x 73 = 219 EUR | 10 x 29 x 0.3 = 87 EUR | 0 | **306 EUR** |
-| ML inference | 3 x 73 = 219 EUR | 2 x 29 = 58 EUR | 2 x 1.10 x 4h/j x 30 = 264 EUR | **541 EUR** |
-| Pic maximal | 3 x 73 = 219 EUR | 20 x 29 = 580 EUR | 4 x 1.10 x 8h/j x 30 = 1056 EUR | **1855 EUR** |
+**Cloud VMs — facturation a la minute :**
 
-**Comparaison avec du full cloud VM (equivalent) :**
+| Pool | Instance | vCPU | RAM | Prix/h | Prix/mois (730h) | vCPU type |
+|------|----------|------|-----|--------|-------------------|-----------|
+| burst | BASIC2-A4C-8G | 4 | 8 GB | ~0.02 EUR | ~15 EUR | Shared |
+| burst | BASIC2-A8C-16G | 8 | 16 GB | ~0.04 EUR | ~29 EUR | Shared |
+| general | POP2-4C-16G | 4 | 16 GB | ~0.04 EUR | ~29 EUR | Dedicated |
+| general | POP2-8C-32G | 8 | 32 GB | ~0.08 EUR | ~58 EUR | Dedicated |
+| general | POP2-16C-64G | 16 | 64 GB | ~0.16 EUR | ~117 EUR | Dedicated |
+| compute | POP2-HC-8C-16G | 8 | 16 GB | ~0.06 EUR | ~44 EUR | Dedicated |
+| compute | POP2-HC-16C-32G | 16 | 32 GB | ~0.12 EUR | ~88 EUR | Dedicated |
+| memory | POP2-HM-4C-32G | 4 | 32 GB | ~0.06 EUR | ~44 EUR | Dedicated |
+| memory | POP2-HM-8C-64G | 8 | 64 GB | ~0.12 EUR | ~88 EUR | Dedicated |
 
-| Scenario | Hybride (ci-dessus) | Full cloud VM | Economie |
-|----------|---------------------|---------------|----------|
-| Charge normale | 277 EUR | 5 x 58 = 290 EUR | -4% |
-| Charge soutenue | 306 EUR | 13 x 29 = 377 EUR | -19% |
-| ML inference | 541 EUR | 541 + overhead VM control planes | -10% |
-| Pic maximal | 1855 EUR | ~2200 EUR | -16% |
+**Bare Metal — facturation horaire ou engagement mensuel :**
 
-Le bare metal devient rentable des que la charge est soutenue (> 50% d'utilisation).
+| Pool | Instance | Cores | RAM | Prix/h | Prix/mois (mensuel) | Economie vs horaire |
+|------|----------|-------|-----|--------|---------------------|---------------------|
+| bare-metal | EM-I220E | 16C | 64 GB | ~0.25 EUR | ~99.99 EUR | ~45% |
+| bare-metal | EM-I420E | 32C | 256 GB | ~0.55 EUR | ~249.99 EUR | ~38% |
+| bare-metal | EM-I620E | 64C | 576 GB | ~1.20 EUR | ~599.99 EUR | ~31% |
+| storage | EM-L520E | 32C | 256 GB | ~0.65 EUR | ~299.99 EUR | ~37% |
+
+**GPU — facturation a la minute :**
+
+| Pool | Instance | GPU | VRAM | Prix/h | Prix/mois (730h) |
+|------|----------|-----|------|--------|-------------------|
+| gpu-inference | L4-1-24G | 1x L4 | 24 GB | ~1.10 EUR | ~803 EUR |
+| gpu-inference | L4-2-24G | 2x L4 | 48 GB | ~2.20 EUR | ~1,606 EUR |
+| gpu-inference | L40S-1-48G | 1x L40S | 48 GB | ~2.50 EUR | ~1,825 EUR |
+| gpu-training | H100-1-80G | 1x H100 | 80 GB | ~3.50 EUR | ~2,555 EUR |
+| gpu-training | H100-SXM-2-80G | 2x H100 SXM | 160 GB | ~7.00 EUR | ~5,110 EUR |
+
+### 4.3 Comparaison bare metal mensuel vs VM equivalent
+
+| Comparaison | Bare metal (mensuel) | VM equivalent | Economie |
+|-------------|---------------------|---------------|----------|
+| EM-I220E (16C/64G) vs POP2-16C-64G | EUR 99.99/mo | EUR 117/mo | 15% |
+| EM-I420E (32C/256G) vs 2x POP2-16C-64G | EUR 249.99/mo | EUR 234/mo | -7% (VM gagne) |
+| EM-I620E (64C/576G) vs POP2-64C-256G | EUR 599.99/mo | EUR 1,715.50/mo | **65%** |
+| EM-I620E (64C/576G) vs 4x POP2-16C-64G | EUR 599.99/mo | EUR 468/mo | -28% (VM gagne en CPU) |
+
+Le bare metal est massivement gagnant **uniquement** quand on a besoin de beaucoup de RAM (576 GB vs 256 GB max en VM). Pour du CPU pur, les VMs POP2 sont parfois moins cheres.
+
+### 4.4 Scenarios de cout mensuel — modele cloud-first
+
+| Scenario | Full cloud (VMs) | Hybride (base BM + burst VM) | Economie |
+|----------|-----------------|------------------------------|----------|
+| **6 noeuds 24/7** | ~EUR 2,500/mo | ~EUR 1,390/mo | **44%** |
+| **Burst 20 noeuds 4h/jour** | ~EUR 3,800/mo | ~EUR 1,600/mo | **58%** |
+
+**Detail du scenario "6 noeuds 24/7" :**
+
+| Configuration | Calcul | Total |
+|---------------|--------|-------|
+| Full cloud | 6x POP2-8C-32G @ EUR 58/mo x 6 + overhead | ~EUR 2,500/mo |
+| Hybride | 2x EM-I420E mensuel @ EUR 250 + 2x POP2-8C-32G burst @ EUR 58 x 0.3 | ~EUR 1,390/mo |
+
+**Detail du scenario "burst 20 noeuds 4h/jour" :**
+
+| Configuration | Calcul | Total |
+|---------------|--------|-------|
+| Full cloud | 6x POP2 base + 14x POP2 burst 4h/j x 30j | ~EUR 3,800/mo |
+| Hybride | 3x EM-I620E mensuel + 14x BASIC2-A8C-16G burst 4h/j x 30j | ~EUR 1,600/mo |
+
+### 4.5 Break-even analysis
+
+```
+                Prix/mois
+                    ^
+                    |
+    EUR 876 ........|..............*...............  Bare metal hourly (730h x EUR 1.20)
+                    |            /
+                    |           /
+    EUR 600 ........|.........X...................  Bare metal monthly (EUR 599.99 fixe)
+                    |        /|
+                    |       / |
+                    |      /  |
+                    |     /   |
+                    |    /    |
+                    |   /     |
+                    |  /      |
+                    | /       |
+                    |/________|________________>  Heures d'utilisation/mois
+                    0       365h (50%)       730h
+                         Break-even
+```
+
+**Regle simple :** si un workload tourne >50% du mois (>365h), l'engagement mensuel bare metal est rentable. En dessous, les VMs facturees a la minute sont moins cheres.
+
+### 4.6 Strategie de commitment
+
+| Duree workload | Strategie optimale | Pool Karpenter |
+|---------------|-------------------|----------------|
+| < 10 min | VM burst (shared vCPU) | burst (weight 60) |
+| 10 min - 2h | VM general (dedicated vCPU) | general (weight 50) |
+| 2h - 365h/mois | VM general (pas encore rentable en BM) | general (weight 50) |
+| > 365h/mois (soutenu) | Bare metal mensuel (consolide par Karpenter) | bare-metal (weight 30) |
+| GPU < 1h | GPU on-demand | gpu-inference/training (weight 10) |
+| GPU soutenu | GPU reserved (si disponible) | gpu-inference/training (weight 10) |
 
 ---
 
@@ -725,7 +1027,7 @@ Pod Pending
     │
     ▼
 Karpenter
-    │ → NodePool weights (bare-metal 50 → cloud-vm 30 → cloud-gpu 10)
+    │ → NodePool weights (burst 60 → general 50 → compute/memory 40 → bare-metal 30 → GPU 10)
     │
     ▼
 karpenter-provider-cluster-api
@@ -744,14 +1046,14 @@ Noeud boot → join cluster → NFD labels → benchmark → taint removed → P
 **Consolidation (scale-down) :**
 
 ```
-Karpenter detecte noeud sous-utilise
+Karpenter detecte noeud VM sous-utilise ou workload soutenu >2h
     │
     ▼
-Evaluation : pods replaçables sur noeuds existants ?
-    │ → Prefere bare metal (weight 50) si capacite disponible
+Evaluation : pods replaçables sur bare metal (prix/vCPU/h plus bas) ?
+    │ → Consolide vers bare-metal mensuel si soutenu
     │
     ▼
-Drain graceful du noeud cloud
+Drain graceful du noeud VM
     │
     ▼
 karpenter-provider-cluster-api
@@ -771,7 +1073,7 @@ CAPS → Scaleway API → Instance supprimee
 | Cluster Autoscaler + cost controller custom | Mature, bien documente | Necessite operateur Go custom (~2000 LOC) + Descheduler | Rejete |
 | VPA seul (sans scaling horizontal) | Simple | Ne gere pas le scaling de noeuds | Rejete |
 | Scaling manuel + alertes | Zero complexite | Temps de reaction humain = gaspillage | Rejete |
-| Full cloud (pas de bare metal) | Simplicite operationnelle | 3-5x plus cher en charge soutenue | Rejete |
+| Full cloud (pas de bare metal) | Simplicite operationnelle | Jusqu'a 65% plus cher en charge soutenue (EM-I620E vs POP2-64C) | Rejete |
 | Full bare metal (pas de cloud) | Cout fixe previsible | Impossible de gerer les pics, GPU non rentable | Rejete |
 | Cilium WireGuard (au lieu de KubeSpan) | Integre dans la CNI existante | Pas de NAT traversal, echec en hybride | Rejete |
 | Live migration (kubevirt) | Zero downtime theorique | Immature pour conteneurs, complexe | Rejete |
@@ -783,9 +1085,9 @@ CAPS → Scaleway API → Instance supprimee
 
 ### Positives
 
-- **Cout optimise** : bare metal pour la charge de base (3-5x moins cher), cloud pour le burst uniquement
+- **Cout optimise** : cloud-first (facturation/min, zero gaspillage), consolidation naturelle vers bare metal mensuel quand soutenu (jusqu'a 65% d'economie)
 - **Scaling automatique** : 0 intervention humaine pour les pics (< 5 min pour un noeud cloud VM)
-- **Consolidation native** : Karpenter migre automatiquement les workloads cloud vers le bare metal sans custom code
+- **Consolidation native** : Karpenter migre automatiquement les workloads VM vers le bare metal mensuel quand soutenu >2h, sans custom code
 - **GPU on-demand** : scale from zero, paiement a la minute, pas de GPU idle
 - **Hardware-aware** : NFD garantit que les workloads atterrissent sur du hardware adapte
 - **Zero egress** : Scaleway ne facture pas le trafic sortant (economie significative en hybride)
