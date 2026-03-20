@@ -2,7 +2,6 @@
 
 > Sovereign Kubernetes platform on Talos Linux — from bare metal to production in one command.
 
-[![CI](https://github.com/Destynova2/st4ck/actions/workflows/ci.yml/badge.svg)](https://github.com/Destynova2/st4ck/actions)
 [![Talos](https://img.shields.io/badge/Talos-v1.12.4-blue)](https://www.talos.dev/)
 [![K8s](https://img.shields.io/badge/Kubernetes-1.35.0-blue)](https://kubernetes.io/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
