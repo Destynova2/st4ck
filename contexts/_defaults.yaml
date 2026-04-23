@@ -1,0 +1,29 @@
+# Shared defaults for every context.
+# Override any key by setting it in contexts/{env}-{instance}-{region}.yaml.
+#
+# Keys:
+#   namespace       — project slug, fixed across all envs
+#   talos_version   — Talos OS version (also used for image name tag)
+#   k8s_version     — Kubernetes version deployed by Talos
+#   cilium_version  — Cilium CNI chart version
+#   cluster_shape   — control plane + worker count and instance types
+#   owner           — default owner tag (override per context)
+
+namespace: st4ck
+
+talos_version: "v1.12.4"
+k8s_version: "1.35.0"
+cilium_version: "1.17.13"
+
+cluster_shape:
+  control_plane:
+    count: 3
+    instance_type: DEV1-M
+  worker:
+    count: 3
+    instance_type: DEV1-L
+
+# CIDRs allowed to reach the CI VM (SSH, Gitea, Woodpecker). Override per context.
+management_cidrs: []
+
+owner: unknown

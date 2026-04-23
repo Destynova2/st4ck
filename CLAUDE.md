@@ -12,16 +12,24 @@ talos/
 │   ├── platform-pod.yaml               # Single pod: OpenBao 3-node + vault-backend + Gitea + WP
 │   └── tofu/                           # Setup sidecar TF: KMS init, CI setup, repo push, secrets
 │
+├── contexts/                           # 1 YAML per (env, instance, region) cluster
+│   ├── _defaults.yaml                  # Shared defaults (merged under every context)
+│   ├── dev-alice-fr-par.yaml           # Example: Alice's dev sandbox
+│   ├── dev-shared-fr-par.yaml          # Example: shared dev CI VM
+│   └── README.md
+│
 ├── envs/                               # Provider-specific infra
 │   ├── local/                          # Provider: libvirt (QEMU/KVM)
-│   ├── scaleway/                       # Provider: scaleway (fr-par)
-│   │   ├── iam/                        # Stage 0: scoped IAM apps
-│   │   ├── image/                      # Stage 1: Talos image builder
-│   │   ├── main.tf                     # Stage 2: cluster infra
-│   │   └── ci/                         # Stage 3: CI VM (deploys platform pod)
+│   ├── scaleway/                       # Provider: scaleway (multi-region)
+│   │   ├── iam/                        # Stage 0: project + 9 IAM apps (3 envs × 3 roles)
+│   │   ├── image/                      # Stage 1: Talos image (semver + schematic-sha7, per region)
+│   │   ├── main.tf                     # Stage 2: cluster (consumes var.context_file)
+│   │   └── ci/                         # Stage 3: CI VM (one per env/instance/region)
 │   └── vmware-airgap/                  # Non-Terraform: shell scripts pipeline
 │
 ├── modules/
+│   ├── naming/                         # Enforced naming + tags (plan-time validation)
+│   ├── context/                        # YAML context loader (merges _defaults.yaml + overlay)
 │   └── talos-cluster/                  # Common module: secrets, machine configs
 │
 ├── stacks/                             # 1 stack = 1 folder (TF + values + flux)
@@ -43,14 +51,26 @@ talos/
 
 ## Architecture
 
+- **Multi-env**: N parallel clusters identified by `(env, instance, region)`. One YAML
+  in `contexts/` per cluster. See `docs/NAMING.md` + `docs/MULTI-ENV.md`.
+- **Naming convention** (enforced via `modules/naming`):
+  `{namespace}-{env}-{instance}-{region}-{component}[-{attr}][-{NN}]`.
+  Plan-time validation on length, charset, env class. No silent drift.
+- **Talos images**: `{namespace}-talos-{semver}-{schematic_sha7}` — semver + 7 chars
+  of the Talos Factory schematic SHA256. Immutable: rebuild produces a new image,
+  old + new coexist.
+- **Single Scaleway project `st4ck`** hosts every env class (dev/staging/prod).
+  9 IAM apps scoped per env class × 3 roles (image-builder/cluster/ci).
 - **Terraform module `talos-cluster`**: generates machine secrets + machine configs
   via the `siderolabs/talos` provider. Each env calls this module then creates
   infra with its own provider (libvirt, scaleway).
 - **K8s stacks**: provider-agnostic, use `kubeconfig_path` variable.
-  All stacks read from `~/.kube/talos-$(ENV)`.
+  Kubeconfig paths: `~/.kube/$(CTX_ID)` (e.g., `~/.kube/st4ck-dev-alice-fr-par`).
   Each stack co-locates TF code, Helm values, and Flux manifests in one folder.
-- **State storage**: vault-backend → OpenBao KMS (podman) KV v2. All states stored
-  in OpenBao with locking + versioning. No local tfstate files.
+  State path per stack per context: `/state/st4ck/{env}/{instance}/{region}/{stack}`.
+- **State storage**: vault-backend → OpenBao KMS (podman or CI VM) KV v2. All
+  states stored in OpenBao with locking + versioning. `backend.tf` is empty —
+  path injected by Makefile at `tofu init` via `-backend-config`.
 - **Day-2 management**: Flux reconciles all stacks after initial bootstrap.
   OpenTofu handles first deploy, then hands off to Flux via `tofu state rm`.
 - **Secrets**: auto-generated via `random_id` Terraform, stored in encrypted state.
@@ -69,27 +89,46 @@ talos/
 
 ## Common Commands
 
+All cluster-scoped targets take `ENV`, `INSTANCE`, `REGION`:
+
 ```bash
-# Bootstrap (one-shot, needs podman)
-make bootstrap                      # Platform pod: OpenBao KMS + Gitea + Woodpecker
+# Inspect current context
+make context
 
-# Full deploy (any provider)
-make scaleway-up                    # Scaleway: infra + all k8s stacks + Flux
-make ENV=local local-up             # Local: VMs + all k8s stacks + Flux
+# Bootstrap (one-shot per org — IAM + SSH key + Scaleway project)
+cp envs/scaleway/iam/secret.tfvars.example envs/scaleway/iam/secret.tfvars
+$EDITOR envs/scaleway/iam/secret.tfvars
+make scaleway-iam-apply
 
-# Individual stacks
-make k8s-cni-apply                  # Cilium CNI (must be first)
-make k8s-monitoring-apply           # vm-k8s-stack + VictoriaLogs
-make k8s-pki-apply                  # OpenBao + cert-manager
-make k8s-identity-apply             # Kratos + Hydra + Pomerium
-make k8s-security-apply             # Trivy + Tetragon + Kyverno
-make k8s-storage-apply              # Garage + Velero + Harbor
-make flux-bootstrap-apply           # Flux v2 (GitOps day-2)
+# Build Talos image (once per region)
+make scaleway-image-apply REGION=fr-par
+
+# Deploy shared dev CI VM (once per env class)
+make scaleway-ci-apply ENV=dev INSTANCE=shared REGION=fr-par
+
+# Point subsequent commands at the CI VM's vault-backend
+export VB_HOST=root@<ci-public-ip>
+make bootstrap-tunnel    # in another terminal
+
+# Full deploy of one cluster (cluster + all k8s stacks)
+make scaleway-up ENV=dev INSTANCE=alice REGION=fr-par
+
+# Local libvirt (unchanged)
+make local-up
+
+# Individual stacks — scoped to the current context
+make k8s-cni-apply       ENV=dev INSTANCE=alice REGION=fr-par
+make k8s-monitoring-apply ENV=dev INSTANCE=alice REGION=fr-par
+make k8s-pki-apply       ENV=dev INSTANCE=alice REGION=fr-par
+make k8s-identity-apply  ENV=dev INSTANCE=alice REGION=fr-par
+make k8s-security-apply  ENV=dev INSTANCE=alice REGION=fr-par
+make k8s-storage-apply   ENV=dev INSTANCE=alice REGION=fr-par
+make flux-bootstrap-apply ENV=dev INSTANCE=alice REGION=fr-par
 
 # Upgrade workflow
-make preflight                      # Pre-upgrade checks (vars, files, connectivity)
-make upgrade                        # Full upgrade: preflight → snapshot → bootstrap → stacks
-make bootstrap-update               # Update bootstrap pod in-place (preserves PVC)
+make preflight ENV=dev INSTANCE=alice REGION=fr-par
+make upgrade   ENV=dev INSTANCE=alice REGION=fr-par
+make bootstrap-update
 
 # Arbor (staging tree — pre-pull all artifacts)
 make arbor                          # Pull images + Helm charts → arbor/manifest.json
@@ -99,9 +138,13 @@ make arbor-verify                   # Verify all artifacts present (SHA256 check
 make state-snapshot                 # Raft snapshot (backup all states)
 make state-restore SNAPSHOT=f.snap  # Restore from snapshot
 
-# Teardown
-make scaleway-down                  # Destroy all (correct order)
-make bootstrap-stop                 # Stop platform pod
+# Teardown (scoped to one context — doesn't touch other envs)
+make scaleway-down     ENV=dev INSTANCE=alice REGION=fr-par
+make scaleway-teardown ENV=dev INSTANCE=alice REGION=fr-par  # + destroys CI
+make bootstrap-stop
+
+# Nuke EVERYTHING (dangerous — affects every env/instance)
+make scaleway-nuke
 ```
 
 ## Deployment Pipeline (sequential)

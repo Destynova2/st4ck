@@ -1,0 +1,16 @@
+# Context for the SHARED dev CI VM.
+#
+# Every Alice/Bob/feature-X dev cluster uses their own context
+# (contexts/dev-<name>-fr-par.yaml) but shares ONE CI VM named
+# st4ck-dev-shared-fr-par-ci, deployed once via:
+#   make scaleway-ci-apply ENV=dev INSTANCE=shared REGION=fr-par
+
+env: dev
+instance: shared
+region: fr-par
+
+owner: ludwig
+
+# Allow the maintainer to reach the CI VM (SSH, Gitea, Woodpecker).
+management_cidrs:
+  - "91.161.223.144/32"

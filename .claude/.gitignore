@@ -1,0 +1,6 @@
+# Local overrides — never commit (per-machine secrets / paths)
+settings.local.json
+
+# Brigade runtime artefacts (working dirs, not specs)
+cycle-progress/
+sprint-history/

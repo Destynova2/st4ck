@@ -1,0 +1,38 @@
+# Example tenant context — Kamaji-managed cluster for tenant "alice".
+#
+# A tenant context uses env='tenant'. Its lifecycle is driven by the
+# `ManagedCluster` CR (see stacks/managed-cluster/) which synthesises the
+# `TenantControlPlane` (Kamaji) + `Cluster` (CAPI) + worker pools.
+#
+# The tenant's workers live under this context_id in:
+#   /state/st4ck/tenant/alice/fr-par/{cluster,ci,cni,...}
+
+env: tenant
+instance: alice
+region: fr-par
+
+owner: alice@st4ck.local
+
+# Tenant-specific cluster shape (overrides _defaults.cluster_shape).
+# Control plane runs as Kamaji pods in the management cluster, so
+# `control_plane.count` is the Kamaji `replicas` — sized for the tenant's
+# SLA, not CP hardware.
+cluster_shape:
+  control_plane:
+    replicas: 2              # TCP apiserver pods on mgmt
+    resources_preset: small
+  worker:
+    count: 3
+    instance_type: POP2-4C-16G
+
+# Encryption at rest for tenant Secrets (delegates to OpenBao Transit KMS).
+encryption:
+  kms:
+    backend: openbao-transit
+    key_name: tenant-alice
+    rotation: 90d
+
+# Pools for Karpenter NodePool rendering.
+pools:
+  - { name: general, type: POP2-8C-32G, min: 1, max: 10 }
+  - { name: gpu-l4,  type: L4-1-24G,    min: 0, max: 2, taints: [{ key: nvidia.com/gpu, effect: NoSchedule }] }
