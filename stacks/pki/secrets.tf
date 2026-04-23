@@ -9,6 +9,16 @@
 resource "random_password" "hydra_system_secret" {
   length  = 64
   special = false
+
+  # Ties the secret lifecycle to the target Hydra namespace (declared in
+  # stacks/identity as kubernetes_namespace.identity). A string constant
+  # instead of a cross-stack resource ref avoids the pki→identity cycle
+  # (identity already reads pki via terraform_remote_state).
+  # Regenerating the secret would break running Hydra sessions: we keep
+  # it stable unless the namespace name itself changes. See pass1 #12.
+  keepers = {
+    namespace = "identity"
+  }
 }
 
 resource "random_password" "pomerium_client_secret" {
