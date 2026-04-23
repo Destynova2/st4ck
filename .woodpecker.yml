@@ -31,6 +31,8 @@ steps:
         done
 
   # ─── Build image (phase 1: start builder VM) ────────────────────────
+  # path: filter ensures we only spin up the billable Scaleway builder VM
+  # when image-relevant code actually changed (pass1 #6 / pass2 #11).
   - name: start-builder
     image: *tofu_image
     secrets:
@@ -51,7 +53,13 @@ steps:
         -var="project_id=$${SCW_PROJECT_ID}"
         -var="scw_access_key=$${SCW_ACCESS_KEY}"
         -var="scw_secret_key=$${SCW_SECRET_KEY}"
-    <<: *deploy_only
+    when:
+      - event: push
+        branch: main
+        path:
+          - "envs/scaleway/image/**"
+          - "modules/talos-cluster/**"
+          - "vars.mk"
 
   # ─── Build image (gate: wait for S3 upload) ────────────────────────
   - name: wait-image-upload
