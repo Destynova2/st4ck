@@ -1,0 +1,28 @@
+# Copy this file to terraform.tfvars and fill in real values.
+# terraform.tfvars is gitignored — never commit it.
+
+# Scaleway project (output of `tofu -chdir=envs/scaleway/iam output -raw project_id`).
+project_id = "REPLACE-WITH-ST4CK-PROJECT-ID"
+
+# Scaleway SSH key ID (output of `tofu -chdir=envs/scaleway/iam output -raw ssh_key_id`).
+ssh_key_id = "REPLACE-WITH-SSH-KEY-ID"
+
+# Path to the matching private key on the apply-pane host.
+ssh_private_key_path = "~/.ssh/talos_scaleway"
+
+# Apply-pane credentials (st4ck-admin profile only — NEVER commis/chef).
+# Pulled from the apply-pane env by bin/tofu-apply-with-quorum.sh.
+scw_access_key = "SCWXXXXXXXXXXXXXXXXX"
+scw_secret_key = "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
+
+# Rendered Talos machine config — generate with:
+#   talosctl gen config smoke https://<public-ip>:6443 \
+#     --with-kubelet-config --with-examples=false \
+#     --config-patch @patches/cilium-cni.yaml \
+#     --config-patch @patches/registry-mirror.yaml \
+#     --output-types controlplane --output -
+# then paste the whole YAML here (heredoc style).
+talos_machine_config = <<-YAML
+  version: v1alpha1
+  # ... paste Talos controlplane.yaml here ...
+YAML
