@@ -563,9 +563,17 @@ scaleway-down: k8s-down scaleway-destroy ## Destroy k8s stacks + cluster for the
 scaleway-teardown: scaleway-down scaleway-ci-destroy ## Destroy cluster + CI for the current context (keeps IAM + image)
 
 scaleway-nuke: ## DANGEROUS: destroy EVERYTHING — all clusters, CIs, images, IAM
-	@echo "This will destroy ALL Scaleway resources for namespace '$(NAMESPACE)'."
-	@echo "Make sure no other engineer has active work on this project."
-	@read -p "Type 'yes-destroy-everything' to confirm: " confirm && [ "$$confirm" = "yes-destroy-everything" ] || (echo "Aborted."; exit 1)
+	@echo "================================================================"
+	@echo "DANGER: scaleway-nuke will destroy ALL Scaleway resources"
+	@echo "        for namespace '$(NAMESPACE)' (every env/instance/region)."
+	@echo "        Current kube context: $$(kubectl config current-context 2>/dev/null || echo 'none')"
+	@echo "        Make sure no other engineer has active work on this project."
+	@echo "================================================================"
+	@if [ "$$CONFIRM" = "yes-destroy-everything" ]; then \
+		echo "Non-interactive confirmation via CONFIRM env var."; \
+	else \
+		read -p "Type 'yes-destroy-everything' to confirm: " confirm && [ "$$confirm" = "yes-destroy-everything" ] || (echo "Aborted."; exit 1); \
+	fi
 	-$(MAKE) scaleway-down
 	-$(MAKE) scaleway-ci-destroy
 	-$(MAKE) scaleway-image-clean
