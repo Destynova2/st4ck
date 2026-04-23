@@ -11,11 +11,18 @@ variables:
 
 steps:
   # ─── Validate (PR + push) — no secrets needed ─────────────────────
+  # Pass2 #9: includes every stack dir that has a main.tf, including the
+  # six KaaS stacks (autoscaling, capi, kamaji, managed-cluster,
+  # gateway-api, external-secrets). The [ -d "$dir" ] guard tolerates
+  # dirs that are not yet landed on the current branch (TF code held on
+  # feature branches); CI picks them up automatically once they merge.
   - name: validate
     image: *tofu_image
     commands:
       - |
+        FAIL=0
         for dir in \
+          envs/scaleway/iam \
           envs/scaleway/image \
           envs/scaleway \
           envs/scaleway/ci \
@@ -25,10 +32,44 @@ steps:
           stacks/identity \
           stacks/security \
           stacks/storage \
-          stacks/flux-bootstrap; do
+          stacks/flux-bootstrap \
+          stacks/external-secrets \
+          stacks/autoscaling \
+          stacks/capi \
+          stacks/kamaji \
+          stacks/managed-cluster \
+          stacks/gateway-api; do
+          if [ ! -d "$dir" ]; then
+            echo "--- skipping $dir (not present on this branch)"
+            continue
+          fi
           echo "--- validating $dir"
-          cd "$dir" && tofu init -backend=false -input=false >/dev/null && tofu validate && cd /woodpecker/src
+          (cd "$dir" && tofu init -backend=false -input=false >/dev/null && tofu validate) || FAIL=1
         done
+        exit "$FAIL"
+
+  # ─── Tofu test (pass1 #7 / pass2 #10) — run .tftest.hcl ─────────────
+  # 4 tested dirs: envs/scaleway/{iam,image,ci,.}. The cluster tests
+  # (envs/scaleway/tests/cluster.tftest.hcl) run from envs/scaleway itself.
+  - name: test-tftest
+    image: *tofu_image
+    commands:
+      - |
+        FAIL=0
+        for dir in \
+          envs/scaleway/iam \
+          envs/scaleway/image \
+          envs/scaleway/ci \
+          envs/scaleway; do
+          if [ ! -d "$dir/tests" ] || ! ls "$dir"/tests/*.tftest.hcl >/dev/null 2>&1; then
+            echo "--- skipping $dir (no .tftest.hcl)"
+            continue
+          fi
+          echo "--- tofu test $dir"
+          (cd "$dir" && tofu init -backend=false -input=false >/dev/null && tofu test) || FAIL=1
+        done
+        exit "$FAIL"
+    depends_on: [validate]
 
   # ─── Build image (phase 1: start builder VM) ────────────────────────
   # path: filter ensures we only spin up the billable Scaleway builder VM
