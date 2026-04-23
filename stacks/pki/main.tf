@@ -113,6 +113,9 @@ resource "kubernetes_secret" "pki_app_ca" {
 }
 
 # ─── OpenBao seal key (shared, static seal for auto-unseal) ──────────
+# DRIFT: ADR-026 deviation — static seal accepted risk for Gate 1/2.
+# See docs/adr/026-openbao-static-seal-accepted-risk.md (tracked drift).
+# Migrate to KMS-wrap (Scaleway KMS) before promoting any prod-* cluster.
 
 resource "random_bytes" "openbao_seal_key" {
   length = 32
