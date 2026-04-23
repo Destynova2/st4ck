@@ -1,7 +1,16 @@
 variable "bao_admin_password" {
-  description = "OpenBao bootstrap admin password (from CI_PASSWORD)"
+  description = "OpenBao bootstrap admin password (from CI_PASSWORD). Used by the vault provider to authenticate as bootstrap-admin during platform-pod setup."
   type        = string
   sensitive   = true
+
+  validation {
+    # Reject the well-known dev fallback ("root") and any too-short value.
+    # The outer bootstrap/main.tf already enforces length >= 16 on the source
+    # (admin_password); this gate protects the inner setup module from being
+    # invoked directly with a weak credential.
+    condition     = length(var.bao_admin_password) > 8 && var.bao_admin_password != "root"
+    error_message = "bao_admin_password must be set to a non-default secret value (length > 8, must not be \"root\")."
+  }
 }
 
 variable "ci_admin" {
