@@ -9,8 +9,8 @@
 
 | Composant | Version | Role | Notes |
 |---|---|---|---|
-| Talos Linux | v1.12.4 | OS immutable Kubernetes | Pas de SSH, pas de shell, pas de systemd |
-| Kubernetes | 1.35.0 | Orchestrateur conteneurs | 3 control planes + 3 workers |
+| Talos Linux | v1.12.6 | OS immutable Kubernetes | Pas de SSH, pas de shell, pas de systemd |
+| Kubernetes | 1.35.4 | Orchestrateur conteneurs | 3 control planes + 3 workers |
 | Cilium | 1.17.13 | CNI + Network Policies + Service Mesh | eBPF, remplace kube-proxy, mTLS, Hubble |
 | CoreDNS | (integre K8s) | DNS cluster | Forwarding vers DNS externe |
 

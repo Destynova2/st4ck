@@ -638,8 +638,8 @@ Flux v2 with a root Kustomization pointing to `clusters/management/`. OpenTofu p
 
 | Component | Version |
 |-----------|---------|
-| Talos Linux | v1.12.4 |
-| Kubernetes | 1.35.0 |
+| Talos Linux | v1.12.6 |
+| Kubernetes | 1.35.4 |
 | Cilium | 1.17.13 |
 | OpenBao (bootstrap) | 2.5.1 |
 | OpenBao Helm chart | 0.25.6 |

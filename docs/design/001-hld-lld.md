@@ -1309,8 +1309,8 @@ After initial deployment via OpenTofu, the handoff to Flux follows this pattern:
 
 | Layer | Technology | Version |
 |-------|-----------|---------|
-| OS | Talos Linux | v1.12.4 |
-| Kubernetes | Kubernetes | 1.35.0 |
+| OS | Talos Linux | v1.12.6 |
+| Kubernetes | Kubernetes | 1.35.4 |
 | IaC | OpenTofu | 1.9 |
 | CNI | Cilium | 1.17.13 |
 | KMS | OpenBao (bootstrap) | 2.5.1 |

@@ -35,7 +35,7 @@ The first four slots collectively form the **context_id** — a stable identifie
 | Security group | `st4ck-dev-alice-fr-par-cluster-sg` | 33 |
 | CI VM (shared dev) | `st4ck-dev-shared-fr-par-ci` | 26 |
 | Prod EU CI | `st4ck-prod-eu-fr-par-ci` | 23 |
-| Talos image | `st4ck-talos-v1.12.4-613e159` (region-scoped, no env/instance) | 27 |
+| Talos image | `st4ck-talos-v1.12.6-613e159` (region-scoped, no env/instance) | 27 |
 
 All well under the 63-char Scaleway limit.
 
