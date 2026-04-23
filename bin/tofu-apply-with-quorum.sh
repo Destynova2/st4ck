@@ -7,6 +7,8 @@
 #   1. PWD == /Users/ludwig/workspace/st4ck-wt-apply (apply pane only).
 #   2. --plan points to an existing OpenTofu plan file.
 #   3. --quorum-meta points to a JSON file containing >= 3 APPROVE entries.
+#   3b. The SHA-256 of the --plan file matches the .plan_sha256 field in
+#       --quorum-meta (defends against plan-swap between vote and apply).
 #   4. --reason is a non-empty human string (recorded in stdout for audit).
 #   5. `scw -p st4ck-admin info` succeeds (admin profile reachable).
 #
@@ -118,6 +120,35 @@ if [[ "${approvals}" -lt "${MIN_APPROVALS}" ]]; then
     die "quorum-meta has ${approvals} APPROVE entries, need >= ${MIN_APPROVALS}: ${quorum_meta}"
 fi
 
+# ─── Guard 3b: plan-hash check (defends against plan-swap between vote and apply) ─
+# Quorum-meta MUST carry a top-level "plan_sha256" field with the SHA-256 of the
+# exact plan file the voters approved. We recompute the hash here and abort on
+# mismatch so a swapped plan cannot ride a stale quorum signature.
+expected_sha=$(jq -r '.plan_sha256 // empty' "${quorum_meta}" 2>/dev/null)
+[[ -n "${expected_sha}" ]] \
+    || die "quorum-meta is missing required field .plan_sha256: ${quorum_meta}"
+[[ "${expected_sha}" =~ ^[a-fA-F0-9]{64}$ ]] \
+    || die ".plan_sha256 must be a 64-hex-char SHA-256, got: ${expected_sha}"
+
+# Pick a portable SHA-256 binary (Linux: sha256sum; macOS: shasum -a 256).
+if command -v sha256sum >/dev/null 2>&1; then
+    actual_sha=$(sha256sum "${plan}" | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+    actual_sha=$(shasum -a 256 "${plan}" | awk '{print $1}')
+else
+    die "no SHA-256 binary available (need sha256sum or shasum)"
+fi
+
+# Compare case-insensitively via `tr` (portable; ${var,,} would need bash 4+).
+expected_lc=$(printf '%s' "${expected_sha}" | tr '[:upper:]' '[:lower:]')
+actual_lc=$(printf '%s' "${actual_sha}"   | tr '[:upper:]' '[:lower:]')
+if [[ "${actual_lc}" != "${expected_lc}" ]]; then
+    err "plan-hash mismatch — refusing to apply a plan the quorum did not approve"
+    err "  expected (from quorum-meta): ${expected_sha}"
+    err "  actual   (from --plan file): ${actual_sha}"
+    exit 1
+fi
+
 # ─── Guard 4: admin profile must be reachable ──────────────────────────
 command -v scw   >/dev/null 2>&1 || die "scw CLI is required"
 command -v tofu  >/dev/null 2>&1 || die "tofu CLI is required"
@@ -129,6 +160,7 @@ fi
 # ─── Audit banner ──────────────────────────────────────────────────────
 log "tofu-apply-with-quorum: starting"
 log "  plan          : ${plan}"
+log "  plan sha256   : ${actual_sha}"
 log "  quorum-meta   : ${quorum_meta} (${approvals} APPROVE entries)"
 log "  reason        : ${reason}"
 log "  pwd           : ${PWD}"
