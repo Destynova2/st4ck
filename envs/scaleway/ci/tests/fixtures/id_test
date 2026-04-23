@@ -1,0 +1,4 @@
+-----BEGIN OPENSSH PRIVATE KEY-----
+DUMMY TEST FIXTURE PRIVATE KEY — DO NOT USE IN PRODUCTION.
+This file only exists so `tofu test` can evaluate file() calls at plan time.
+-----END OPENSSH PRIVATE KEY-----

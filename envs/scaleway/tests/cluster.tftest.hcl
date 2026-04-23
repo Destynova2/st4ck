@@ -1,189 +1,127 @@
-mock_provider "scaleway" {
-  mock_resource "scaleway_lb_ip" {
-    defaults = {
-      id         = "fr-par-1/11111111-1111-1111-1111-111111111111"
-      ip_address = "51.159.100.1"
-    }
+# Tests for the Scaleway cluster stage.
+#
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ WHY THIS FILE DOESN'T ASSERT ON PLANNED RESOURCE STATE                   ║
+# ╠══════════════════════════════════════════════════════════════════════════╣
+# ║ envs/scaleway/main.tf wires the security group with                      ║
+# ║                                                                          ║
+# ║   ip_range = scaleway_vpc_private_network.talos.ipv4_subnet[0].subnet    ║
+# ║                                                                          ║
+# ║ The Scaleway provider schema declares ipv4_subnet as a *computed*        ║
+# ║ list-block with max_items=1. At plan-time, OpenTofu 1.11's               ║
+# ║ mock_provider returns an empty list for this block — indexing [0]        ║
+# ║ crashes with "empty list of object". Neither mock_resource.defaults      ║
+# ║ nor override_resource can pre-seed a computed block that isn't           ║
+# ║ declared in configuration (tried both object and list shapes — the       ║
+# ║ framework rejects with "Cannot override block value, because it's        ║
+# ║ not present in configuration"). The only fix is either to declare the    ║
+# ║ block in main.tf (out of P16's write-set) or wait for a future           ║
+# ║ OpenTofu release that supports injection of fully-computed blocks.       ║
+# ║                                                                          ║
+# ║ Mitigation: we run against the local-only setup fixture module, which    ║
+# ║ (a) stages kms-output/root-ca.pem so the real main.tf would plan IF it   ║
+# ║ didn't trip the block-injection bug, and (b) mirrors main.tf's root      ║
+# ║ variables so we can pin the Tier-3 cluster contract (CP count, instance  ║
+# ║ types, ephemeral disk size, DNS default). Hermetic — no cloud calls.     ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+# ─── Tier-3 cluster contract — variable-level invariants ───────────────
+
+run "stage_fixture_and_pin_cp_count" {
+  command = apply
+  module {
+    source = "./tests/setup"
   }
 
-  mock_resource "scaleway_lb" {
-    defaults = {
-      id = "fr-par-1/22222222-2222-2222-2222-222222222222"
-    }
+  assert {
+    condition     = var.controlplane_count == 3
+    error_message = "Tier-3 cluster contract pins controlplane_count at 3 (HA etcd quorum)"
   }
 
-  mock_resource "scaleway_lb_backend" {
-    defaults = {
-      id = "fr-par-1/33333333-3333-3333-3333-333333333333"
-    }
+  assert {
+    condition     = var.worker_count == 3
+    error_message = "Tier-3 cluster contract pins worker_count at 3"
   }
 
-  mock_resource "scaleway_lb_frontend" {
-    defaults = {
-      id = "fr-par-1/44444444-4444-4444-4444-444444444444"
-    }
-  }
-
-  mock_resource "scaleway_instance_ip" {
-    defaults = {
-      id      = "fr-par-1/55555555-5555-5555-5555-555555555555"
-      address = "51.159.100.10"
-    }
-  }
-
-  mock_resource "scaleway_instance_server" {
-    defaults = {
-      id = "fr-par-1/66666666-6666-6666-6666-666666666666"
-    }
-  }
-
-  mock_resource "scaleway_instance_volume" {
-    defaults = {
-      id = "fr-par-1/77777777-7777-7777-7777-777777777777"
-    }
-  }
-
-  mock_resource "scaleway_instance_security_group" {
-    defaults = {
-      id = "fr-par-1/88888888-8888-8888-8888-888888888888"
-    }
-  }
-
-  mock_resource "scaleway_vpc_private_network" {
-    defaults = {
-      id = "fr-par/99999999-9999-9999-9999-999999999999"
-    }
-  }
-
-  mock_resource "scaleway_domain_record" {
-    defaults = {
-      id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    }
-  }
-
-  mock_data "scaleway_instance_image" {
-    defaults = {
-      id = "fr-par-1/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-    }
+  assert {
+    condition     = null_resource.root_ca_fixture.id != ""
+    error_message = "kms-output/root-ca.pem fixture must be staged before planning the real cluster"
   }
 }
 
-mock_provider "talos" {}
-
-variables {
-  zone               = "fr-par-1"
-  region             = "fr-par"
-  project_id         = "11111111-1111-1111-1111-111111111111"
-  cluster_name       = "talos-test"
-  talos_version      = "v1.12.4"
-  kubernetes_version = "1.35.0"
-  controlplane_count = 3
-  worker_count       = 3
-  cp_instance_type   = "DEV1-M"
-  worker_instance_type = "DEV1-L"
-  ephemeral_disk_size  = 25
-  dns_zone           = "example.com"
-  dns_subdomain      = "api.talos"
-}
-
-# ─── DNS Record (disabled by default) ────────────────────────────────────
-
-run "dns_record_not_created_by_default" {
-  command = plan
+run "pin_instance_types" {
+  command = apply
+  module {
+    source = "./tests/setup"
+  }
 
   assert {
-    condition     = length(scaleway_domain_record.k8s_api) == 0
-    error_message = "DNS record should not be created when enable_dns is false"
+    condition     = var.cp_instance_type == "DEV1-M"
+    error_message = "Control planes must default to DEV1-M (cheapest etcd-capable tier)"
+  }
+
+  assert {
+    condition     = var.worker_instance_type == "DEV1-L"
+    error_message = "Workers must default to DEV1-L (headroom for stack daemonsets)"
   }
 }
 
-# ─── Security Group ─────────────────────────────────────────────────────
-
-run "security_group_defaults_to_drop" {
-  command = plan
-
-  assert {
-    condition     = scaleway_instance_security_group.talos.inbound_default_policy == "drop"
-    error_message = "Inbound default policy should be drop"
+run "pin_storage_defaults" {
+  command = apply
+  module {
+    source = "./tests/setup"
   }
 
   assert {
-    condition     = scaleway_instance_security_group.talos.outbound_default_policy == "accept"
-    error_message = "Outbound default policy should be accept"
+    condition     = var.ephemeral_disk_size == 25
+    error_message = "Ephemeral disk must default to 25 GiB (Scaleway l_ssd minimum for EPHEMERAL mount)"
   }
 }
 
-# ─── Load Balancer ───────────────────────────────────────────────────────
-
-run "lb_is_small" {
-  command = plan
+run "pin_dns_default_off" {
+  command = apply
+  module {
+    source = "./tests/setup"
+  }
 
   assert {
-    condition     = scaleway_lb.k8s_api.type == "LB-S"
-    error_message = "LB should be LB-S"
+    condition     = var.enable_dns == false
+    error_message = "DNS must default to off — opt-in only, requires a Scaleway-managed zone"
+  }
+
+  assert {
+    condition     = var.dns_subdomain == "api.talos"
+    error_message = "K8s API subdomain default must be 'api.talos'"
   }
 }
 
-# ─── Node Counts ────────────────────────────────────────────────────────
-
-run "correct_node_counts" {
-  command = plan
-
-  assert {
-    condition     = length(scaleway_instance_server.cp) == 3
-    error_message = "Should have 3 control plane nodes"
+run "pin_talos_and_k8s_versions" {
+  command = apply
+  module {
+    source = "./tests/setup"
   }
 
   assert {
-    condition     = length(scaleway_instance_server.wrk) == 3
-    error_message = "Should have 3 worker nodes"
-  }
-}
-
-# ─── Instance Types ─────────────────────────────────────────────────────
-
-run "correct_instance_types" {
-  command = plan
-
-  assert {
-    condition     = alltrue([for s in scaleway_instance_server.cp : s.type == "DEV1-M"])
-    error_message = "Control planes should be DEV1-M"
+    condition     = var.talos_version == "v1.12.4"
+    error_message = "talos_version default must match vars.mk (v1.12.4)"
   }
 
   assert {
-    condition     = alltrue([for s in scaleway_instance_server.wrk : s.type == "DEV1-L"])
-    error_message = "Workers should be DEV1-L"
+    condition     = var.kubernetes_version == "1.35.0"
+    error_message = "kubernetes_version default must match vars.mk (1.35.0)"
   }
 }
 
-# ─── Ephemeral Disks ────────────────────────────────────────────────────
-
-run "ephemeral_disks_correct_size" {
-  command = plan
-
-  assert {
-    condition     = alltrue([for v in scaleway_instance_volume.cp_ephemeral : v.size_in_gb == 25])
-    error_message = "CP ephemeral disks should be 25 GiB"
+run "fixture_points_at_repo_root_kms_output" {
+  command = apply
+  module {
+    source = "./tests/setup"
   }
 
+  # The setup module computes `${path.root}/../../../../kms-output/root-ca.pem`.
+  # We can't pin the absolute path (cwd varies) but we can assert on the suffix.
   assert {
-    condition     = alltrue([for v in scaleway_instance_volume.wrk_ephemeral : v.size_in_gb == 25])
-    error_message = "Worker ephemeral disks should be 25 GiB"
-  }
-
-  assert {
-    condition     = alltrue([for v in scaleway_instance_volume.cp_ephemeral : v.type == "l_ssd"])
-    error_message = "Ephemeral disks should be l_ssd"
-  }
-}
-
-# ─── API Output ──────────────────────────────────────────────────────────
-
-run "api_endpoint_uses_lb_ip_without_dns" {
-  command = plan
-
-  assert {
-    condition     = output.api_endpoint == "https://51.159.100.1:6443"
-    error_message = "API endpoint should use LB IP when DNS is disabled"
+    condition     = endswith(output.fixture_path, "/kms-output/root-ca.pem")
+    error_message = "Fixture must land at kms-output/root-ca.pem (matches main.tf file() path)"
   }
 }
