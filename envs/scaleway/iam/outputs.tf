@@ -1,80 +1,152 @@
-# ─── Project ────────────────────────────────────────────────────────────
-
 output "project_id" {
-  description = "Scaleway project ID"
-  value       = scaleway_account_project.talos.id
+  description = "Scaleway project ID hosting every env class."
+  value       = scaleway_account_project.main.id
 }
 
-# ─── Image Builder credentials ───────────────────────────────────────────
+output "project_name" {
+  description = "Scaleway project name (namespace)."
+  value       = scaleway_account_project.main.name
+}
 
-output "image_builder_access_key" {
-  description = "Access key for the image builder application"
-  value       = scaleway_iam_api_key.image_builder.access_key
+output "ssh_key_id" {
+  description = "Scaleway SSH key ID registered for every VM."
+  value       = scaleway_account_ssh_key.deploy.id
+}
+
+# ─── Nested map of API keys: keys[env][role] = {access, secret} ─────────
+
+output "keys" {
+  description = "API keys indexed by [env][role]. Sensitive — consume via -raw / -json."
+  sensitive   = true
+  value = {
+    for env in var.env_classes : env => {
+      for role in keys(local.roles) : role => {
+        access_key = scaleway_iam_api_key.app["${role}-${env}"].access_key
+        secret_key = scaleway_iam_api_key.app["${role}-${env}"].secret_key
+      }
+    }
+  }
+}
+
+# ─── Flat outputs for Makefile consumption (one per role+env+field) ─────
+# Pattern: <role>_<env>_<field>  (e.g., cluster_dev_access_key)
+
+output "image_builder_dev_access_key" {
+  value     = scaleway_iam_api_key.app["image-builder-dev"].access_key
+  sensitive = true
+}
+output "image_builder_dev_secret_key" {
+  value     = scaleway_iam_api_key.app["image-builder-dev"].secret_key
+  sensitive = true
+}
+output "cluster_dev_access_key" {
+  value     = scaleway_iam_api_key.app["cluster-dev"].access_key
+  sensitive = true
+}
+output "cluster_dev_secret_key" {
+  value     = scaleway_iam_api_key.app["cluster-dev"].secret_key
+  sensitive = true
+}
+output "ci_dev_access_key" {
+  value     = scaleway_iam_api_key.app["ci-dev"].access_key
+  sensitive = true
+}
+output "ci_dev_secret_key" {
+  value     = scaleway_iam_api_key.app["ci-dev"].secret_key
+  sensitive = true
+}
+
+output "image_builder_staging_access_key" {
+  value     = scaleway_iam_api_key.app["image-builder-staging"].access_key
+  sensitive = true
+}
+output "image_builder_staging_secret_key" {
+  value     = scaleway_iam_api_key.app["image-builder-staging"].secret_key
+  sensitive = true
+}
+output "cluster_staging_access_key" {
+  value     = scaleway_iam_api_key.app["cluster-staging"].access_key
+  sensitive = true
+}
+output "cluster_staging_secret_key" {
+  value     = scaleway_iam_api_key.app["cluster-staging"].secret_key
+  sensitive = true
+}
+output "ci_staging_access_key" {
+  value     = scaleway_iam_api_key.app["ci-staging"].access_key
+  sensitive = true
+}
+output "ci_staging_secret_key" {
+  value     = scaleway_iam_api_key.app["ci-staging"].secret_key
+  sensitive = true
+}
+
+output "image_builder_prod_access_key" {
+  value     = scaleway_iam_api_key.app["image-builder-prod"].access_key
+  sensitive = true
+}
+output "image_builder_prod_secret_key" {
+  value     = scaleway_iam_api_key.app["image-builder-prod"].secret_key
+  sensitive = true
+}
+output "cluster_prod_access_key" {
+  value     = scaleway_iam_api_key.app["cluster-prod"].access_key
+  sensitive = true
+}
+output "cluster_prod_secret_key" {
+  value     = scaleway_iam_api_key.app["cluster-prod"].secret_key
+  sensitive = true
+}
+output "ci_prod_access_key" {
+  value     = scaleway_iam_api_key.app["ci-prod"].access_key
+  sensitive = true
+}
+output "ci_prod_secret_key" {
+  value     = scaleway_iam_api_key.app["ci-prod"].secret_key
+  sensitive = true
+}
+
+# ═══════════════════════════════════════════════════════════════════════
+# Claude-scoped IAM outputs
+# ═══════════════════════════════════════════════════════════════════════
+
+output "claude_readonly_access_key" {
+  description = "Claude read-only access key (scoped to st4ck project). Paste into ~/.config/scw/config.yaml as profile 'st4ck-readonly'."
+  value       = try(scaleway_iam_api_key.claude["readonly"].access_key, null)
   sensitive   = true
 }
 
-output "image_builder_secret_key" {
-  description = "Secret key for the image builder application"
-  value       = scaleway_iam_api_key.image_builder.secret_key
+output "claude_readonly_secret_key" {
+  value     = try(scaleway_iam_api_key.claude["readonly"].secret_key, null)
+  sensitive = true
+}
+
+output "claude_writeable_access_key" {
+  description = "Claude read-write access key (scoped to st4ck project). Paste into ~/.config/scw/config.yaml as profile 'st4ck-admin'. Only emitted when enable_claude_writeable=true."
+  value       = try(scaleway_iam_api_key.claude["writeable"].access_key, null)
   sensitive   = true
 }
 
-# ─── Cluster credentials ────────────────────────────────────────────────
+output "claude_writeable_secret_key" {
+  value     = try(scaleway_iam_api_key.claude["writeable"].secret_key, null)
+  sensitive = true
+}
 
-output "cluster_access_key" {
-  description = "Access key for the cluster application"
-  value       = scaleway_iam_api_key.cluster.access_key
+# ─── Ready-to-paste scw config snippet (multi-profile) ────────────────
+
+output "scw_config_snippet" {
+  description = "Paste this into ~/.config/scw/config.yaml to set up admin + st4ck-readonly (+ st4ck-admin if enabled) profiles. Retrieve via: tofu -chdir=envs/scaleway/iam output -raw scw_config_snippet"
   sensitive   = true
-}
-
-output "cluster_secret_key" {
-  description = "Secret key for the cluster application"
-  value       = scaleway_iam_api_key.cluster.secret_key
-  sensitive   = true
-}
-
-# ─── Helper: export commands ────────────────────────────────────────────
-
-output "export_image_builder" {
-  description = "Shell commands to export image builder credentials"
-  value       = <<-EOT
-    export SCW_ACCESS_KEY=$(terraform -chdir=envs/scaleway/iam output -raw image_builder_access_key)
-    export SCW_SECRET_KEY=$(terraform -chdir=envs/scaleway/iam output -raw image_builder_secret_key)
-  EOT
-}
-
-# ─── Terraform State Bucket ──────────────────────────────────────────
-
-output "tfstate_bucket" {
-  description = "S3 bucket name for Terraform state"
-  value       = scaleway_object_bucket.tfstate.name
-}
-
-# ─── CI credentials ───────────────────────────────────────────────────
-
-output "ci_access_key" {
-  description = "Access key for the CI application"
-  value       = scaleway_iam_api_key.ci.access_key
-  sensitive   = true
-}
-
-output "ci_secret_key" {
-  description = "Secret key for the CI application"
-  value       = scaleway_iam_api_key.ci.secret_key
-  sensitive   = true
-}
-
-output "export_cluster" {
-  description = "Shell commands to export cluster credentials"
-  value       = <<-EOT
-    export SCW_ACCESS_KEY=$(terraform -chdir=envs/scaleway/iam output -raw cluster_access_key)
-    export SCW_SECRET_KEY=$(terraform -chdir=envs/scaleway/iam output -raw cluster_secret_key)
-  EOT
-}
-
-# ─── Velero Backup Bucket ──────────────────────────────────────────
-
-output "velero_bucket" {
-  description = "S3 bucket name for Velero backups"
-  value       = scaleway_object_bucket.velero.name
+  value = templatefile("${path.module}/templates/scw-config.yaml.tpl", {
+    org_id               = var.scw_organization_id
+    project_id           = scaleway_account_project.main.id
+    project_name         = scaleway_account_project.main.name
+    region               = var.region
+    readonly_enabled     = var.enable_claude_apps
+    readonly_access_key  = try(scaleway_iam_api_key.claude["readonly"].access_key, "")
+    readonly_secret_key  = try(scaleway_iam_api_key.claude["readonly"].secret_key, "")
+    writeable_enabled    = var.enable_claude_apps && var.enable_claude_writeable
+    writeable_access_key = try(scaleway_iam_api_key.claude["writeable"].access_key, "")
+    writeable_secret_key = try(scaleway_iam_api_key.claude["writeable"].secret_key, "")
+  })
 }

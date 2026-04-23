@@ -1,4 +1,5 @@
 terraform {
+  required_version = ">= 1.6"
   required_providers {
     scaleway = {
       source  = "scaleway/scaleway"
@@ -14,125 +15,192 @@ provider "scaleway" {
   region          = var.region
 }
 
-# ─── Dedicated Project ──────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+# Single project hosts every env class × instance × region.
+# IAM apps are scoped per (role × env class) — not per instance.
+# ═══════════════════════════════════════════════════════════════════════
 
-resource "scaleway_account_project" "talos" {
-  name        = var.project_name
-  description = "Talos Kubernetes cluster - POC"
+resource "scaleway_account_project" "main" {
+  name        = var.namespace
+  description = "${var.namespace} — Talos multi-env infrastructure"
 }
 
-# ─── Terraform State Bucket ───────────────────────────────────────────
+# ─── Role × env class matrix ────────────────────────────────────────────
 
-resource "scaleway_object_bucket" "tfstate" {
-  name   = "${var.prefix}-tfstate-${var.region}"
-  region = var.region
-
-  versioning {
-    enabled = true
+locals {
+  roles = {
+    image-builder = {
+      description = "Builds Talos images: VM + S3 upload + snapshot import"
+      permissions = [
+        "InstancesFullAccess",
+        "ObjectStorageFullAccess",
+        "BlockStorageFullAccess",
+      ]
+    }
+    cluster = {
+      description = "Deploys Talos cluster: instances, LB, VPC, security groups"
+      permissions = [
+        "InstancesFullAccess",
+        "BlockStorageFullAccess",
+        "LoadBalancersFullAccess",
+        "VPCFullAccess",
+        "PrivateNetworksFullAccess",
+        "IPAMReadOnly",
+        "DomainsDNSFullAccess",
+        "ObjectStorageFullAccess",
+      ]
+    }
+    ci = {
+      description = "CI VM: Gitea + Woodpecker + platform pod"
+      permissions = [
+        "InstancesFullAccess",
+        "BlockStorageFullAccess",
+        "VPCFullAccess",
+        "ObjectStorageFullAccess",
+      ]
+    }
+    bare-metal = {
+      description = "Karpenter custom provider — Scaleway Elastic Metal lifecycle (Phase B)"
+      permissions = [
+        "ElasticMetalFullAccess",       # CreateServer / RebootRescue / Delete
+        "PrivateNetworksFullAccess",    # attach EM to a tenant Private Network
+        "ObjectStorageReadOnly",        # pull Talos RAW image from Garage S3 mirror
+        "IPAMReadOnly",                 # introspect flexible IPs
+      ]
+    }
   }
+
+  # Cartesian product: one entry per (role, env_class).
+  apps = {
+    for pair in setproduct(keys(local.roles), var.env_classes) :
+    "${pair[0]}-${pair[1]}" => {
+      role     = pair[0]
+      env      = pair[1]
+      app_name = "${var.namespace}-${pair[1]}-${pair[0]}" # e.g., st4ck-dev-image-builder
+      role_def = local.roles[pair[0]]
+    }
+  }
+
+  # Scaleway IAM tags allow charset [a-zA-Z0-9._\-/=+@ ] only — no ':'.
+  # Use '=' as key/value separator (still readable, common AWS-style).
+  base_tags = [
+    "app=${var.namespace}",
+    "managed-by=opentofu",
+    "owner=${var.owner}",
+  ]
 }
 
-# ─── IAM Application: Image Builder ─────────────────────────────────────
+# ─── IAM apps ────────────────────────────────────────────────────────────
 
-resource "scaleway_iam_application" "image_builder" {
-  name        = "${var.prefix}-image-builder"
-  description = "Builds Talos images: creates builder VM, uploads to S3, imports snapshot"
+resource "scaleway_iam_application" "app" {
+  for_each = local.apps
+
+  name        = each.value.app_name
+  description = "[${each.value.env}] ${each.value.role_def.description}"
+  tags        = concat(local.base_tags, ["env=${each.value.env}", "role=${each.value.role}"])
 }
 
-resource "scaleway_iam_policy" "image_builder" {
-  name           = "${var.prefix}-image-builder"
-  description    = "Instances + Object Storage for Talos image pipeline"
-  application_id = scaleway_iam_application.image_builder.id
+resource "scaleway_iam_policy" "app" {
+  for_each = local.apps
+
+  name           = each.value.app_name
+  description    = "[${each.value.env}] ${each.value.role_def.description}"
+  application_id = scaleway_iam_application.app[each.key].id
+  tags           = concat(local.base_tags, ["env=${each.value.env}", "role=${each.value.role}"])
 
   rule {
-    project_ids          = [scaleway_account_project.talos.id]
-    permission_set_names = [
-      "InstancesFullAccess",
-      "ObjectStorageFullAccess",
-      "BlockStorageFullAccess",
-    ]
+    project_ids          = [scaleway_account_project.main.id]
+    permission_set_names = each.value.role_def.permissions
   }
 }
 
-resource "scaleway_iam_api_key" "image_builder" {
-  application_id     = scaleway_iam_application.image_builder.id
-  description        = "Terraform - Talos image builder"
-  default_project_id = scaleway_account_project.talos.id
+resource "scaleway_iam_api_key" "app" {
+  for_each = local.apps
+
+  application_id     = scaleway_iam_application.app[each.key].id
+  description        = "OpenTofu — ${each.value.app_name}"
+  default_project_id = scaleway_account_project.main.id
 }
 
-# ─── IAM Application: Cluster ───────────────────────────────────────────
-
-resource "scaleway_iam_application" "cluster" {
-  name        = "${var.prefix}-cluster"
-  description = "Deploys Talos cluster: instances, LB, VPC, security groups"
-}
-
-resource "scaleway_iam_policy" "cluster" {
-  name           = "${var.prefix}-cluster"
-  description    = "Full infra for Talos cluster deployment"
-  application_id = scaleway_iam_application.cluster.id
-
-  rule {
-    project_ids          = [scaleway_account_project.talos.id]
-    permission_set_names = [
-      "InstancesFullAccess",
-      "BlockStorageFullAccess",
-      "LoadBalancersFullAccess",
-      "VPCFullAccess",
-      "PrivateNetworksFullAccess",
-      "IPAMReadOnly",
-      "DomainsDNSFullAccess",
-      "ObjectStorageFullAccess",
-    ]
-  }
-}
-
-resource "scaleway_iam_api_key" "cluster" {
-  application_id     = scaleway_iam_application.cluster.id
-  description        = "Terraform - Talos cluster"
-  default_project_id = scaleway_account_project.talos.id
-}
-
-# ─── IAM Application: CI ─────────────────────────────────────────────
-
-resource "scaleway_iam_application" "ci" {
-  name        = "${var.prefix}-ci"
-  description = "CI VM: Woodpecker CI server + agent"
-}
-
-resource "scaleway_iam_policy" "ci" {
-  name           = "${var.prefix}-ci"
-  description    = "Instances + VPC for CI VM"
-  application_id = scaleway_iam_application.ci.id
-
-  rule {
-    project_ids          = [scaleway_account_project.talos.id]
-    permission_set_names = [
-      "InstancesFullAccess",
-      "BlockStorageFullAccess",
-      "VPCFullAccess",
-      "ObjectStorageFullAccess",
-    ]
-  }
-}
-
-resource "scaleway_iam_api_key" "ci" {
-  application_id     = scaleway_iam_application.ci.id
-  description        = "Terraform - CI VM"
-  default_project_id = scaleway_account_project.talos.id
-}
-
-# ─── SSH Key (org-level, used by all VMs) ──────────────────────────────
+# ─── Shared SSH key (project-scoped, used by every VM) ───────────────────
 
 resource "scaleway_account_ssh_key" "deploy" {
-  name       = "${var.prefix}-deploy"
+  name       = "${var.namespace}-deploy"
   public_key = trimspace(file(pathexpand(var.ssh_public_key_path)))
-  project_id = scaleway_account_project.talos.id
+  project_id = scaleway_account_project.main.id
 }
 
-# ─── Velero Backup Bucket ──────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+# Claude/AI scoped IAM apps
+#
+# The organization holds several projects (default, openclaw-production,
+# fmj, client-agence-liard-tanguy, ...) — Claude must NEVER reach them.
+# These apps are project-scoped to st4ck only; IAM policies bind them to
+# this project's ID exclusively.
+#
+# - claude-readonly  : always created when enable_claude_apps=true
+# - claude-writeable : opt-in via enable_claude_writeable=true
+# ═══════════════════════════════════════════════════════════════════════
 
-resource "scaleway_object_bucket" "velero" {
-  name   = "${var.prefix}-velero-backups-${var.region}"
-  region = var.region
+locals {
+  claude_readonly_perms = concat(
+    ["AllProductsReadOnly"],
+    var.claude_readonly_include_iam ? ["IAMReadOnly"] : [],
+  )
+
+  claude_writeable_perms = [
+    "InstancesFullAccess",
+    "BlockStorageFullAccess",
+    "ObjectStorageFullAccess",
+    "VPCFullAccess",
+    "PrivateNetworksFullAccess",
+    "LoadBalancersFullAccess",
+    "DomainsDNSFullAccess",
+    "IPAMReadOnly",
+  ]
+
+  claude_apps_map = {
+    readonly = {
+      enabled     = var.enable_claude_apps
+      description = "Read-only access for Claude/AI tooling — scoped to st4ck project ONLY. Cannot reach other org projects."
+      permissions = local.claude_readonly_perms
+    }
+    writeable = {
+      enabled     = var.enable_claude_apps && var.enable_claude_writeable
+      description = "Read-write access for Claude/AI tooling — scoped to st4ck project ONLY. Use with denylist enforcement in .claude/settings.json."
+      permissions = local.claude_writeable_perms
+    }
+  }
+
+  claude_apps = { for k, v in local.claude_apps_map : k => v if v.enabled }
+}
+
+resource "scaleway_iam_application" "claude" {
+  for_each = local.claude_apps
+
+  name        = "${var.namespace}-claude-${each.key}"
+  description = each.value.description
+  tags        = concat(local.base_tags, ["role=claude-${each.key}", "scope=${var.namespace}-only"])
+}
+
+resource "scaleway_iam_policy" "claude" {
+  for_each = local.claude_apps
+
+  name           = "${var.namespace}-claude-${each.key}"
+  description    = each.value.description
+  application_id = scaleway_iam_application.claude[each.key].id
+  tags           = concat(local.base_tags, ["role=claude-${each.key}", "scope=${var.namespace}-only"])
+
+  rule {
+    project_ids          = [scaleway_account_project.main.id]
+    permission_set_names = each.value.permissions
+  }
+}
+
+resource "scaleway_iam_api_key" "claude" {
+  for_each = local.claude_apps
+
+  application_id     = scaleway_iam_application.claude[each.key].id
+  description        = "OpenTofu — claude-${each.key} (st4ck-scoped)"
+  default_project_id = scaleway_account_project.main.id
 }
