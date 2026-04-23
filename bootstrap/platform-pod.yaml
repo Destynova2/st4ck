@@ -1,6 +1,30 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  name: matchbox-profiles
+data:
+  # Placeholder profile served by the Matchbox sidecar. The real
+  # per-tenant profiles are POST'ed by modules/em-talos-matchbox-bootstrap
+  # (Terraform) + the Karpenter custom provider (issue #1 Phase B).
+  # Kept here so `matchbox -profiles-dir` has a valid JSON on startup.
+  talos-placeholder.json: |
+    {
+      "id": "talos-placeholder",
+      "name": "talos-placeholder",
+      "boot": {
+        "kernel": "/assets/talos/vmlinuz-amd64",
+        "initrd": ["/assets/talos/initramfs-amd64.xz"],
+        "args": [
+          "initrd=initramfs-amd64.xz",
+          "talos.platform=metal",
+          "talos.config=http://127.0.0.1:8090/generic?mac=$${mac:hexhyp}"
+        ]
+      }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
   name: openbao-config
 data:
   config.hcl: |
@@ -262,6 +286,49 @@ spec:
         - name: WOODPECKER_BACKEND_DOCKER_NETWORK
           value: "podman-default-kube-network"
 
+    # ═══ Matchbox sidecar (iPXE + profiles HTTP, bound to loopback) ══
+    # Shares the pod's network namespace with Gitea/OpenBao so the
+    # Karpenter custom provider can POST profiles at 127.0.0.1:8080
+    # without exposing Matchbox on the host interface.
+    # See modules/em-talos-matchbox-bootstrap/ + issue #1 Phase B.
+    - name: matchbox
+      image: quay.io/poseidon/matchbox:v0.10.0@sha256:4eeafd794eebbd04a0e9c879382d6b36d98aa8f56beb4d0a75b1caaf7c4d4b98
+      args:
+        # Port 8090 (not 8080) — vault-backend already binds 0.0.0.0:8080 in
+        # the same netns; shared-pod networking would EADDRINUSE the loser.
+        - -address=127.0.0.1:8090
+        - -log-level=debug
+        - -data-path=/var/lib/matchbox
+        - -assets-path=/var/lib/matchbox/assets
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+      livenessProbe:
+        httpGet:
+          path: /
+          port: 8090
+          host: 127.0.0.1
+        initialDelaySeconds: 5
+        periodSeconds: 30
+      volumeMounts:
+        - name: matchbox-data
+          mountPath: /var/lib/matchbox
+        - name: matchbox-profiles
+          mountPath: /var/lib/matchbox/profiles
+          readOnly: true
+
     # ═══ Setup (OpenTofu: tokens, secrets, Gitea, WP) ════════════════
     - name: tofu-setup
       image: ghcr.io/opentofu/opentofu:1.9@sha256:2fc03a4a0e745558a0693f1e80ffe56c3c43826ee21140c4d27f52fd938b82fe
@@ -343,3 +410,7 @@ spec:
       hostPath: { path: __SOURCE_DIR__, type: Directory }
     - name: kms-output
       persistentVolumeClaim: { claimName: platform-kms-output }
+    - name: matchbox-data
+      emptyDir: {}
+    - name: matchbox-profiles
+      configMap: { name: matchbox-profiles }
