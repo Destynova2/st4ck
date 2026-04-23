@@ -829,15 +829,22 @@ vmware-bootstrap:
 STACKS := envs/scaleway/iam envs/scaleway/image envs/scaleway envs/scaleway/ci \
 	stacks/cni stacks/monitoring stacks/pki \
 	stacks/identity stacks/security stacks/storage \
-	stacks/flux-bootstrap \
+	stacks/flux-bootstrap stacks/external-secrets \
 	stacks/capi stacks/kamaji stacks/autoscaling stacks/gateway-api \
 	stacks/managed-cluster \
 	modules/naming modules/context
 
-.PHONY: validate test clean
+# .tftest.hcl-tested dirs (pass1 #7 / pass2 #10). Mirrors the test-tftest
+# step in .woodpecker.yml so local parity matches CI.
+SCW_TEST_DIRS := envs/scaleway/iam envs/scaleway/image envs/scaleway/ci envs/scaleway
+
+.PHONY: validate test clean scaleway-test
 
 validate: ## Validate every Terraform stack (no apply)
 	@FAIL=0; for dir in $(STACKS); do \
+		if [ ! -d "$$dir" ]; then \
+			printf "  %-45s" "$$dir:"; echo "SKIP (no dir)"; continue; \
+		fi; \
 		printf "  %-45s" "$$dir:"; \
 		rm -rf "$$dir/.terraform" "$$dir/.terraform.lock.hcl"; \
 		if $(TF) -chdir="$$dir" init -backend=false -input=false >/dev/null 2>&1 \
@@ -846,11 +853,24 @@ validate: ## Validate every Terraform stack (no apply)
 		else echo "FAIL"; FAIL=1; fi; \
 	done; [ $$FAIL -eq 0 ]
 
+scaleway-test: ## Run `tofu test` in every envs/scaleway dir that ships .tftest.hcl files
+	@FAIL=0; for dir in $(SCW_TEST_DIRS); do \
+		if [ ! -d "$$dir/tests" ] || ! ls "$$dir"/tests/*.tftest.hcl >/dev/null 2>&1; then \
+			printf "  %-45s" "$$dir:"; echo "SKIP (no .tftest.hcl)"; continue; \
+		fi; \
+		printf "  %-45s" "$$dir:"; \
+		rm -rf "$$dir/.terraform" "$$dir/.terraform.lock.hcl"; \
+		if $(TF) -chdir="$$dir" init -backend=false -input=false >/dev/null 2>&1 \
+			&& $(TF) -chdir="$$dir" test >/dev/null 2>&1; then \
+			echo "OK"; \
+		else echo "FAIL"; FAIL=1; fi; \
+	done; [ $$FAIL -eq 0 ]
+
 velero-test: ## Run Velero backup/restore e2e test (Chainsaw)
 	@command -v chainsaw >/dev/null 2>&1 || { echo "Error: chainsaw required"; exit 1; }
 	KUBECONFIG=$(KC_FILE) chainsaw test tests/velero/
 
-test: validate ## Run validation + e2e tests
+test: validate scaleway-test ## Run validation + tofu test + e2e tests
 
 clean: ## Remove all build artifacts
 	rm -rf $(OUT_DIR)
