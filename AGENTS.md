@@ -4,8 +4,8 @@ Sovereign air-gapped Kubernetes platform built on Talos Linux v1.12, deploying a
 
 ## Stack
 
-- **OS**: Talos Linux v1.12.4 (immutable, no SSH, no shell, no systemd)
-- **Kubernetes**: v1.35.0 (3 control planes + 3 workers)
+- **OS**: Talos Linux v1.12.6 (immutable, no SSH, no shell, no systemd)
+- **Kubernetes**: v1.35.4 (3 control planes + 3 workers)
 - **IaC**: OpenTofu (Terraform fork), HCL, Makefile orchestration
 - **CNI**: Cilium 1.17.13 (eBPF, replaces kube-proxy)
 - **State backend**: vault-backend -> OpenBao KV v2 (podman, 3-node Raft)

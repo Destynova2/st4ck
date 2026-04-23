@@ -6,8 +6,8 @@ All configurable parameters for the Talos platform, organized by layer.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TALOS_VERSION` | v1.12.4 | Talos Linux OS version |
-| `KUBERNETES_VERSION` | 1.35.0 | Kubernetes version |
+| `TALOS_VERSION` | v1.12.6 | Talos Linux OS version |
+| `KUBERNETES_VERSION` | 1.35.4 | Kubernetes version |
 | `CILIUM_VERSION` | 1.17.13 | Cilium CNI Helm chart version |
 | `IMAGER_IMAGE` | ghcr.io/siderolabs/imager:$(TALOS_VERSION) | Talos image builder container |
 | `OUT_DIR` | _out | Build artifacts directory |

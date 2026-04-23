@@ -20,7 +20,7 @@
 
 2. Management Cluster (3 CP + 3 workers Talos)
    ├── etcd (integre a Talos)
-   ├── Kubernetes v1.35.0
+   ├── Kubernetes v1.35.4
    └── Cilium CNI 1.17 + Hubble
        ├── eBPF (remplace kube-proxy)
        ├── Network Policies L3/L4/L7
@@ -32,7 +32,7 @@
 
 **Livrable** : cluster 6 noeuds fonctionnel, reseau securise, DNS operationnel.
 
-- [x] Talos v1.12.4 + Kubernetes v1.35.0 (Scaleway)
+- [x] Talos v1.12.6 + Kubernetes v1.35.4 (Scaleway)
 - [x] Cilium 1.17.13 + Hubble relay
 - [x] Talos Factory schematic avec extension DRBD
 

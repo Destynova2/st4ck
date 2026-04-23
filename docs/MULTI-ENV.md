@@ -17,9 +17,9 @@ Scaleway organization
     ├── SSH key: st4ck-deploy (~/.ssh/talos_scaleway)
     │
     ├── Images (per region, immutable):
-    │   ├── st4ck-talos-v1.12.4-{sha7}   (fr-par)
-    │   ├── st4ck-talos-v1.12.4-{sha7}   (nl-ams)
-    │   └── st4ck-talos-v1.12.4-{sha7}   (pl-waw)
+    │   ├── st4ck-talos-v1.12.6-{sha7}   (fr-par)
+    │   ├── st4ck-talos-v1.12.6-{sha7}   (nl-ams)
+    │   └── st4ck-talos-v1.12.6-{sha7}   (pl-waw)
     │
     └── N clusters = N × (env, instance, region):
         ├── st4ck-dev-alice-fr-par    (Alice's sandbox)
@@ -135,8 +135,8 @@ graph TD
             SSH["SSH key st4ck-deploy"]
 
             subgraph ImagesRegion["Images (regional)"]
-                IMGFR["st4ck-talos-v1.12.4-abc1234<br/>fr-par"]
-                IMGNL["st4ck-talos-v1.12.4-abc1234<br/>nl-ams"]
+                IMGFR["st4ck-talos-v1.12.6-abc1234<br/>fr-par"]
+                IMGNL["st4ck-talos-v1.12.6-abc1234<br/>nl-ams"]
             end
 
             subgraph DevCI["Dev CI (shared)"]
