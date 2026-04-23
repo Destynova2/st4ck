@@ -12,6 +12,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_DIR="$(dirname "${SCRIPT_DIR}")"
+# shellcheck source=/dev/null
 source "${ENV_DIR}/vars.env"
 
 PATCHES_DIR="${ENV_DIR}/patches"
@@ -179,14 +180,22 @@ done
 
 echo ""
 echo "==> Validating generated configs..."
+rc=0
 for f in "${OUT}"/{cp,wrk}-*.yaml; do
     if talosctl validate -m metal -c "${f}" 2>/dev/null; then
         echo "   OK: ${f}"
     else
         echo "   FAIL: ${f}" >&2
+        rc=1
     fi
 done
 
+if [ "${rc}" -ne 0 ]; then
+    echo "==> Validation failed for one or more configs." >&2
+    exit "${rc}"
+fi
+
 echo ""
 echo "==> Done. Deliverables in ${OUT}/:"
+# shellcheck disable=SC2012  # brace expansion + simple listing; find would be heavier
 ls -1 "${OUT}"/{cp,wrk}-*.yaml "${OUT}/talosconfig" 2>/dev/null | sed 's/^/   /'
