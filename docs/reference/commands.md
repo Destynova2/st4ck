@@ -65,7 +65,6 @@ Each stack has `-init`, `-apply`, and `-destroy` targets:
 
 | Command | Description |
 |---------|-------------|
-| `make scaleway-bootstrap` | Bootstrap IAM + CI (once) |
 | `make scaleway-iam-init` | Init IAM stage |
 | `make scaleway-iam-apply` | Create IAM apps + API keys (requires secret.tfvars) |
 | `make scaleway-image-init` | Init image builder stage |
@@ -80,7 +79,6 @@ Each stack has `-init`, `-apply`, and `-destroy` targets:
 | `make scaleway-kubeconfig` | Export kubeconfig to ~/.kube/talos-scaleway |
 | `make scaleway-up` | Full deployment: cluster + all K8s stacks |
 | `make scaleway-down` | Full teardown: K8s stacks + cluster |
-| `make scaleway-demo` | Deploy + open Headlamp and Grafana live |
 | `make scaleway-teardown` | Down + destroy CI (keeps IAM + image) |
 | `make scaleway-nuke` | Destroy EVERYTHING (requires confirmation) |
 | `make scaleway-ci-init` | Init CI VM stage |
@@ -94,7 +92,6 @@ Each stack has `-init`, `-apply`, and `-destroy` targets:
 | `make scaleway-headlamp` | Open Headlamp UI (token in clipboard) |
 | `make scaleway-grafana` | Open Grafana UI |
 | `make scaleway-harbor` | Open Harbor UI (password in clipboard) |
-| `make scaleway-oidc` | Configure apiServer OIDC (Hydra -> K8s) |
 
 ## Local (libvirt/KVM)
 
@@ -117,37 +114,35 @@ Each stack has `-init`, `-apply`, and `-destroy` targets:
 | `make vmware-gen-configs` | Generate per-node machine configs (static IPs) |
 | `make vmware-bootstrap` | Bootstrap etcd + kubeconfig (post-deployment) |
 
-## CAPI (Workload Clusters)
+## CAPI / Kamaji / Managed Clusters
 
 | Command | Description |
 |---------|-------------|
-| `make capi-init` | Install CAPI + CAPT + CAPS providers |
-| `make capi-create-cpu` | Create CPU workload cluster (DEV1-S) |
-| `make capi-create-gpu` | Create GPU workload cluster (L4-1-24G) |
-| `make capi-status` | Show all workload cluster status |
-| `make capi-kubeconfig CLUSTER=name` | Get workload cluster kubeconfig |
-| `make capi-delete CLUSTER=name` | Delete a workload cluster |
-| `make capi-destroy` | Remove CAPI providers |
+| `make k8s-capi-init` | terraform init for CAPI stack |
+| `make k8s-capi-apply` | Install CAPI + CAPS + CABPT + Kamaji CP provider |
+| `make k8s-capi-destroy` | Remove CAPI providers |
+| `make k8s-kamaji-apply` | Install Kamaji operator + Ænix etcd-operator |
+| `make k8s-kamaji-destroy` | Remove Kamaji operator |
+| `make managed-cluster-apply` | Provision a tenant cluster from the current context |
+| `make managed-cluster-destroy` | Destroy the tenant cluster of the current context |
+| `make kaas-up` | Bring up the full KaaS control plane on the current mgmt cluster |
+| `make kaas-down` | Tear down the KaaS control plane (keeps core k8s stacks) |
 
 ## Tests
 
 | Command | Description |
 |---------|-------------|
-| `make scaleway-test` | Run all Scaleway tofu tests |
-| `make scaleway-iam-test` | Test IAM stage |
-| `make scaleway-image-test` | Test image stage |
-| `make scaleway-cluster-test` | Test cluster stage |
-| `make k8s-cni-test` | Test CNI stack |
+| `make validate` | Validate all generated machine configs + tofu validate every stack |
+| `make test` | Run validation + e2e tests (`validate` + e2e) |
 | `make velero-test` | Run Velero backup/restore validation |
 
 ## Utilities
 
 | Command | Description |
 |---------|-------------|
-| `make cilium-manifests` | Generate Cilium static manifests from Helm |
-| `make validate` | Validate all generated machine configs |
 | `make clean` | Remove all build artifacts |
 | `make garage-chart` | Fetch Garage Helm chart v2.2.0 |
+| `make lpp-chart` | Fetch local-path-provisioner Helm chart from upstream |
 | `make help` | Show all targets with descriptions |
 
 ## Environment Variables
