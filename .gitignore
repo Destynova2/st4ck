@@ -13,11 +13,12 @@ _out/
 **/terraform.tfvars
 **/secret.tfvars
 
-# Terraform state
+# Terraform state (pass1 #1: NEVER commit — exposes secrets even after git rm)
 **/.terraform/
+**/terraform.tfstate
+**/terraform.tfstate.*
 **/*.tfstate
-**/*.tfstate.backup
-**/*.tfstate.*.backup
+**/*.tfstate.*
 **/.terraform.lock.hcl
 
 # KMS bootstrap outputs (secrets)
