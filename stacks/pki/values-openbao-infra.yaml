@@ -112,6 +112,30 @@ server:
               policy = "path \"*\" { capabilities = [\"create\",\"update\",\"read\",\"delete\",\"list\",\"sudo\"] }"
             }
           }
+          # ─── Kamaji tenant KMS template policy ──────────────────────
+          # Used as the base template for per-tenant policies created by the
+          # ManagedCluster controller. Each tenant gets a policy named
+          # `kamaji-kms-tenant-<name>` scoped to its own transit key.
+          # This entry is a reference policy (unused directly, tenants get copies).
+          request "kamaji-kms-template-policy" {
+            operation = "update"
+            path      = "sys/policies/acl/kamaji-kms-template"
+            data = {
+              policy = "# Template — per-tenant policies are named kamaji-kms-tenant-<name>\n# and are created on tenant provisioning by the ManagedCluster controller.\n# Each tenant policy grants encrypt/decrypt/rewrap on its OWN key only.\n\npath \"transit/encrypt/tenant-TEMPLATE\" { capabilities = [\"update\"] }\npath \"transit/decrypt/tenant-TEMPLATE\" { capabilities = [\"update\"] }\npath \"transit/rewrap/tenant-TEMPLATE\"  { capabilities = [\"update\"] }\n"
+            }
+          }
+        }
+
+        # ─── Self-init: AppRole auth (Kamaji KMS sidecars) ───────────
+        # Each tenant's vault-kms-plugin sidecar authenticates here with a
+        # unique role-id + secret-id pair. Per-tenant AppRole roles are
+        # created on-demand by the ManagedCluster controller.
+        initialize "approle-auth" {
+          request "enable-approle-auth" {
+            operation = "update"
+            path      = "sys/auth/approle"
+            data      = { type = "approle" }
+          }
         }
 
         # ─── Self-init: K8s auth (Flux SSH + ESO) ───────────────────
@@ -148,22 +172,10 @@ server:
           }
         }
 
-        # ─── Self-init: Audit logging (stdout → VictoriaLogs) ────────
-        initialize "audit" {
-          request "enable-stdout-audit" {
-            operation = "update"
-            path      = "sys/audit/stdout"
-            data = {
-              type = "file"
-              options = {
-                file_path = "stdout"
-                log_raw   = false
-              }
-            }
-          }
-        }
-
         # ─── Self-init: Admin userpass (break-glass access) ─────────
+        # MUST be before any block that might fail — OpenBao aborts the
+        # remaining `initialize` blocks on the first error, and we depend
+        # on admin existing for seed_openbao_secrets to log in.
         initialize "admin" {
           request "mount-userpass" {
             operation = "update"
