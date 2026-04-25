@@ -79,7 +79,34 @@ resource "helm_release" "flux" {
   depends_on = [kubernetes_namespace.flux_system]
 }
 
+# ─── Service ExternalName: gitea.ci.internal → CI VM public IP ─────
+# Without this, Flux GitRepository can't resolve gitea.ci.internal via the
+# cluster's internal DNS (CoreDNS). ExternalName creates a DNS CNAME inside
+# the cluster pointing to the CI VM hostname/IP that hosts Gitea.
+#
+# Why an ExternalName Service instead of hardcoding the IP in the
+# GitRepository url:
+#   - Cluster-internal DNS keeps working if the CI VM's public IP changes
+#     (just update the var.gitea_external_host, the Service stays)
+#   - NetworkPolicies can target the Service (not a raw IP)
+#   - The public IP doesn't appear in committed manifests (cleaner audit)
+resource "kubernetes_service" "gitea_external" {
+  metadata {
+    name      = "gitea"
+    namespace = "flux-system"
+  }
+  spec {
+    type          = "ExternalName"
+    external_name = var.gitea_external_host
+  }
+  depends_on = [kubernetes_namespace.flux_system]
+}
+
 # ─── GitRepository source (SSH) ──────────────────────────────────
+# url uses gitea.flux-system.svc.cluster.local (resolved by the Service
+# above). The DNS short-name "gitea" works inside flux-system but the
+# FQDN is portable across namespaces if Flux ever needs to reach it
+# from elsewhere.
 resource "kubectl_manifest" "flux_git_repo" {
   yaml_body = <<-YAML
     apiVersion: source.toolkit.fluxcd.io/v1
@@ -96,7 +123,11 @@ resource "kubectl_manifest" "flux_git_repo" {
         name: flux-ssh-identity
   YAML
 
-  depends_on = [helm_release.flux, kubernetes_secret.flux_ssh_identity]
+  depends_on = [
+    helm_release.flux,
+    kubernetes_secret.flux_ssh_identity,
+    kubernetes_service.gitea_external,
+  ]
 }
 
 # ─── Root Kustomization (points to clusters/management/) ────────

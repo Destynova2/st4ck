@@ -1,0 +1,72 @@
+# OpenClarity — multi-scanner vulnerability + SBOM platform
+# https://openclarity.io/  (Linux Foundation / OpenSSF)
+#
+# Continuous discovery of in-cluster images + parallel scan with Trivy +
+# Grype + Syft. Findings are deduped and exposed via UI/API backed by
+# Postgres.
+#
+# Why both Trivy operator AND OpenClarity (transient): Trivy operator
+# emits CR-based VulnerabilityReport (consumed by Polaris/kube-bench),
+# OpenClarity gives the multi-scanner view + UI. Migration tracked in
+# ADR-027.
+
+# ─── Discovery: which images to scan ────────────────────────────────
+discovery:
+  # Scan every image found in any pod across the cluster.
+  scope: cluster
+  # Re-discover every 6h (cluster image set is mostly stable post-deploy)
+  intervalSeconds: 21600
+
+# ─── Scanners ────────────────────────────────────────────────────────
+scanners:
+  vulnerability:
+    enabled: true
+    scanners:
+      - trivy
+      - grype
+  sbom:
+    enabled: true
+    scanners:
+      - syft
+  secret:
+    enabled: false  # Trivy operator already handles secret scanning
+
+# ─── Backend (UI + API + Postgres) ──────────────────────────────────
+ui:
+  enabled: true
+  service:
+    type: ClusterIP
+
+apiserver:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+# Use embedded Postgres for now (single-replica, OK for dev).
+# Production: switch to external CNPG cluster (mirror what identity stack
+# does for Hydra/Kratos).
+postgres:
+  enabled: true
+  embedded: true
+
+# ─── Scanner job resources ───────────────────────────────────────────
+scannerJobs:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 2Gi  # Grype DB can grow ~1GB
+  ttlSecondsAfterFinished: 300
+
+# Use a shared PVC across scanner jobs to avoid each scan re-downloading
+# the Trivy/Grype DB (~500MB-1GB each). Requires RWO since only one job
+# runs at a time per scanner type.
+sharedCache:
+  enabled: true
+  storageClass: local-path
+  size: 5Gi

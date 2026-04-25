@@ -10,9 +10,14 @@ variable "flux_version" {
 }
 
 variable "gitea_ssh_url" {
-  description = "Gitea SSH URL for Flux (ssh://gitea.ci.internal:22/infra/talos.git)"
+  description = "Gitea SSH URL for Flux. Default uses the in-cluster Service ExternalName 'gitea' in flux-system, which routes to var.gitea_external_host."
   type        = string
-  default     = "ssh://git@gitea.ci.internal:22/infra/talos.git"
+  default     = "ssh://git@gitea.flux-system.svc.cluster.local:22/infra/talos.git"
+}
+
+variable "gitea_external_host" {
+  description = "Public IP or hostname of the CI VM that hosts Gitea. Used by the in-cluster Service ExternalName so the GitRepository url can stay symbolic."
+  type        = string
 }
 
 variable "gitea_known_hosts" {

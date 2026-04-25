@@ -6,8 +6,11 @@ operator:
   clusterComplianceEnabled: false
   # Disable node scanning entirely (Talos: no systemd, read-only fs — ADR-004)
   scanNodeCollectorLimit: 0
-  # Limit concurrent scan jobs to avoid resource pressure on fresh clusters
-  concurrentScanJobsLimit: 3
+  # Limit concurrent scan jobs to 1: in Standalone mode each job downloads
+  # the Trivy DB into an emptyDir, and parallel jobs hit each other's
+  # cache lockfile (FATAL: cache may be in use by another process).
+  # Server mode (mode: ClientServer) would let us go higher — see ADR-027.
+  concurrentScanJobsLimit: 1
   scanJobTimeout: 10m
   # Auto-cleanup completed scan jobs after 5 minutes
   scanJobTTL: 300s

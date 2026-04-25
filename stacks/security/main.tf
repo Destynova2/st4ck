@@ -46,6 +46,11 @@ resource "kubernetes_namespace" "security" {
 }
 
 # ─── Trivy Operator (vulnerability scanning + SBOM) ──────────────────
+# Kept alongside OpenClarity during the migration: Trivy operator emits
+# VulnerabilityReport CRs that other tooling (e.g. Polaris, kube-bench)
+# consume directly. OpenClarity is a higher-level multi-scanner that also
+# uses Trivy under the hood — they don't conflict, just produce two
+# overlapping data sources. Migration plan: see ADR-027.
 
 resource "helm_release" "trivy_operator" {
   name             = "trivy-operator"
@@ -56,6 +61,29 @@ resource "helm_release" "trivy_operator" {
   create_namespace = false
 
   values = [file("${path.module}/values-trivy.yaml")]
+
+  depends_on = [kubernetes_namespace.security]
+}
+
+# ─── OpenClarity (multi-scanner: Trivy + Grype + Syft) ───────────────
+# Linux Foundation / OpenSSF project (formerly KubeClarity by Anchore).
+# Discovers images in the cluster, runs Trivy + Grype + Syft in parallel,
+# dedupes findings, exposes a UI + API + Postgres-backed history.
+#
+# Two scanners on the same image catch CVEs that one alone misses:
+#   - Trivy DB: NVD + RedHat + Alpine + Debian + Ubuntu + …
+#   - Grype DB: Anchore syft + GitHub Security Advisories
+# Defense-in-depth without paying for Snyk.
+
+resource "helm_release" "openclarity" {
+  name             = "openclarity"
+  repository       = "https://openclarity.github.io/openclarity"
+  chart            = "openclarity"
+  version          = var.openclarity_version
+  namespace        = "security"
+  create_namespace = false
+
+  values = [file("${path.module}/values-openclarity.yaml")]
 
   depends_on = [kubernetes_namespace.security]
 }

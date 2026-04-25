@@ -261,13 +261,18 @@ flux-bootstrap-apply: flux-bootstrap-init ## Install Flux + GitRepository + root
 	@echo "--- Scanning Gitea SSH host key from $(VB_HOST):2222 ---"
 	$(eval GITEA_KNOWN_HOSTS := $(shell ssh-keyscan -q -p 2222 -t ed25519,rsa $(VB_HOST) 2>/dev/null))
 	@test -n "$(GITEA_KNOWN_HOSTS)" || { echo "ERROR: ssh-keyscan failed for $(VB_HOST):2222. Is Gitea running?"; exit 1; }
+	$(eval GITEA_HOST_FOR_SVC := $(shell $(TF) -chdir=$(TF_SCW_CI) output -raw ci_ip 2>/dev/null))
+	@test -n "$(GITEA_HOST_FOR_SVC)" || { echo "ERROR: ci_ip not in CI tofu state — run scaleway-ci-apply first"; exit 1; }
 	$(TF) -chdir=$(TF_FLUX) apply -auto-approve $(K8S_COMMON_VARS) \
-		-var="gitea_known_hosts=$(GITEA_KNOWN_HOSTS)"
+		-var="gitea_known_hosts=$(GITEA_KNOWN_HOSTS)" \
+		-var="gitea_external_host=$(GITEA_HOST_FOR_SVC)"
 
 flux-bootstrap-destroy: flux-bootstrap-init
 	$(eval GITEA_KNOWN_HOSTS := $(shell ssh-keyscan -q -p 2222 -t ed25519,rsa $(VB_HOST) 2>/dev/null || echo "destroy-noop ssh-ed25519 AAAA"))
+	$(eval GITEA_HOST_FOR_SVC := $(shell $(TF) -chdir=$(TF_SCW_CI) output -raw ci_ip 2>/dev/null || echo "destroy-noop"))
 	$(TF) -chdir=$(TF_FLUX) destroy -auto-approve $(K8S_COMMON_VARS) \
-		-var="gitea_known_hosts=$(GITEA_KNOWN_HOSTS)"
+		-var="gitea_known_hosts=$(GITEA_KNOWN_HOSTS)" \
+		-var="gitea_external_host=$(GITEA_HOST_FOR_SVC)"
 
 # ─── KaaS stacks — Kamaji + CAPI + autoscaling + gateway (management cluster) ──
 
@@ -604,9 +609,12 @@ scaleway-cp-replace: scaleway-init ## Replace one CP node (NODE=cp-XX) — etcd 
 	else \
 	  echo "   $(NODE) not in etcd members (nothing to remove)"; \
 	fi
-	@echo ">>> [3/4] tofu taint scaleway_instance_server.cp[\"$(NODE)\"]"
-	$(SCW_CLUSTER_ENV) $(TF) -chdir=$(TF_SCALEWAY) taint 'scaleway_instance_server.cp["$(NODE)"]'
-	@echo ">>> [4/4] tofu apply — recreate $(NODE), Talos joins fresh"
+	@echo ">>> [3/4] tofu taint server + ephemeral volume + IP for $(NODE)"
+	$(SCW_CLUSTER_ENV) $(TF) -chdir=$(TF_SCALEWAY) taint 'scaleway_instance_server.cp["$(NODE)"]' || true
+	@# A talosctl reset on the previous failure may have already deleted the
+	@# ephemeral SBS volume out of band; tell tofu to forget + recreate it too.
+	$(SCW_CLUSTER_ENV) $(TF) -chdir=$(TF_SCALEWAY) taint 'scaleway_instance_volume.cp_ephemeral["$(NODE)"]' || true
+	@echo ">>> [4/4] tofu apply -refresh — recreate $(NODE), Talos joins fresh"
 	$(SCW_CLUSTER_ENV) $(TF) -chdir=$(TF_SCALEWAY) apply -auto-approve $(SCW_CLUSTER_VARS)
 	@echo ""
 	@echo "================================================================"
