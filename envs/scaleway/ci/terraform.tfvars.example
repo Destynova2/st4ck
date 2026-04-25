@@ -1,0 +1,21 @@
+# Copy to terraform.tfvars and fill / override defaults.
+# This file is gitignored — NEVER commit terraform.tfvars.
+#
+# `context_file` is the minimum required — it points to the YAML file
+# carrying {namespace, env, instance, region, owner, management_cidrs, …}.
+# The Makefile injects it automatically from ENV/INSTANCE/REGION.
+
+context_file = "contexts/dev-shared-fr-par.yaml"
+
+# Credentials are injected by the Makefile from the IAM stage outputs:
+#   scw_access_key, scw_secret_key             → ci IAM app for this env class
+#   scw_image_access_key, scw_image_secret_key → image-builder IAM app
+#   scw_cluster_access_key, scw_cluster_secret_key → cluster IAM app
+#   project_id                                 → shared project ID
+
+# Optional overrides (otherwise defaults apply):
+# instance_type       = "DEV1-M"
+# root_disk_size      = 40
+# ssh_public_key_path = "~/.ssh/talos_scaleway.pub"
+# ssh_private_key_path = "~/.ssh/talos_scaleway"
+# git_repo_url        = "https://github.com/Destynova2/st4ck.git"

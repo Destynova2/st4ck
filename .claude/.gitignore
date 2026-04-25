@@ -4,3 +4,11 @@ settings.local.json
 # Brigade runtime artefacts (working dirs, not specs)
 cycle-progress/
 sprint-history/
+
+# Per-sprint brigade prompts and runtime locks (specs are in the skill,
+# not in the project; only the generic prompt templates are tracked).
+prompts/chef-*.md
+prompts/ccheck-*.md
+prompts/contre-chef-inter-*.md
+prompts/*.initial.txt
+scheduled_tasks.lock
