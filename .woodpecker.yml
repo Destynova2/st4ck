@@ -33,7 +33,6 @@ steps:
           stacks/security \
           stacks/storage \
           stacks/flux-bootstrap \
-          stacks/external-secrets \
           stacks/autoscaling \
           stacks/capi \
           stacks/kamaji \

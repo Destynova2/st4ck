@@ -1,4 +1,5 @@
 terraform {
+  required_version = ">= 1.6"
   required_providers {
     scaleway = {
       source  = "scaleway/scaleway"
@@ -13,28 +14,58 @@ provider "scaleway" {
   project_id = var.project_id
 }
 
-# ─── S3 Bucket ───────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+# Talos image naming:
+#   {namespace}-talos-{semver}-{schematic7}
+#
+# Example: st4ck-talos-v1.12.4-613e159
+#
+# Rebuilds with a new schematic produce a NEW image (different sha7) —
+# old and new images coexist, no mutation, clusters keep their pinned
+# reference. Images are regional resources, so the same name in another
+# region is independent; the stage is run once per target region.
+# ═══════════════════════════════════════════════════════════════════════
 
-resource "scaleway_object_bucket" "talos_image" {
-  name          = "talos-image-${var.project_id}"
-  region        = var.region
-  force_destroy = true
+locals {
+  schematic7   = substr(var.talos_schematic_id, 0, 7)
+  image_base   = "${var.namespace}-talos-${var.talos_version}-${local.schematic7}"
+  bucket_name  = "${var.namespace}-talos-image-${var.region}-${local.schematic7}"
+  builder_name = "${var.namespace}-image-builder"
+
+  base_tags = [
+    "app:${var.namespace}",
+    "component:talos-image",
+    "talos-version:${var.talos_version}",
+    "schematic:${local.schematic7}",
+    "region:${var.region}",
+    "managed-by:opentofu",
+    "owner:${var.owner}",
+  ]
 }
 
-# ─── Builder VM ──────────────────────────────────────────────────────────
-# Ephemeral Ubuntu instance that downloads the Talos image from
-# factory.talos.dev, converts it to QCOW2, and uploads it to the S3
-# bucket — all inside Scaleway's network (fast, no local bandwidth).
-#
-# Two-phase apply:
-#   1. `tofu apply -target=scaleway_instance_server.builder` → starts build
-#   2. Wait for S3 upload (CI gate or `make scaleway-image-wait`)
-#   3. `tofu apply` → imports snapshots + creates images
+# ─── S3 bucket (ephemeral — holds the qcow2 during import) ──────────────
 
-resource "scaleway_instance_ip" "builder" {}
+resource "scaleway_object_bucket" "talos_image" {
+  name          = local.bucket_name
+  region        = var.region
+  force_destroy = true
+
+  tags = {
+    for t in local.base_tags :
+    split(":", t)[0] => split(":", t)[1]
+  }
+}
+
+# ─── Ephemeral builder VM ──────────────────────────────────────────────
+# Downloads Talos qcow2 from factory.talos.dev, uploads to the bucket above.
+# Two-phase: (1) apply -target=server → wait upload → (2) full apply.
+
+resource "scaleway_instance_ip" "builder" {
+  tags = local.base_tags
+}
 
 resource "scaleway_instance_server" "builder" {
-  name  = "talos-image-builder"
+  name  = local.builder_name
   type  = "DEV1-S"
   image = "ubuntu_jammy"
   ip_id = scaleway_instance_ip.builder.id
@@ -50,14 +81,13 @@ resource "scaleway_instance_server" "builder" {
     })
   }
 
-  tags = ["talos", "builder", "ephemeral"]
+  tags = concat(local.base_tags, ["role:ephemeral-builder"])
 }
 
-# ─── Snapshot imported from S3 ───────────────────────────────────────────
-# Requires: S3 upload complete (ensured by CI gate between the two applies)
+# ─── Snapshots + images (l_ssd for DEV/GP, block for GPU) ──────────────
 
 resource "scaleway_instance_snapshot" "talos" {
-  name = "talos-${var.talos_version}"
+  name = local.image_base
   type = "l_ssd"
 
   import {
@@ -65,21 +95,19 @@ resource "scaleway_instance_snapshot" "talos" {
     key    = "scaleway-amd64.qcow2"
   }
 
+  tags       = concat(local.base_tags, ["storage:l_ssd"])
   depends_on = [scaleway_instance_server.builder]
 }
 
-# ─── Bootable image from snapshot (local SSD — DEV1, GP1, etc.) ─────────
-
 resource "scaleway_instance_image" "talos" {
-  name           = "talos-${var.talos_version}"
+  name           = local.image_base
   root_volume_id = scaleway_instance_snapshot.talos.id
   architecture   = "x86_64"
+  tags           = concat(local.base_tags, ["storage:l_ssd"])
 }
 
-# ─── Block snapshot from S3 (for GPU instances: L4, H100, etc.) ─────────
-
 resource "scaleway_block_snapshot" "talos" {
-  name = "talos-${var.talos_version}-block"
+  name = "${local.image_base}-block"
   zone = var.zone
 
   import {
@@ -87,11 +115,13 @@ resource "scaleway_block_snapshot" "talos" {
     key    = "scaleway-amd64.qcow2"
   }
 
+  tags       = concat(local.base_tags, ["storage:block"])
   depends_on = [scaleway_instance_server.builder]
 }
 
 resource "scaleway_instance_image" "talos_block" {
-  name           = "talos-${var.talos_version}-block"
+  name           = "${local.image_base}-block"
   root_volume_id = scaleway_block_snapshot.talos.id
   architecture   = "x86_64"
+  tags           = concat(local.base_tags, ["storage:block"])
 }

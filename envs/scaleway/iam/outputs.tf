@@ -106,6 +106,33 @@ output "ci_prod_secret_key" {
   sensitive = true
 }
 
+# ─── Bare-metal keys (Phase B Karpenter provider — issue #1) ────────────
+
+output "bare_metal_dev_access_key" {
+  value     = try(scaleway_iam_api_key.app["bare-metal-dev"].access_key, null)
+  sensitive = true
+}
+output "bare_metal_dev_secret_key" {
+  value     = try(scaleway_iam_api_key.app["bare-metal-dev"].secret_key, null)
+  sensitive = true
+}
+output "bare_metal_staging_access_key" {
+  value     = try(scaleway_iam_api_key.app["bare-metal-staging"].access_key, null)
+  sensitive = true
+}
+output "bare_metal_staging_secret_key" {
+  value     = try(scaleway_iam_api_key.app["bare-metal-staging"].secret_key, null)
+  sensitive = true
+}
+output "bare_metal_prod_access_key" {
+  value     = try(scaleway_iam_api_key.app["bare-metal-prod"].access_key, null)
+  sensitive = true
+}
+output "bare_metal_prod_secret_key" {
+  value     = try(scaleway_iam_api_key.app["bare-metal-prod"].secret_key, null)
+  sensitive = true
+}
+
 # ═══════════════════════════════════════════════════════════════════════
 # Claude-scoped IAM outputs
 # ═══════════════════════════════════════════════════════════════════════

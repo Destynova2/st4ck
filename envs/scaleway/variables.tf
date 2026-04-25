@@ -1,85 +1,28 @@
+variable "context_file" {
+  description = "Path to the context YAML (contexts/{env}-{instance}-{region}.yaml)."
+  type        = string
+}
+
 variable "project_id" {
-  description = "Scaleway project ID (from IAM stage)"
+  description = "Scaleway project ID (from IAM stage) — same project hosts every env."
   type        = string
 }
 
-variable "zone" {
-  description = "Scaleway zone"
+variable "talos_image_name" {
+  description = "Name of the Talos image to boot (from image/ stage output). Example: 'st4ck-talos-v1.12.4-613e159'."
   type        = string
-  default     = "fr-par-1"
 }
 
-variable "region" {
-  description = "Scaleway region"
-  type        = string
-  default     = "fr-par"
-}
-
-variable "cluster_name" {
-  description = "Cluster name prefix"
-  type        = string
-  default     = "talos"
-}
-
-variable "talos_version" {
-  description = "Talos Linux version"
-  type        = string
-  default     = "v1.12.4"
-}
-
-variable "kubernetes_version" {
-  description = "Kubernetes version"
-  type        = string
-  default     = "1.35.0"
-}
-
-# ─── Nodes ─────────────────────────────────────────────────────────────────
-
-variable "controlplane_count" {
-  description = "Number of control plane nodes"
-  type        = number
-  default     = 3
-}
-
-variable "worker_count" {
-  description = "Number of worker nodes"
-  type        = number
-  default     = 3
-}
-
-variable "cp_instance_type" {
-  description = "Instance type for control planes"
-  type        = string
-  default     = "DEV1-M"
-}
-
-variable "worker_instance_type" {
-  description = "Instance type for workers"
-  type        = string
-  default     = "DEV1-L"
-}
-
-variable "ephemeral_disk_size" {
-  description = "Size of the 2nd disk for EPHEMERAL in GiB"
-  type        = number
-  default     = 25
-}
-
-# ─── DNS ──────────────────────────────────────────────────────────────────
+# ─── DNS (optional) ────────────────────────────────────────────────────
 
 variable "dns_zone" {
-  description = "DNS zone for the cluster endpoint"
+  description = "DNS zone for the cluster endpoint. Empty disables DNS record creation."
   type        = string
+  default     = ""
 }
 
-variable "dns_subdomain" {
-  description = "Subdomain for the Kubernetes API"
+variable "dns_subdomain_prefix" {
+  description = "Subdomain prefix — final FQDN is '{prefix}-{env}-{instance}-{region}.{zone}'. Default 'api'."
   type        = string
-  default     = "api.talos"
-}
-
-variable "enable_dns" {
-  description = "Create DNS record (requires domain in Scaleway DNS)"
-  type        = bool
-  default     = false
+  default     = "api"
 }
