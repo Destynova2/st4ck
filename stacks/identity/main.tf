@@ -94,6 +94,15 @@ resource "kubectl_manifest" "identity_pg_cluster" {
         initdb:
           database: identity
           owner: identity
+          # Schema-per-app isolation: kratos.* and hydra.* live in dedicated
+          # schemas instead of public.*. Recovery from a partial migration
+          # is now scoped to the affected app — DROP SCHEMA kratos CASCADE
+          # cleans Kratos without touching Hydra. See runbook W1.
+          postInitApplicationSQL:
+            - CREATE SCHEMA IF NOT EXISTS kratos AUTHORIZATION identity;
+            - CREATE SCHEMA IF NOT EXISTS hydra AUTHORIZATION identity;
+            - GRANT ALL ON SCHEMA kratos TO identity;
+            - GRANT ALL ON SCHEMA hydra TO identity;
       backup:
         barmanObjectStore:
           destinationPath: "s3://cnpg-backups/identity-pg"
@@ -141,8 +150,14 @@ data "kubernetes_secret" "pg_app" {
 }
 
 locals {
-  # CNPG uses postgresql:// but Ory expects postgres://, and needs sslmode=disable for in-cluster
-  pg_dsn = "${replace(data.kubernetes_secret.pg_app.data["uri"], "postgresql://", "postgres://")}?sslmode=disable"
+  # CNPG uses postgresql:// but Ory expects postgres://, and needs sslmode=disable for in-cluster.
+  # Schema-per-app: each Helm release gets its own search_path so Kratos lives
+  # in `kratos.*`, Hydra in `hydra.*`. A failed Kratos migration can be cleaned
+  # by `DROP SCHEMA kratos CASCADE` without affecting Hydra (and vice-versa).
+  # Schemas are pre-created by CNPG postInitApplicationSQL above.
+  pg_dsn_base = "${replace(data.kubernetes_secret.pg_app.data["uri"], "postgresql://", "postgres://")}?sslmode=disable"
+  pg_dsn_kratos = "${local.pg_dsn_base}&search_path=kratos"
+  pg_dsn_hydra  = "${local.pg_dsn_base}&search_path=hydra"
 }
 
 # ─── Ory Kratos (identity management) ─────────────────────────────
@@ -156,7 +171,7 @@ resource "helm_release" "kratos" {
   create_namespace = false
 
   values = [templatefile("${path.module}/values-kratos.yaml", {
-    dsn = local.pg_dsn
+    dsn = local.pg_dsn_kratos
   })]
 
   depends_on = [kubernetes_namespace.identity, kubectl_manifest.identity_pg_cluster]
@@ -199,7 +214,7 @@ resource "helm_release" "hydra" {
 
   values = [templatefile("${path.module}/values-hydra.yaml", {
     system_secret = local.secrets["hydra_system_secret"]
-    dsn           = local.pg_dsn
+    dsn           = local.pg_dsn_hydra
   })]
 
   depends_on = [kubernetes_namespace.identity, kubectl_manifest.hydra_tls_cert, kubectl_manifest.identity_pg_cluster]
