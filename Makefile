@@ -374,7 +374,7 @@ k8s-up: ## Deploy every k8s stack to the current context (ENV, INSTANCE, REGION)
 	@curl -so /dev/null -w '%{http_code}' $(VB_URL)/state/test 2>/dev/null | grep -qE '^(2|4)' || { echo "ERROR: vault-backend not reachable at $(VB_URL). Run 'make bootstrap' or 'make bootstrap-tunnel'."; exit 1; }
 	$(MAKE) k8s-cni-apply
 	$(MAKE) k8s-storage-init
-	$(TF) -chdir=$(TF_STORAGE) apply -auto-approve $(K8S_COMMON_VARS) -target=helm_release.local_path_provisioner -target=kubernetes_namespace.storage
+	$(TF) -chdir=$(TF_STORAGE) apply -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS) -target=helm_release.local_path_provisioner -target=kubernetes_namespace.storage
 	$(MAKE) k8s-pki-apply
 	$(MAKE) k8s-monitoring-apply
 	$(MAKE) k8s-identity-apply
