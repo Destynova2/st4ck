@@ -86,7 +86,10 @@ resource "helm_release" "garage" {
 # ─── Garage setup (split into 3 steps for reliability) ───────────────
 # Uses kubectl exec + garage CLI (simpler than the admin API v2).
 
-# Step 1: Wait for all 3 Garage pods to be Running
+# Step 1: Wait for all 3 Garage nodes to register with each other (not Ready —
+# Garage pods stay NotReady until the cluster layout is applied, which happens
+# in step 2; so polling K8s readinessProbe is a deadlock. We poll the Garage
+# RPC instead: `garage status` lists all nodes that have joined the cluster).
 resource "terraform_data" "garage_wait" {
   depends_on = [helm_release.garage]
 
@@ -94,13 +97,19 @@ resource "terraform_data" "garage_wait" {
     environment = { KUBECONFIG = var.kubeconfig_path }
     command = <<-EOT
       set -eu
-      echo "Waiting for Garage pods..."
+      echo "Waiting for all Garage pods to be in Running phase..."
       for i in $(seq 1 60); do
-        READY=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{.items[*].status.phase}' 2>/dev/null | tr ' ' '\n' | grep -c Running || echo 0)
-        [ "$READY" -ge 3 ] && echo "All 3 Garage pods running." && exit 0
-        echo "  $READY/3 running (attempt $i/60)..." && sleep 5
+        RUNNING=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{.items[*].status.phase}' 2>/dev/null | tr ' ' '\n' | grep -c Running || echo 0)
+        [ "$RUNNING" -ge 3 ] && break
+        echo "  $RUNNING/3 running (attempt $i/60)..." && sleep 5
       done
-      echo "ERROR: Garage pods not ready after 5 min" && exit 1
+      echo "Waiting for all 3 Garage nodes to register in the cluster (RPC)..."
+      for i in $(seq 1 60); do
+        NODES=$(kubectl -n garage exec garage-0 -c garage -- ./garage status 2>/dev/null | grep -cE '^[a-f0-9]{16}' || echo 0)
+        [ "$NODES" -ge 3 ] && echo "All 3 Garage nodes registered." && exit 0
+        echo "  $NODES/3 nodes registered (attempt $i/60)..." && sleep 5
+      done
+      echo "ERROR: Garage nodes not registered after 5 min" && exit 1
     EOT
   }
 }
