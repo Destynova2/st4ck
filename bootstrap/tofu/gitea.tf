@@ -10,28 +10,60 @@
 resource "terraform_data" "gitea_install" {
   provisioner "local-exec" {
     command = <<-SH
+      set -eu
       GITEA="${var.gitea_internal_url}"
-      echo "Waiting for Gitea..."
+      USER="${var.ci_admin}"
+      PASS="${var.ci_password}"
+
+      echo "[gitea] Waiting for API..."
       for i in $(seq 1 60); do
         wget -qO /dev/null "$GITEA/api/v1/version" 2>/dev/null && break
         sleep 2
       done
 
-      # Register first user via signup form (becomes admin automatically)
-      # Fetch CSRF token from signup page first
-      wget -qO /tmp/signup.html "$GITEA/user/sign_up" 2>/dev/null
-      CSRF=$(grep '_csrf' /tmp/signup.html | grep -o 'value="[^"]*"' | head -1 | cut -d'"' -f2)
+      # ─── Idempotent: skip signup if user already exists ────────────────
+      if wget -qO /tmp/user.json "$GITEA/api/v1/users/$USER" 2>/dev/null \
+         && grep -q "\"login\"" /tmp/user.json; then
+        echo "[gitea] User '$USER' already exists — skipping signup"
+        exit 0
+      fi
 
-      # POST signup — idempotent: if user exists, Gitea returns 200 with error in HTML
-      wget -qO /dev/null --post-data="_csrf=$CSRF&user_name=${var.ci_admin}&email=admin@ci.local&password=${var.ci_password}&retype=${var.ci_password}" \
-        "$GITEA/user/sign_up" 2>/dev/null || true
+      # ─── Get CSRF token from the signup form ───────────────────────────
+      wget -qO /tmp/signup.html "$GITEA/user/sign_up" 2>/dev/null || {
+        echo "[gitea] ERROR: wget failed to fetch /user/sign_up" >&2
+        exit 1
+      }
+      CSRF=$(grep '_csrf' /tmp/signup.html | grep -o 'value="[^"]*"' | head -1 | cut -d'"' -f2 || true)
 
-      echo "Waiting for Gitea API..."
-      for i in $(seq 1 30); do
-        wget -qO /dev/null "$GITEA/api/v1/version" 2>/dev/null && echo "Gitea ready" && exit 0
-        sleep 2
-      done
-      echo "ERROR: Gitea API not ready" && exit 1
+      if [ -z "$CSRF" ]; then
+        echo "[gitea] ERROR: failed to extract _csrf token from signup page" >&2
+        echo "[gitea] First 30 lines of /user/sign_up response:" >&2
+        head -30 /tmp/signup.html >&2 || true
+        echo "[gitea] FALLBACK: trying admin user create via Gitea CLI on disk..." >&2
+        # Last-resort: write a one-shot user-create script the gitea container
+        # will pick up on next exec. Caller (setup.sh.tpl) must podman-exec.
+        echo "$USER:$PASS:admin@ci.local" > /shared/gitea-pending-user
+        exit 1
+      fi
+
+      # ─── POST signup ───────────────────────────────────────────────────
+      wget -qO /tmp/signup-result.html \
+        --post-data="_csrf=$CSRF&user_name=$USER&email=admin@ci.local&password=$PASS&retype=$PASS" \
+        "$GITEA/user/sign_up" 2>/dev/null || {
+        echo "[gitea] ERROR: signup POST failed" >&2
+        exit 1
+      }
+
+      # ─── Verify user actually got created ──────────────────────────────
+      sleep 2
+      if ! wget -qO /tmp/user-verify.json "$GITEA/api/v1/users/$USER" 2>/dev/null \
+         || ! grep -q "\"login\"" /tmp/user-verify.json; then
+        echo "[gitea] ERROR: signup POST returned 200 but user '$USER' not in API" >&2
+        echo "[gitea] First 30 lines of signup result:" >&2
+        head -30 /tmp/signup-result.html >&2 || true
+        exit 1
+      fi
+      echo "[gitea] User '$USER' created and verified"
     SH
   }
 }
@@ -39,9 +71,9 @@ resource "terraform_data" "gitea_install" {
 # ─── OAuth app for Woodpecker ────────────────────────────────────────
 
 resource "gitea_oauth2_app" "woodpecker" {
-  name                  = "woodpecker"
-  confidential_client   = true
-  redirect_uris         = ["${var.wp_external_url}/authorize"]
+  name                = "woodpecker"
+  confidential_client = true
+  redirect_uris       = ["${var.wp_external_url}/authorize"]
 
   depends_on = [terraform_data.gitea_install]
 }

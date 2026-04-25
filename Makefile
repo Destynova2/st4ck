@@ -22,7 +22,7 @@ ENV       ?= dev
 INSTANCE  ?= shared
 REGION    ?= fr-par
 
-CTX_FILE := contexts/$(ENV)-$(INSTANCE)-$(REGION).yaml
+CTX_FILE := $(CURDIR)/contexts/$(ENV)-$(INSTANCE)-$(REGION).yaml
 CTX_ID   := $(NAMESPACE)-$(ENV)-$(INSTANCE)-$(REGION)
 CTX_PATH := $(NAMESPACE)/$(ENV)/$(INSTANCE)/$(REGION)
 KC_FILE  := $(HOME)/.kube/$(CTX_ID)
@@ -64,11 +64,24 @@ VMWARE       := envs/vmware-airgap
 # ─── Backend-config helper ───────────────────────────────────────────────
 # All state-using stages share the same base URL; only the path differs.
 # Usage: $(call tf_init,<dir>,<path_under_/state/>)
+#
+# Auto-detect: if vault-backend is unreachable (chicken-and-egg during the
+# very first CI VM bootstrap, when vault-backend doesn't exist yet), fall
+# back to a local backend. Run `make scaleway-migrate-state-up` later to
+# migrate local states into vault-backend once the tunnel is up.
+VB_PROBE_CODE := $(shell curl -sS --max-time 2 -o /dev/null -w '%{http_code}' $(VB_URL)/ 2>/dev/null || echo 000)
+USE_LOCAL_BACKEND := $(if $(filter 200 401 403 404,$(VB_PROBE_CODE)),,1)
+
 define tf_init
-	$(TF) -chdir=$(1) init -reconfigure -input=false \
-		-backend-config="address=$(VB_URL)/state/$(2)" \
-		-backend-config="lock_address=$(VB_URL)/state/$(2)" \
-		-backend-config="unlock_address=$(VB_URL)/state/$(2)"
+	@if [ -n "$(USE_LOCAL_BACKEND)" ]; then \
+		echo ">>> [tf_init] vault-backend NOT reachable at $(VB_URL) (HTTP $(VB_PROBE_CODE)) — using LOCAL backend for $(1)"; \
+		$(TF) -chdir=$(1) init -reconfigure -backend=false -input=false; \
+	else \
+		$(TF) -chdir=$(1) init -reconfigure -input=false \
+			-backend-config="address=$(VB_URL)/state/$(2)" \
+			-backend-config="lock_address=$(VB_URL)/state/$(2)" \
+			-backend-config="unlock_address=$(VB_URL)/state/$(2)"; \
+	fi
 endef
 
 # Stack-scoped state paths — hierarchical under the current context.
@@ -537,6 +550,69 @@ scaleway-ci-destroy: scaleway-ci-init
 	$(TF) -chdir=$(TF_SCW_CI) destroy -auto-approve $(SCW_CI_VARS)
 
 # ═══════════════════════════════════════════════════════════════════════
+# Scaleway — bootstrap helpers (chicken-and-egg: vault-backend lives ON the
+# CI VM we're provisioning, so the very first run uses LOCAL state, then
+# migrates to vault-backend once the SSH tunnel is up).
+# ═══════════════════════════════════════════════════════════════════════
+
+.PHONY: scaleway-bootstrap-vm scaleway-fetch-creds scaleway-tunnel-start scaleway-tunnel-stop scaleway-migrate-state-up
+
+CI_TUNNEL_PIDFILE := /tmp/st4ck-vb-tunnel-$(ENV)-$(INSTANCE)-$(REGION).pid
+
+scaleway-bootstrap-vm: ## ONE-SHOT first-time bootstrap of the CI VM (uses local state, then migrates)
+	@echo ">>> [1/4] tofu apply CI VM (local state if vault-backend not yet up)"
+	@$(MAKE) scaleway-ci-apply ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+	@echo ">>> [2/4] fetch kms-output from CI VM"
+	@$(MAKE) scaleway-fetch-creds ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+	@echo ">>> [3/4] open SSH tunnel localhost:8080 -> CI VM:8080 (background)"
+	@$(MAKE) scaleway-tunnel-start ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+	@echo ">>> [4/4] migrate IAM + CI state from local to vault-backend"
+	@$(MAKE) scaleway-migrate-state-up ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+	@echo ""
+	@echo "================================================================"
+	@echo "  CI VM ready. From now on use 'make scaleway-image-apply' etc."
+	@echo "  Tunnel PID: $$(cat $(CI_TUNNEL_PIDFILE) 2>/dev/null || echo '?')"
+	@echo "  Stop tunnel: make scaleway-tunnel-stop"
+	@echo "================================================================"
+
+scaleway-fetch-creds: ## scp kms-output/ from the CI VM to local
+	@CI_IP=$$($(TF) -chdir=$(TF_SCW_CI) output -raw ci_ip); \
+	mkdir -p $(KMS_OUTPUT) && \
+	scp -i ~/.ssh/talos_scaleway -o StrictHostKeyChecking=no \
+	  "root@$$CI_IP:/opt/talos/kms-output/*" $(KMS_OUTPUT)/ && \
+	echo "[fetch-creds] $$(ls $(KMS_OUTPUT) | wc -l) files copied to $(KMS_OUTPUT)/"
+
+scaleway-tunnel-start: ## Open background SSH tunnel local:8080 -> CI VM:8080
+	@if [ -f $(CI_TUNNEL_PIDFILE) ] && kill -0 $$(cat $(CI_TUNNEL_PIDFILE)) 2>/dev/null; then \
+		echo "[tunnel] already running (pid $$(cat $(CI_TUNNEL_PIDFILE)))"; \
+	else \
+		CI_IP=$$($(TF) -chdir=$(TF_SCW_CI) output -raw ci_ip); \
+		ssh -i ~/.ssh/talos_scaleway -o StrictHostKeyChecking=no \
+		  -L 8080:localhost:8080 -N -f \
+		  "root@$$CI_IP" && \
+		pgrep -f "ssh.*$$CI_IP.*-L 8080" | head -1 > $(CI_TUNNEL_PIDFILE) && \
+		echo "[tunnel] up (pid $$(cat $(CI_TUNNEL_PIDFILE)))"; \
+	fi
+
+scaleway-tunnel-stop: ## Kill the background SSH tunnel
+	@if [ -f $(CI_TUNNEL_PIDFILE) ]; then \
+		kill $$(cat $(CI_TUNNEL_PIDFILE)) 2>/dev/null && echo "[tunnel] killed"; \
+		rm -f $(CI_TUNNEL_PIDFILE); \
+	else echo "[tunnel] not running"; fi
+
+scaleway-migrate-state-up: ## Migrate IAM + CI states from local files to vault-backend
+	@echo "[migrate] IAM"
+	@$(TF) -chdir=$(TF_SCW_IAM) init -migrate-state -force-copy -input=false \
+	  -backend-config="address=$(VB_URL)/state/scaleway-iam" \
+	  -backend-config="lock_address=$(VB_URL)/state/scaleway-iam" \
+	  -backend-config="unlock_address=$(VB_URL)/state/scaleway-iam"
+	@echo "[migrate] CI"
+	@$(TF) -chdir=$(TF_SCW_CI) init -migrate-state -force-copy -input=false \
+	  -backend-config="address=$(VB_URL)/state/$(STATE_CI)" \
+	  -backend-config="lock_address=$(VB_URL)/state/$(STATE_CI)" \
+	  -backend-config="unlock_address=$(VB_URL)/state/$(STATE_CI)"
+
+# ═══════════════════════════════════════════════════════════════════════
 # Composite targets
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -957,3 +1033,119 @@ brigade-tier3-pass1-stop: ## Stop the tier3-pass1 brigade (preserves worktrees)
 	@echo "Brigade stopped. Worktrees preserved at ../st4ck-wt-{bootstrap,scaleway,k8s-day1,docs}."
 	@echo "Manual cleanup if sprint fully done:"
 	@echo "  for w in bootstrap scaleway k8s-day1 docs; do git worktree remove ../st4ck-wt-\$$w; done"
+
+# ─── tier3-em-smoke (supersedes tier3-pass1) ─────────────────────────
+# Phase A Tier 3 (12 fixes) + Phase B EM smoke (4 plats).
+# Adds: apply pane (tofu apply for EM smoke after 3/3 quorum + PATRON ACK),
+#       commis-em (cluster-3 elastic-metal + matchbox sidecar),
+#       wrapper bin/tofu-apply-with-quorum.sh (created by commis-bootstrap as P3-bis).
+
+.PHONY: brigade-tier3-em-smoke brigade-tier3-em-smoke-preflight brigade-tier3-em-smoke-stop brigade-tier3-em-smoke-cleanup
+
+EM_SESSION := tier3-em-smoke
+EM_TMUXINATOR := $(HOME)/.config/tmuxinator/$(EM_SESSION).yml
+
+brigade-tier3-em-smoke-preflight: ## Verify all tier3-em-smoke artefacts before launch
+	@echo "=== brigade-$(EM_SESSION) preflight ==="
+	@PATH="$(HOME)/.local/bin:$$PATH"; export PATH; \
+	RC=0; \
+	for tool in tmux tmuxinator claude gh git scw jq talosctl; do \
+	  if command -v $$tool >/dev/null 2>&1; then \
+	    printf "  %-15s OK (%s)\n" "$$tool" "$$(command -v $$tool)"; \
+	  else \
+	    printf "  %-15s MISSING\n" "$$tool"; \
+	    case "$$tool" in talosctl|jq) printf "                    (warning — needed for P15 EM smoke; install before P15)\n";; *) RC=1;; esac; \
+	  fi; \
+	done; \
+	for f in $(EM_TMUXINATOR) \
+	         .claude/prompts/chef-$(EM_SESSION).md \
+	         .claude/prompts/ccheck-$(EM_SESSION).md \
+	         .claude/prompts/contre-chef-inter-$(EM_SESSION).md \
+	         .claude/shared-state.md \
+	         .claude/permissions-brigade/gate/settings.local.json \
+	         .claude/permissions-brigade/maitre/settings.local.json \
+	         .claude/permissions-brigade/apply/settings.local.json \
+	         .claude/permissions-brigade/vote-scope/settings.local.json \
+	         .claude/permissions-brigade/vote-secu/settings.local.json \
+	         .claude/permissions-brigade/vote-qualite/settings.local.json \
+	         .claude/permissions-brigade/commis-bootstrap/settings.local.json \
+	         .claude/permissions-brigade/commis-scaleway/settings.local.json \
+	         .claude/permissions-brigade/commis-k8s-day1/settings.local.json \
+	         .claude/permissions-brigade/commis-docs/settings.local.json \
+	         .claude/permissions-brigade/commis-em/settings.local.json \
+	         docs/reviews/2026-04-22-cycle-pass1.md \
+	         docs/reviews/2026-04-21-cycle-pass2.md \
+	         modules/em-talos-bootstrap/main.tf; do \
+	  if [ -f $$f ]; then \
+	    printf "  %-15s OK (%s)\n" "file" "$$f"; \
+	  else \
+	    printf "  %-15s MISSING (%s)\n" "file" "$$f"; RC=1; \
+	  fi; \
+	done; \
+	echo "  scw profiles check..."; \
+	if scw -p st4ck-readonly config get access-key >/dev/null 2>&1; then \
+	  echo "    st4ck-readonly profile OK"; \
+	else \
+	  echo "    st4ck-readonly profile MISSING — run 'make scaleway-iam-claude-activate' first"; RC=1; \
+	fi; \
+	if scw -p st4ck-admin config get access-key >/dev/null 2>&1; then \
+	  echo "    st4ck-admin profile OK (apply pane will use this for P15)"; \
+	else \
+	  echo "    st4ck-admin profile MISSING — required for P15. Run 'make scaleway-iam-claude-config' to view the snippet."; RC=1; \
+	fi; \
+	echo "  bare-metal IAM keys in OpenBao..."; \
+	if curl -sS -m 2 http://localhost:8080/state/scaleway >/dev/null 2>&1; then \
+	  echo "    vault-backend reachable"; \
+	else \
+	  echo "    vault-backend not reachable on :8080 (warning — may not block this sprint as code-only Tier 3 plats don't need it; P15 will fail if down)"; \
+	fi; \
+	echo "  gh auth check..."; \
+	if gh auth status >/dev/null 2>&1; then echo "    gh authenticated OK"; else echo "    gh NOT authenticated"; RC=1; fi; \
+	if grep -q '"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"' $(HOME)/.claude/settings.json 2>/dev/null; then \
+	  echo "    Agent Teams enabled OK"; \
+	else \
+	  echo "    Agent Teams NOT enabled — set CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 in ~/.claude/settings.json"; RC=1; \
+	fi; \
+	echo "  branch protection check..."; \
+	if gh api repos/Destynova2/st4ck/rulesets 2>/dev/null | grep -q 'pull_request'; then \
+	  echo "    main is protected (PR mode confirmed)"; \
+	else \
+	  echo "    main NOT protected — sprint expects PR mode, verify configuration"; \
+	fi; \
+	if [ $$RC -eq 0 ]; then echo "=== preflight PASS ==="; else echo "=== preflight FAIL — fix above before launching ==="; exit 1; fi
+
+brigade-tier3-em-smoke: brigade-tier3-em-smoke-preflight ## Launch the tier3-em-smoke brigade (Phase A Tier 3 + Phase B EM smoke)
+	@echo "=== launching brigade $(EM_SESSION) ==="
+	@echo "  Watch the chef pane:    tmux attach -t $(EM_SESSION)"
+	@echo "  Live ccheck log:        tail -f /tmp/$(EM_SESSION)-ccheck.log"
+	@echo "  Live inter log:         tail -f /tmp/$(EM_SESSION)-inter.log"
+	@echo "  Apply plans audit:      ls -la .claude/plans/"
+	@echo "  Stop brigade:           make brigade-$(EM_SESSION)-stop"
+	@echo "  Cleanup worktrees:      make brigade-$(EM_SESSION)-cleanup"
+	@echo
+	@echo "  IMPORTANT: cost cap €1, EM server MUST be destroyed within 2h of P15 apply success."
+	@echo "  IMPORTANT: Chef + commis run on st4ck-readonly. Apply pane switches to st4ck-admin only inside bin/tofu-apply-with-quorum.sh."
+	@echo
+	tmuxinator start $(EM_SESSION)
+
+brigade-tier3-em-smoke-stop: ## Stop the tier3-em-smoke brigade (preserves worktrees)
+	tmuxinator stop $(EM_SESSION) 2>/dev/null || tmux kill-session -t $(EM_SESSION) 2>/dev/null || true
+	@echo "Brigade stopped. Worktrees preserved at ../st4ck-wt-{gate,maitre,apply,vote-*,commis-*}."
+	@echo "  Inspect with: git worktree list"
+	@echo "  Full cleanup: make brigade-$(EM_SESSION)-cleanup"
+	@echo
+	@echo "  SAFETY: if P15 apply succeeded but destroy did NOT, manually verify:"
+	@echo "    scw -p st4ck-readonly baremetal server list -o json | jq '.[] | select(.tags | contains([\"sprint=tier3-em-smoke\"]))'"
+	@echo "    If output is non-empty, the EM server is still billing — destroy via:"
+	@echo "      scw -p st4ck-admin baremetal server delete <server-id> zone=fr-par-2"
+
+brigade-tier3-em-smoke-cleanup: ## Remove all worktrees + branches for tier3-em-smoke (post-shutdown)
+	@for w in gate maitre apply vote-scope vote-secu vote-qualite commis-bootstrap commis-scaleway commis-k8s-day1 commis-docs commis-em; do \
+	  echo "  removing ../st4ck-wt-$$w"; \
+	  git worktree remove ../st4ck-wt-$$w --force 2>/dev/null || true; \
+	done
+	@for b in wt/gate wt/maitre wt/apply wt/vote-scope wt/vote-secu wt/vote-qualite; do \
+	  echo "  deleting branch $$b"; \
+	  git branch -D $$b 2>/dev/null || true; \
+	done
+	@echo "Cleanup complete. The chore/phase-a-tier3-em-smoke branch is preserved (it has the sprint commits)."

@@ -3,7 +3,7 @@ terraform {
 }
 
 locals {
-  defaults = var.defaults_file == "" ? {} : yamldecode(file(var.defaults_file))
+  defaults = try(yamldecode(file(var.defaults_file)), {})
   overlay  = yamldecode(file(var.context_file))
 
   merged = merge(local.defaults, local.overlay)
