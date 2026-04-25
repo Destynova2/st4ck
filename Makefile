@@ -197,6 +197,14 @@ k8s-identity-init:
 	$(call tf_init,$(TF_IDENTITY),$(STATE_IDENTITY))
 
 k8s-identity-apply: k8s-identity-init ## Deploy Kratos + Hydra + Pomerium
+	@echo "[identity] phase 1/3: deploy CNPG operator + identity-pg cluster CR"
+	$(TF) -chdir=$(TF_IDENTITY) apply -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS) \
+		-target=helm_release.cnpg_operator \
+		-target=kubectl_manifest.identity_pg_cluster \
+		-target=kubernetes_namespace.identity
+	@echo "[identity] phase 2/3: wait for CNPG to materialise the identity-pg-app secret (~60s)"
+	@KUBECONFIG=$(KC_FILE) kubectl -n identity wait --for=create secret/identity-pg-app --timeout=180s
+	@echo "[identity] phase 3/3: full apply (Kratos/Hydra/Pomerium consume the now-existing PG DSN)"
 	$(TF) -chdir=$(TF_IDENTITY) apply -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS)
 
 k8s-identity-destroy: k8s-identity-init
