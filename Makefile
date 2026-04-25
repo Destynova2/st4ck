@@ -624,13 +624,13 @@ scaleway-fetch-creds: ## scp kms-output/ from the CI VM to local
 	scp $(SSH_OPTS) "root@$$CI_IP:/opt/talos/kms-output/*" $(KMS_OUTPUT)/ && \
 	echo "[fetch-creds] $$(ls $(KMS_OUTPUT) | wc -l) files copied to $(KMS_OUTPUT)/"
 
-scaleway-tunnel-start: ## Open background SSH tunnel local:8080 -> CI VM:8080
+scaleway-tunnel-start: ## Open background SSH tunnel local:8080 (vault-backend) + :2222 (Gitea SSH) -> CI VM
 	@if [ -f $(CI_TUNNEL_PIDFILE) ] && kill -0 $$(cat $(CI_TUNNEL_PIDFILE)) 2>/dev/null; then \
 		echo "[tunnel] already running (pid $$(cat $(CI_TUNNEL_PIDFILE)))"; \
 	else \
 		CI_IP=$$($(TF) -chdir=$(TF_SCW_CI) output -raw ci_ip); \
 		ssh-keygen -R "$$CI_IP" >/dev/null 2>&1 || true; \
-		ssh $(SSH_OPTS) -L 8080:localhost:8080 -N -f "root@$$CI_IP" && \
+		ssh $(SSH_OPTS) -L 8080:localhost:8080 -L 2222:localhost:2222 -N -f "root@$$CI_IP" && \
 		pgrep -f "ssh.*$$CI_IP.*-L 8080" | head -1 > $(CI_TUNNEL_PIDFILE) && \
 		echo "[tunnel] up (pid $$(cat $(CI_TUNNEL_PIDFILE)))"; \
 	fi
