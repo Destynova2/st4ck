@@ -219,8 +219,10 @@ garage-chart: ## Fetch Garage Helm chart (v2.2.0) from upstream
 
 lpp-chart: ## Fetch local-path-provisioner Helm chart (v0.0.35) from Rancher upstream
 	@mkdir -p $(LPP_CHART)
+	@# strip-components=4 puts Chart.yaml directly in $(LPP_CHART)/ (matches what
+	# helm_release.local_path_provisioner expects via chart="${path.module}/chart-local-path")
 	@curl -sL "https://github.com/rancher/local-path-provisioner/archive/refs/tags/v0.0.35.tar.gz" | \
-		tar -xz --strip-components=3 -C $(LPP_CHART) "local-path-provisioner-0.0.35/deploy/chart/local-path-provisioner/"
+		tar -xz --strip-components=4 -C $(LPP_CHART) "local-path-provisioner-0.0.35/deploy/chart/local-path-provisioner/"
 	@echo "local-path-provisioner Helm chart fetched to $(LPP_CHART)/"
 
 k8s-storage-init: garage-chart lpp-chart
