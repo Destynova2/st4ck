@@ -3,6 +3,27 @@ variable "kubeconfig_path" {
   type        = string
 }
 
+# ─── PKI remote state (HTTP backend, parameterized like backend.tf) ──────
+# Allows identity to reach the same vault-backend path that hosts the
+# pki state for the current (env, instance, region) context.
+
+variable "pki_state_address" {
+  description = "vault-backend HTTP URL of the pki stack's state for the current context."
+  type        = string
+}
+
+variable "pki_state_username" {
+  description = "AppRole role-id for pki state read (= TF_HTTP_USERNAME)."
+  type        = string
+  sensitive   = true
+}
+
+variable "pki_state_password" {
+  description = "AppRole secret-id for pki state read (= TF_HTTP_PASSWORD)."
+  type        = string
+  sensitive   = true
+}
+
 # ─── Ory ─────────────────────────────────────────────────────────────
 
 variable "kratos_version" {

@@ -142,6 +142,14 @@ context: ## Show the current context (derived from ENV/INSTANCE/REGION)
 K8S_COMMON_VARS = \
 	-var="kubeconfig_path=$(KC_FILE)"
 
+# Stacks that read pki outputs via data.terraform_remote_state need the
+# parameterized HTTP backend address + AppRole creds. Same path as
+# `tf_init` builds for the pki stack (STATE_PKI under CTX_PATH).
+K8S_PKI_REMOTE_STATE_VARS = \
+	-var="pki_state_address=$(VB_URL)/state/$(STATE_PKI)" \
+	-var="pki_state_username=$(TF_HTTP_USERNAME)" \
+	-var="pki_state_password=$(TF_HTTP_PASSWORD)"
+
 # ─── k8s-cni ─────────────────────────────────────────────────────────────
 
 .PHONY: k8s-cni-init k8s-cni-apply k8s-cni-destroy
@@ -189,10 +197,10 @@ k8s-identity-init:
 	$(call tf_init,$(TF_IDENTITY),$(STATE_IDENTITY))
 
 k8s-identity-apply: k8s-identity-init ## Deploy Kratos + Hydra + Pomerium
-	$(TF) -chdir=$(TF_IDENTITY) apply -auto-approve $(K8S_COMMON_VARS)
+	$(TF) -chdir=$(TF_IDENTITY) apply -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS)
 
 k8s-identity-destroy: k8s-identity-init
-	$(TF) -chdir=$(TF_IDENTITY) destroy -auto-approve $(K8S_COMMON_VARS)
+	$(TF) -chdir=$(TF_IDENTITY) destroy -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS)
 
 # ─── k8s-security ────────────────────────────────────────────────────────
 
@@ -229,10 +237,10 @@ k8s-storage-init: garage-chart lpp-chart
 	$(call tf_init,$(TF_STORAGE),$(STATE_STORAGE))
 
 k8s-storage-apply: k8s-storage-init ## Deploy local-path + Garage + Velero + Harbor
-	$(TF) -chdir=$(TF_STORAGE) apply -auto-approve $(K8S_COMMON_VARS)
+	$(TF) -chdir=$(TF_STORAGE) apply -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS)
 
 k8s-storage-destroy: k8s-storage-init
-	$(TF) -chdir=$(TF_STORAGE) destroy -auto-approve $(K8S_COMMON_VARS)
+	$(TF) -chdir=$(TF_STORAGE) destroy -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS)
 
 # ─── flux-bootstrap ──────────────────────────────────────────────────────
 

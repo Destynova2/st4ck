@@ -22,7 +22,9 @@ terraform {
 data "terraform_remote_state" "pki" {
   backend = "http"
   config = {
-    address = "http://localhost:8080/state/pki"
+    address  = var.pki_state_address
+    username = var.pki_state_username
+    password = var.pki_state_password
   }
 }
 
