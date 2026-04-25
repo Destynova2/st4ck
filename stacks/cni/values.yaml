@@ -5,6 +5,13 @@ ipam:
 
 kubeProxyReplacement: true
 
+# Socket-level load balancing (required when kube-proxy is disabled and host
+# network workloads — kube-apiserver, kubelet — need to reach Service ClusterIPs.
+# Without this, validating/mutating webhooks called by kube-apiserver time out.
+socketLB:
+  enabled: true
+  hostNamespaceOnly: false
+
 securityContext:
   capabilities:
     ciliumAgent:
