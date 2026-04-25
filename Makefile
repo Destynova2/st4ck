@@ -217,7 +217,14 @@ k8s-identity-destroy: k8s-identity-init
 k8s-security-init:
 	$(call tf_init,$(TF_SECURITY),$(STATE_SECURITY))
 
-k8s-security-apply: k8s-security-init ## Deploy Trivy + Tetragon + Kyverno
+k8s-security-apply: k8s-security-init ## Deploy Trivy + Tetragon + Kyverno + OpenClarity
+	@echo "[security] phase 1/3: namespace + CNPG cluster CR for OpenClarity"
+	$(TF) -chdir=$(TF_SECURITY) apply -auto-approve $(K8S_COMMON_VARS) \
+		-target=kubernetes_namespace.security \
+		-target=kubectl_manifest.openclarity_pg_cluster
+	@echo "[security] phase 2/3: wait for CNPG to materialise openclarity-pg-app secret"
+	@KUBECONFIG=$(KC_FILE) kubectl -n security wait --for=create secret/openclarity-pg-app --timeout=180s
+	@echo "[security] phase 3/3: full apply (Trivy + Tetragon + Kyverno + OpenClarity)"
 	$(TF) -chdir=$(TF_SECURITY) apply -auto-approve $(K8S_COMMON_VARS)
 
 k8s-security-destroy: k8s-security-init
@@ -397,9 +404,20 @@ k8s-up: ## Deploy every k8s stack to the current context (ENV, INSTANCE, REGION)
 
 k8s-down: ## Destroy every k8s stack on the current context (correct order)
 	@curl -so /dev/null -w '%{http_code}' $(VB_URL)/state/test 2>/dev/null | grep -qE '^(2|4)' || { echo "ERROR: vault-backend not reachable at $(VB_URL)."; exit 1; }
-	@# Remove Kyverno webhooks first to prevent them blocking other deletions
-	@KUBECONFIG=$(KC_FILE) kubectl delete mutatingwebhookconfiguration -l app.kubernetes.io/instance=kyverno --ignore-not-found 2>/dev/null || true
-	@KUBECONFIG=$(KC_FILE) kubectl delete validatingwebhookconfiguration -l app.kubernetes.io/instance=kyverno --ignore-not-found 2>/dev/null || true
+	@# Pre-destroy: strip finalizers that block namespace deletion
+	@# (Flux GitRepository/Kustomization, CNPG Cluster, Kyverno webhooks).
+	@# All wrapped in `|| true` because they may not exist if the stack was
+	@# never deployed — the goal is to make ns delete unblock-able, not to
+	@# enforce presence.
+	@echo "[k8s-down] strip finalizers that block ns delete"
+	@KUBECONFIG=$(KC_FILE) kubectl delete mutatingwebhookconfiguration -l app.kubernetes.io/instance=kyverno --ignore-not-found --timeout=30s 2>/dev/null || true
+	@KUBECONFIG=$(KC_FILE) kubectl delete validatingwebhookconfiguration -l app.kubernetes.io/instance=kyverno --ignore-not-found --timeout=30s 2>/dev/null || true
+	@KUBECONFIG=$(KC_FILE) kubectl -n flux-system get gitrepositories.source.toolkit.fluxcd.io -o name 2>/dev/null \
+		| xargs -r -I {} kubectl --kubeconfig=$(KC_FILE) -n flux-system patch {} --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+	@KUBECONFIG=$(KC_FILE) kubectl -n flux-system get kustomizations.kustomize.toolkit.fluxcd.io -o name 2>/dev/null \
+		| xargs -r -I {} kubectl --kubeconfig=$(KC_FILE) -n flux-system patch {} --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+	@KUBECONFIG=$(KC_FILE) kubectl get clusters.postgresql.cnpg.io -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"/"}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+		| while IFS=/ read ns name; do [ -n "$$name" ] && kubectl --kubeconfig=$(KC_FILE) -n $$ns patch cluster.postgresql.cnpg.io $$name --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null; done || true
 	-$(MAKE) flux-bootstrap-destroy
 	-$(MAKE) k8s-storage-destroy
 	-$(MAKE) k8s-security-destroy
