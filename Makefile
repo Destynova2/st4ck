@@ -37,8 +37,10 @@ KMS_OUTPUT         := kms-output
 VB_HOST            ?= localhost
 VB_PORT            ?= 8080
 VB_URL             := http://$(VB_HOST):$(VB_PORT)
-export TF_HTTP_USERNAME := $(shell cat $(KMS_OUTPUT)/approle-role-id.txt 2>/dev/null)
-export TF_HTTP_PASSWORD := $(shell cat $(KMS_OUTPUT)/approle-secret-id.txt 2>/dev/null)
+# Lazy (=, not :=) so each sub-make/tofu call re-reads from disk. Critical
+# during scaleway-bootstrap-vm where kms-output/ is populated mid-run.
+export TF_HTTP_USERNAME = $(shell cat $(KMS_OUTPUT)/approle-role-id.txt 2>/dev/null)
+export TF_HTTP_PASSWORD = $(shell cat $(KMS_OUTPUT)/approle-secret-id.txt 2>/dev/null)
 
 # ─── Stack paths ─────────────────────────────────────────────────────────
 
@@ -65,18 +67,34 @@ VMWARE       := envs/vmware-airgap
 # All state-using stages share the same base URL; only the path differs.
 # Usage: $(call tf_init,<dir>,<path_under_/state/>)
 #
-# Auto-detect: if vault-backend is unreachable (chicken-and-egg during the
-# very first CI VM bootstrap, when vault-backend doesn't exist yet), fall
-# back to a local backend. Run `make scaleway-migrate-state-up` later to
-# migrate local states into vault-backend once the tunnel is up.
-VB_PROBE_CODE := $(shell curl -sS --max-time 2 -o /dev/null -w '%{http_code}' $(VB_URL)/ 2>/dev/null || echo 000)
-USE_LOCAL_BACKEND := $(if $(filter 200 401 403 404,$(VB_PROBE_CODE)),,1)
+# Backend selection:
+#   - default: vault-backend (HTTP). Loud failure if unreachable — better
+#     than silently switching backends, which would orphan state already
+#     stored in vault-backend.
+#   - LOCAL_BACKEND=1 explicitly opts into local state via OpenTofu's
+#     override-file convention: a file matching *_override.tf overlays the
+#     same blocks in other .tf files. We drop a `_local_backend_override.tf`
+#     into the module dir, which switches the backend block to "local"
+#     without editing the tracked backend.tf. After `make scaleway-migrate-state-up`,
+#     the override is removed and the module reverts to HTTP backend.
+#     Used during the chicken-and-egg first CI VM bootstrap, where
+#     vault-backend lives ON the VM we're provisioning.
+LOCAL_BACKEND ?=
+
+define _local_backend_override
+terraform {
+  backend "local" {}
+}
+endef
+export _local_backend_override
 
 define tf_init
-	@if [ -n "$(USE_LOCAL_BACKEND)" ]; then \
-		echo ">>> [tf_init] vault-backend NOT reachable at $(VB_URL) (HTTP $(VB_PROBE_CODE)) — using LOCAL backend for $(1)"; \
-		$(TF) -chdir=$(1) init -reconfigure -backend=false -input=false; \
+	@if [ -n "$(LOCAL_BACKEND)" ]; then \
+		echo ">>> [tf_init] LOCAL_BACKEND=1 — overlay local backend in $(1)"; \
+		printf '%s\n' "$$_local_backend_override" > $(1)/_local_backend_override.tf; \
+		$(TF) -chdir=$(1) init -reconfigure -input=false; \
 	else \
+		rm -f $(1)/_local_backend_override.tf; \
 		$(TF) -chdir=$(1) init -reconfigure -input=false \
 			-backend-config="address=$(VB_URL)/state/$(2)" \
 			-backend-config="lock_address=$(VB_URL)/state/$(2)" \
@@ -404,7 +422,7 @@ local-down:
 .PHONY: scaleway-iam-init scaleway-iam-apply scaleway-iam-destroy scaleway-iam-claude-config scaleway-iam-claude-activate
 
 scaleway-iam-init: ## terraform init for Scaleway IAM
-	$(TF) -chdir=$(TF_SCW_IAM) init
+	$(call tf_init,$(TF_SCW_IAM),scaleway-iam)
 
 scaleway-iam-apply: scaleway-iam-init ## Create project + 9 IAM apps + API keys + Claude-scoped apps (requires secret.tfvars)
 	$(TF) -chdir=$(TF_SCW_IAM) apply -auto-approve -var-file=secret.tfvars
@@ -560,8 +578,8 @@ scaleway-ci-destroy: scaleway-ci-init
 CI_TUNNEL_PIDFILE := /tmp/st4ck-vb-tunnel-$(ENV)-$(INSTANCE)-$(REGION).pid
 
 scaleway-bootstrap-vm: ## ONE-SHOT first-time bootstrap of the CI VM (uses local state, then migrates)
-	@echo ">>> [1/4] tofu apply CI VM (local state if vault-backend not yet up)"
-	@$(MAKE) scaleway-ci-apply ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+	@echo ">>> [1/4] tofu apply CI VM (local state — vault-backend lives ON this VM)"
+	@$(MAKE) scaleway-ci-apply LOCAL_BACKEND=1 ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
 	@echo ">>> [2/4] fetch kms-output from CI VM"
 	@$(MAKE) scaleway-fetch-creds ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
 	@echo ">>> [3/4] open SSH tunnel localhost:8080 -> CI VM:8080 (background)"
@@ -575,11 +593,17 @@ scaleway-bootstrap-vm: ## ONE-SHOT first-time bootstrap of the CI VM (uses local
 	@echo "  Stop tunnel: make scaleway-tunnel-stop"
 	@echo "================================================================"
 
+# Common SSH opts for ephemeral VMs: clean stale known_hosts entries + skip
+# strict checking. Scaleway re-allocates IPs across destroy/create cycles, so
+# the host key under the same IP changes — without -R, ssh blocks the
+# connection for safety even with StrictHostKeyChecking=no.
+SSH_OPTS = -i ~/.ssh/talos_scaleway -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
+
 scaleway-fetch-creds: ## scp kms-output/ from the CI VM to local
 	@CI_IP=$$($(TF) -chdir=$(TF_SCW_CI) output -raw ci_ip); \
+	ssh-keygen -R "$$CI_IP" >/dev/null 2>&1 || true; \
 	mkdir -p $(KMS_OUTPUT) && \
-	scp -i ~/.ssh/talos_scaleway -o StrictHostKeyChecking=no \
-	  "root@$$CI_IP:/opt/talos/kms-output/*" $(KMS_OUTPUT)/ && \
+	scp $(SSH_OPTS) "root@$$CI_IP:/opt/talos/kms-output/*" $(KMS_OUTPUT)/ && \
 	echo "[fetch-creds] $$(ls $(KMS_OUTPUT) | wc -l) files copied to $(KMS_OUTPUT)/"
 
 scaleway-tunnel-start: ## Open background SSH tunnel local:8080 -> CI VM:8080
@@ -587,9 +611,8 @@ scaleway-tunnel-start: ## Open background SSH tunnel local:8080 -> CI VM:8080
 		echo "[tunnel] already running (pid $$(cat $(CI_TUNNEL_PIDFILE)))"; \
 	else \
 		CI_IP=$$($(TF) -chdir=$(TF_SCW_CI) output -raw ci_ip); \
-		ssh -i ~/.ssh/talos_scaleway -o StrictHostKeyChecking=no \
-		  -L 8080:localhost:8080 -N -f \
-		  "root@$$CI_IP" && \
+		ssh-keygen -R "$$CI_IP" >/dev/null 2>&1 || true; \
+		ssh $(SSH_OPTS) -L 8080:localhost:8080 -N -f "root@$$CI_IP" && \
 		pgrep -f "ssh.*$$CI_IP.*-L 8080" | head -1 > $(CI_TUNNEL_PIDFILE) && \
 		echo "[tunnel] up (pid $$(cat $(CI_TUNNEL_PIDFILE)))"; \
 	fi
@@ -601,16 +624,48 @@ scaleway-tunnel-stop: ## Kill the background SSH tunnel
 	else echo "[tunnel] not running"; fi
 
 scaleway-migrate-state-up: ## Migrate IAM + CI states from local files to vault-backend
-	@echo "[migrate] IAM"
+	@echo "[migrate-up] IAM (local -> vault-backend)"
+	@rm -f $(TF_SCW_IAM)/_local_backend_override.tf
 	@$(TF) -chdir=$(TF_SCW_IAM) init -migrate-state -force-copy -input=false \
 	  -backend-config="address=$(VB_URL)/state/scaleway-iam" \
 	  -backend-config="lock_address=$(VB_URL)/state/scaleway-iam" \
 	  -backend-config="unlock_address=$(VB_URL)/state/scaleway-iam"
-	@echo "[migrate] CI"
+	@echo "[migrate-up] CI (local -> vault-backend)"
+	@rm -f $(TF_SCW_CI)/_local_backend_override.tf
 	@$(TF) -chdir=$(TF_SCW_CI) init -migrate-state -force-copy -input=false \
 	  -backend-config="address=$(VB_URL)/state/$(STATE_CI)" \
 	  -backend-config="lock_address=$(VB_URL)/state/$(STATE_CI)" \
 	  -backend-config="unlock_address=$(VB_URL)/state/$(STATE_CI)"
+
+scaleway-migrate-state-down: ## Migrate IAM + CI states from vault-backend BACK to local (before destroy)
+	@echo "[migrate-down] IAM (vault-backend -> local)"
+	@printf '%s\n' "$$_local_backend_override" > $(TF_SCW_IAM)/_local_backend_override.tf
+	@$(TF) -chdir=$(TF_SCW_IAM) init -migrate-state -force-copy -input=false
+	@echo "[migrate-down] CI (vault-backend -> local)"
+	@printf '%s\n' "$$_local_backend_override" > $(TF_SCW_CI)/_local_backend_override.tf
+	@$(TF) -chdir=$(TF_SCW_CI) init -migrate-state -force-copy -input=false
+
+# ═══════════════════════════════════════════════════════════════════════
+# Safe teardown of the CI VM
+# Order matters: migrate state OFF the VM first, THEN destroy. Otherwise
+# vault-backend (which lives on the VM) dies mid-destroy and leaves the
+# state lock orphaned + the state file unreachable.
+# ═══════════════════════════════════════════════════════════════════════
+
+.PHONY: scaleway-teardown-vm
+
+scaleway-teardown-vm: ## Safely destroy the CI VM (migrates state to local first to avoid lock orphan)
+	@echo ">>> [1/3] migrate state from vault-backend to local"
+	@$(MAKE) scaleway-migrate-state-down ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+	@echo ">>> [2/3] stop SSH tunnel"
+	@$(MAKE) scaleway-tunnel-stop ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+	@echo ">>> [3/3] destroy CI VM (now safe — state is local)"
+	@$(MAKE) scaleway-ci-destroy LOCAL_BACKEND=1 ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+	@echo ""
+	@echo "================================================================"
+	@echo "  CI VM destroyed. IAM state preserved locally."
+	@echo "  Run 'make scaleway-bootstrap-vm' to recreate."
+	@echo "================================================================"
 
 # ═══════════════════════════════════════════════════════════════════════
 # Composite targets

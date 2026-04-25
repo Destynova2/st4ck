@@ -70,27 +70,24 @@ sed -e "s|__SOURCE_DIR__|/opt/talos/repo|g" \
 podman play kube "$WORKDIR/pod-with-secrets.yaml" \
   --configmap="$WORKDIR/configmap.yaml"
 
-# ─── Wait for setup sidecar to finish (or hit the gitea CSRF fallback) ──
+# ─── Create the Gitea admin user BEFORE the sidecar tries to use it ─────
+# (Reliable: bypasses the CSRF/cookie-session signup form, which is brittle
+# from inside the sidecar where wget can't keep cookies between requests.)
+echo "Waiting for Gitea HTTP..."
+for i in $(seq 1 60); do
+  curl -sf -o /dev/null "http://localhost:3000/api/v1/version" 2>/dev/null && break
+  sleep 2
+done
+echo "Creating Gitea admin user '$ADMIN' (idempotent)..."
+podman exec -u git platform-gitea gitea admin user create \
+  --username "$ADMIN" --password "$PASSWORD" --email "admin@ci.local" \
+  --admin --must-change-password=false 2>&1 || \
+  echo "[setup] gitea admin user create returned non-zero (may already exist — OK)"
+
+# ─── Wait for setup sidecar to finish ────────────────────────────────────
 echo "Waiting for platform setup..."
 for i in $(seq 1 120); do
-  if podman logs platform-tofu-setup 2>&1 | grep -q '\[setup\] ==='; then
-    break
-  fi
-  # Fallback: gitea_install told us CSRF failed and dropped pending-user file.
-  # Create the admin via gitea CLI directly, then restart the sidecar.
-  if podman exec platform-tofu-setup test -f /shared/gitea-pending-user 2>/dev/null; then
-    echo "[setup-fallback] gitea CSRF failed — creating admin via gitea CLI"
-    PENDING=$(podman exec platform-tofu-setup cat /shared/gitea-pending-user)
-    PU=$(echo "$PENDING" | cut -d: -f1)
-    PP=$(echo "$PENDING" | cut -d: -f2)
-    PE=$(echo "$PENDING" | cut -d: -f3)
-    podman exec -u git platform-gitea gitea admin user create \
-      --username "$PU" --password "$PP" --email "$PE" \
-      --admin --must-change-password=false || \
-      echo "[setup-fallback] user creation returned non-zero (may already exist)"
-    podman exec platform-tofu-setup rm -f /shared/gitea-pending-user
-    podman restart platform-tofu-setup
-  fi
+  podman logs platform-tofu-setup 2>&1 | grep -q '\[setup\] ===' && break
   sleep 5
 done
 

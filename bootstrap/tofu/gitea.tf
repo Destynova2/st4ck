@@ -8,12 +8,17 @@
 # This POST does NOT trigger a server restart — it's a normal signup.
 
 resource "terraform_data" "gitea_install" {
+  # The Gitea CSRF signup form is brittle from inside the sidecar (wget can't
+  # preserve the session cookie tied to the CSRF token). Instead, the host-side
+  # setup.sh (envs/scaleway/ci/setup.sh.tpl) creates the admin via:
+  #   podman exec -u git platform-gitea gitea admin user create ...
+  # before the sidecar reaches this resource. We just wait for the user to
+  # exist via the public API, then proceed.
   provisioner "local-exec" {
     command = <<-SH
       set -eu
       GITEA="${var.gitea_internal_url}"
       USER="${var.ci_admin}"
-      PASS="${var.ci_password}"
 
       echo "[gitea] Waiting for API..."
       for i in $(seq 1 60); do
@@ -21,49 +26,20 @@ resource "terraform_data" "gitea_install" {
         sleep 2
       done
 
-      # ─── Idempotent: skip signup if user already exists ────────────────
-      if wget -qO /tmp/user.json "$GITEA/api/v1/users/$USER" 2>/dev/null \
-         && grep -q "\"login\"" /tmp/user.json; then
-        echo "[gitea] User '$USER' already exists — skipping signup"
-        exit 0
-      fi
+      echo "[gitea] Waiting for admin user '$USER' (created host-side via podman exec)..."
+      for i in $(seq 1 60); do
+        if wget -qO /tmp/user.json "$GITEA/api/v1/users/$USER" 2>/dev/null \
+           && grep -q "\"login\"" /tmp/user.json; then
+          echo "[gitea] User '$USER' exists — proceeding"
+          exit 0
+        fi
+        sleep 2
+      done
 
-      # ─── Get CSRF token from the signup form ───────────────────────────
-      wget -qO /tmp/signup.html "$GITEA/user/sign_up" 2>/dev/null || {
-        echo "[gitea] ERROR: wget failed to fetch /user/sign_up" >&2
-        exit 1
-      }
-      CSRF=$(grep '_csrf' /tmp/signup.html | grep -o 'value="[^"]*"' | head -1 | cut -d'"' -f2 || true)
-
-      if [ -z "$CSRF" ]; then
-        echo "[gitea] ERROR: failed to extract _csrf token from signup page" >&2
-        echo "[gitea] First 30 lines of /user/sign_up response:" >&2
-        head -30 /tmp/signup.html >&2 || true
-        echo "[gitea] FALLBACK: trying admin user create via Gitea CLI on disk..." >&2
-        # Last-resort: write a one-shot user-create script the gitea container
-        # will pick up on next exec. Caller (setup.sh.tpl) must podman-exec.
-        echo "$USER:$PASS:admin@ci.local" > /shared/gitea-pending-user
-        exit 1
-      fi
-
-      # ─── POST signup ───────────────────────────────────────────────────
-      wget -qO /tmp/signup-result.html \
-        --post-data="_csrf=$CSRF&user_name=$USER&email=admin@ci.local&password=$PASS&retype=$PASS" \
-        "$GITEA/user/sign_up" 2>/dev/null || {
-        echo "[gitea] ERROR: signup POST failed" >&2
-        exit 1
-      }
-
-      # ─── Verify user actually got created ──────────────────────────────
-      sleep 2
-      if ! wget -qO /tmp/user-verify.json "$GITEA/api/v1/users/$USER" 2>/dev/null \
-         || ! grep -q "\"login\"" /tmp/user-verify.json; then
-        echo "[gitea] ERROR: signup POST returned 200 but user '$USER' not in API" >&2
-        echo "[gitea] First 30 lines of signup result:" >&2
-        head -30 /tmp/signup-result.html >&2 || true
-        exit 1
-      fi
-      echo "[gitea] User '$USER' created and verified"
+      echo "[gitea] ERROR: admin user '$USER' was not created within 120s" >&2
+      echo "[gitea] Expected: setup.sh on the VM should run:" >&2
+      echo "  podman exec -u git platform-gitea gitea admin user create --username $USER ..." >&2
+      exit 1
     SH
   }
 }
