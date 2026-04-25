@@ -81,7 +81,10 @@ resource "terraform_data" "seed_openbao_secrets" {
     command = <<-EOT
       set -eu
 
-      BAO="kubectl -n secrets exec openbao-infra-0 -c openbao -- env BAO_ADDR=http://127.0.0.1:8200"
+      # OpenBao listener is HTTPS (cert-manager-provided cert via openbao-infra-tls).
+      # BAO_SKIP_VERIFY because we're hitting 127.0.0.1 from inside the pod —
+      # the cert is for the cluster-internal DNS name, not the loopback.
+      BAO="kubectl -n secrets exec openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true"
 
       echo "Waiting for OpenBao Infra API..."
       for i in $(seq 1 60); do
