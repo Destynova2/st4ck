@@ -8,6 +8,14 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.0"
     }
+    # alekc/kubectl applies manifests lazily (no plan-time CRD validation).
+    # Required for VMRule etc. that depend on CRDs installed by helm_release
+    # in the same apply — vanilla kubernetes_manifest fails at plan time when
+    # the CRD doesn't exist yet.
+    kubectl = {
+      source  = "alekc/kubectl"
+      version = "~> 2.0"
+    }
   }
 }
 
@@ -19,6 +27,10 @@ provider "helm" {
   kubernetes {
     config_path = var.kubeconfig_path
   }
+}
+
+provider "kubectl" {
+  config_path = var.kubeconfig_path
 }
 
 # ─── Monitoring Namespace ────────────────────────────────────────────────
@@ -112,9 +124,13 @@ resource "helm_release" "headlamp" {
 }
 
 # ─── Flux alerting rules (VMRule for VictoriaMetrics) ──────────────────
+# kubectl_manifest (alekc) instead of kubernetes_manifest because the latter
+# validates against the live K8s API at PLAN time — fails when the VMRule
+# CRD doesn't exist yet (installed by helm_release.vm_k8s_stack in the same
+# apply). kubectl_manifest is lazy: validation happens at apply time only.
 
-resource "kubernetes_manifest" "flux_alerts" {
-  manifest = {
+resource "kubectl_manifest" "flux_alerts" {
+  yaml_body = yamlencode({
     apiVersion = "operator.victoriametrics.com/v1beta1"
     kind       = "VMRule"
     metadata = {
@@ -164,7 +180,7 @@ resource "kubernetes_manifest" "flux_alerts" {
         ]
       }]
     }
-  }
+  })
 
   depends_on = [helm_release.vm_k8s_stack]
 }
