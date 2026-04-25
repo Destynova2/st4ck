@@ -1,4 +1,5 @@
 terraform {
+  required_version = ">= 1.6"
   required_providers {
     scaleway = {
       source  = "scaleway/scaleway"
@@ -8,55 +9,117 @@ terraform {
       source  = "siderolabs/talos"
       version = "~> 0.10"
     }
-}
-}
-
-provider "scaleway" {
-  zone       = var.zone
-  region     = var.region
-  project_id = var.project_id
+  }
 }
 
-# ─── Talos Image (built by image/ stage) ─────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+# Cluster stage — deploys ONE Talos cluster in ONE region.
+# Multi-region prod = run this stage N times with different contexts.
+#
+# Naming: every resource follows
+#   {namespace}-{env}-{instance}-{region}-{component}[-{attr}][-{NN}]
+# Enforced via modules/naming at plan time.
+# ═══════════════════════════════════════════════════════════════════════
 
-data "scaleway_instance_image" "talos" {
-  name         = "talos-${var.talos_version}"
-  architecture = "x86_64"
+module "context" {
+  source        = "../../modules/context"
+  context_file  = var.context_file
+  defaults_file = "${path.module}/../../contexts/_defaults.yaml"
 }
-
-# ─── Locals ────────────────────────────────────────────────────────────────
 
 locals {
+  ctx = module.context.context
+
+  # Derived
+  namespace = local.ctx.namespace
+  env       = local.ctx.env
+  instance  = local.ctx.instance
+  region    = local.ctx.region
+  owner     = lookup(local.ctx, "owner", "unknown")
+
+  # Prefix used as the root of every resource name in this stage.
+  prefix = "${local.namespace}-${local.env}-${local.instance}-${local.region}"
+
+  # Zone derived from region: fr-par → fr-par-1, nl-ams → nl-ams-1, etc.
+  # Override by setting `zone` in the context YAML.
+  zone = lookup(local.ctx, "zone", "${local.region}-1")
+
+  # Cluster shape (defaults merged from _defaults.yaml).
+  shape                = local.ctx.cluster_shape
+  controlplane_count   = local.shape.control_plane.count
+  worker_count         = local.shape.worker.count
+  cp_instance_type     = local.shape.control_plane.instance_type
+  worker_instance_type = local.shape.worker.instance_type
+
+  # Versions.
+  talos_version      = local.ctx.talos_version
+  kubernetes_version = local.ctx.k8s_version
+
+  # Disks
+  ephemeral_disk_size = lookup(local.ctx, "ephemeral_disk_size", 25)
+
+  # ─── Node maps ────────────────────────────────────────────────────────
+  # Keys shaped as 'cp-01', 'worker-01' etc. → names derive cleanly.
+
   controlplane_nodes = {
-    for i in range(var.controlplane_count) :
-    "cp-${i + 1}" => { ip = "" } # IPs assigned by Scaleway DHCP
+    for i in range(local.controlplane_count) :
+    format("cp-%02d", i + 1) => { ip = "" }
   }
 
   worker_nodes = {
-    for i in range(var.worker_count) :
-    "wrk-${i + 1}" => { ip = "" }
+    for i in range(local.worker_count) :
+    format("worker-%02d", i + 1) => { ip = "" }
   }
 
-  cilium_patch         = file("${path.module}/../../patches/cilium-cni.yaml")
-  registry_mirror_patch = file("${path.module}/../../patches/registry-mirror.yaml")
+  # ─── Tags (merged onto every resource) ────────────────────────────────
+  base_tags = [
+    "app:${local.namespace}",
+    "env:${local.env}",
+    "instance:${local.instance}",
+    "region:${local.region}",
+    "owner:${local.owner}",
+    "managed-by:opentofu",
+    "context-id:${local.prefix}",
+    "talos-version:${local.talos_version}",
+  ]
 
-  # Scaleway: EPHEMERAL must go to /dev/vdb
-  volume_config_patch = file("${path.module}/volume-config-patch.yaml")
+  # ─── Patches ──────────────────────────────────────────────────────────
+  cilium_patch            = file("${path.module}/../../patches/cilium-cni.yaml")
+  registry_mirror_patch   = file("${path.module}/../../patches/registry-mirror.yaml")
+  kubelet_nodeip_patch    = file("${path.module}/../../patches/kubelet-nodeip-vpc.yaml")
+  volume_config_patch     = file("${path.module}/volume-config-patch.yaml")
+  # OIDC CA is produced by bootstrap (kms-output/) — absent during validate/plan pre-bootstrap.
+  oidc_ca_pem           = try(file("${path.module}/../../kms-output/root-ca.pem"), "")
+  oidc_enabled          = local.oidc_ca_pem != ""
 
-  # OIDC: baked into machine config from the start.
-  # apiServer tolerates unreachable issuer — OIDC works once k8s-identity is deployed.
-  oidc_ca_pem = file("${path.module}/../../kms-output/root-ca.pem")
+  # ─── Endpoint ─────────────────────────────────────────────────────────
+  dns_fqdn      = var.dns_zone == "" ? "" : "${var.dns_subdomain_prefix}-${local.env}-${local.instance}-${local.region}.${var.dns_zone}"
+  dns_enabled   = var.dns_zone != ""
+  api_endpoint  = local.dns_enabled ? "https://${local.dns_fqdn}:6443" : "https://${scaleway_lb_ip.k8s_api.ip_address}:6443"
 }
 
-# ─── Talos Cluster Module ──────────────────────────────────────────────────
+provider "scaleway" {
+  zone       = local.zone
+  region     = local.region
+  project_id = var.project_id
+}
+
+# ─── Talos image (from image/ stage) ─────────────────────────────────────
+
+data "scaleway_instance_image" "talos" {
+  name         = var.talos_image_name
+  architecture = "x86_64"
+}
+
+# ─── Talos cluster module ────────────────────────────────────────────────
 
 module "talos" {
   source = "../../modules/talos-cluster"
 
-  cluster_name       = var.cluster_name
-  cluster_endpoint   = var.enable_dns ? "https://${var.dns_subdomain}.${var.dns_zone}:6443" : "https://${scaleway_lb_ip.k8s_api.ip_address}:6443"
-  talos_version      = var.talos_version
-  kubernetes_version = var.kubernetes_version
+  cluster_name       = local.prefix
+  cluster_endpoint   = local.api_endpoint
+  talos_version      = local.talos_version
+  kubernetes_version = local.kubernetes_version
 
   controlplane_nodes = local.controlplane_nodes
   worker_nodes       = local.worker_nodes
@@ -64,10 +127,11 @@ module "talos" {
   common_config_patches = [
     local.cilium_patch,
     local.registry_mirror_patch,
+    local.kubelet_nodeip_patch,
     local.volume_config_patch,
   ]
 
-  controlplane_config_patches = [
+  controlplane_config_patches = local.oidc_enabled ? [
     yamlencode({
       machine = {
         files = [{
@@ -80,11 +144,11 @@ module "talos" {
       cluster = {
         apiServer = {
           extraArgs = {
-            "oidc-issuer-url"    = "https://hydra-public.identity.svc:4444/"
-            "oidc-client-id"     = "kubernetes"
+            "oidc-issuer-url"     = "https://hydra-public.identity.svc:4444/"
+            "oidc-client-id"      = "kubernetes"
             "oidc-username-claim" = "sub"
             "oidc-groups-claim"   = "groups"
-            "oidc-ca-file"       = "/var/etc/kubernetes/oidc-ca.pem"
+            "oidc-ca-file"        = "/var/etc/kubernetes/oidc-ca.pem"
           }
           extraVolumes = [{
             hostPath  = "/var/etc/kubernetes"
@@ -94,46 +158,44 @@ module "talos" {
         }
       }
     }),
-  ]
+  ] : []
 }
 
-# ─── Private Network ──────────────────────────────────────────────────────
+# ─── Private network ────────────────────────────────────────────────────
 
-resource "scaleway_vpc_private_network" "talos" {
-  name = "${var.cluster_name}-pn"
+resource "scaleway_vpc_private_network" "cluster" {
+  name = "${local.prefix}-pn"
+  tags = local.base_tags
 }
 
-# ─── Security Group ───────────────────────────────────────────────────────
+# ─── Security group ─────────────────────────────────────────────────────
 
-resource "scaleway_instance_security_group" "talos" {
-  name                    = "${var.cluster_name}-sg"
+resource "scaleway_instance_security_group" "cluster" {
+  name                    = "${local.prefix}-sg"
   inbound_default_policy  = "drop"
   outbound_default_policy = "accept"
+  tags                    = local.base_tags
 
-  # ─── Public ports (accessible from internet) ──────────────────────
-
-  # Talos API (mTLS protected)
+  # Talos API (mTLS)
   inbound_rule {
     action   = "accept"
     port     = 50000
     protocol = "TCP"
   }
 
-  # Kubernetes API (mTLS protected, via LB)
+  # Kubernetes API (mTLS via LB)
   inbound_rule {
     action   = "accept"
     port     = 6443
     protocol = "TCP"
   }
 
-  # ─── Internal ports (VPC only) ────────────────────────────────────
-
   # etcd client
   inbound_rule {
     action   = "accept"
     port     = 2379
     protocol = "TCP"
-    ip_range = scaleway_vpc_private_network.talos.ipv4_subnet[0].subnet
+    ip_range = scaleway_vpc_private_network.cluster.ipv4_subnet[0].subnet
   }
 
   # etcd peer
@@ -141,15 +203,15 @@ resource "scaleway_instance_security_group" "talos" {
     action   = "accept"
     port     = 2380
     protocol = "TCP"
-    ip_range = scaleway_vpc_private_network.talos.ipv4_subnet[0].subnet
+    ip_range = scaleway_vpc_private_network.cluster.ipv4_subnet[0].subnet
   }
 
-  # Cilium health checks
+  # Cilium health
   inbound_rule {
     action   = "accept"
     port     = 4240
     protocol = "TCP"
-    ip_range = scaleway_vpc_private_network.talos.ipv4_subnet[0].subnet
+    ip_range = scaleway_vpc_private_network.cluster.ipv4_subnet[0].subnet
   }
 
   # Hubble relay
@@ -157,15 +219,15 @@ resource "scaleway_instance_security_group" "talos" {
     action   = "accept"
     port     = 4244
     protocol = "TCP"
-    ip_range = scaleway_vpc_private_network.talos.ipv4_subnet[0].subnet
+    ip_range = scaleway_vpc_private_network.cluster.ipv4_subnet[0].subnet
   }
 
-  # Cilium VXLAN overlay
+  # Cilium VXLAN
   inbound_rule {
     action   = "accept"
     port     = 8472
     protocol = "UDP"
-    ip_range = scaleway_vpc_private_network.talos.ipv4_subnet[0].subnet
+    ip_range = scaleway_vpc_private_network.cluster.ipv4_subnet[0].subnet
   }
 
   # kubelet
@@ -173,19 +235,21 @@ resource "scaleway_instance_security_group" "talos" {
     action   = "accept"
     port     = 10250
     protocol = "TCP"
-    ip_range = scaleway_vpc_private_network.talos.ipv4_subnet[0].subnet
+    ip_range = scaleway_vpc_private_network.cluster.ipv4_subnet[0].subnet
   }
-
 }
 
-# ─── Load Balancer ─────────────────────────────────────────────────────────
+# ─── Load balancer (Kubernetes API) ─────────────────────────────────────
 
-resource "scaleway_lb_ip" "k8s_api" {}
+resource "scaleway_lb_ip" "k8s_api" {
+  tags = local.base_tags
+}
 
 resource "scaleway_lb" "k8s_api" {
   ip_ids = [scaleway_lb_ip.k8s_api.id]
-  name   = "${var.cluster_name}-api-lb"
+  name   = "${local.prefix}-apiserver-lb"
   type   = "LB-S"
+  tags   = local.base_tags
 }
 
 resource "scaleway_lb_backend" "k8s_api" {
@@ -206,37 +270,40 @@ resource "scaleway_lb_frontend" "k8s_api" {
   inbound_port = 6443
 }
 
-# ─── Flex IPs ──────────────────────────────────────────────────────────────
+# ─── Flex IPs ───────────────────────────────────────────────────────────
 
 resource "scaleway_instance_ip" "cp" {
   for_each = local.controlplane_nodes
+  tags     = concat(local.base_tags, ["role:control-plane", "node:${each.key}"])
 }
 
 resource "scaleway_instance_ip" "wrk" {
   for_each = local.worker_nodes
+  tags     = concat(local.base_tags, ["role:worker", "node:${each.key}"])
 }
 
-# ─── Control Plane Instances ──────────────────────────────────────────────
+# ─── Control plane ──────────────────────────────────────────────────────
 
 resource "scaleway_instance_volume" "cp_ephemeral" {
   for_each   = local.controlplane_nodes
-  name       = "${var.cluster_name}-${each.key}-ephemeral"
+  name       = "${local.prefix}-${each.key}-ephemeral"
   type       = "l_ssd"
-  size_in_gb = var.ephemeral_disk_size
+  size_in_gb = local.ephemeral_disk_size
+  tags       = concat(local.base_tags, ["role:control-plane", "node:${each.key}"])
 }
 
 resource "scaleway_instance_server" "cp" {
   for_each = local.controlplane_nodes
 
-  name  = "${var.cluster_name}-${each.key}"
-  type  = var.cp_instance_type
+  name  = "${local.prefix}-${each.key}"
+  type  = local.cp_instance_type
   image = data.scaleway_instance_image.talos.id
   ip_id = scaleway_instance_ip.cp[each.key].id
 
-  security_group_id = scaleway_instance_security_group.talos.id
+  security_group_id = scaleway_instance_security_group.cluster.id
 
   private_network {
-    pn_id = scaleway_vpc_private_network.talos.id
+    pn_id = scaleway_vpc_private_network.cluster.id
   }
 
   additional_volume_ids = [scaleway_instance_volume.cp_ephemeral[each.key].id]
@@ -245,74 +312,73 @@ resource "scaleway_instance_server" "cp" {
     "cloud-init" = module.talos.controlplane_machine_configurations[each.key]
   }
 
-  tags = ["talos", "controlplane"]
+  tags = concat(local.base_tags, ["role:control-plane", "node:${each.key}"])
 }
 
-# ─── Worker Instances ─────────────────────────────────────────────────────
+# ─── Workers ────────────────────────────────────────────────────────────
 
 resource "scaleway_instance_volume" "wrk_ephemeral" {
   for_each   = local.worker_nodes
-  name       = "${var.cluster_name}-${each.key}-ephemeral"
+  name       = "${local.prefix}-${each.key}-ephemeral"
   type       = "l_ssd"
-  size_in_gb = var.ephemeral_disk_size
+  size_in_gb = local.ephemeral_disk_size
+  tags       = concat(local.base_tags, ["role:worker", "node:${each.key}"])
 }
 
 resource "scaleway_instance_server" "wrk" {
   for_each = local.worker_nodes
 
-  name  = "${var.cluster_name}-${each.key}"
-  type  = var.worker_instance_type
+  name  = "${local.prefix}-${each.key}"
+  type  = local.worker_instance_type
   image = data.scaleway_instance_image.talos.id
   ip_id = scaleway_instance_ip.wrk[each.key].id
 
-  security_group_id = scaleway_instance_security_group.talos.id
+  security_group_id = scaleway_instance_security_group.cluster.id
 
   private_network {
-    pn_id = scaleway_vpc_private_network.talos.id
+    pn_id = scaleway_vpc_private_network.cluster.id
   }
 
-  additional_volume_ids = [
-    scaleway_instance_volume.wrk_ephemeral[each.key].id,
-  ]
+  additional_volume_ids = [scaleway_instance_volume.wrk_ephemeral[each.key].id]
 
   user_data = {
     "cloud-init" = module.talos.worker_machine_configurations[each.key]
   }
 
-  tags = ["talos", "worker"]
+  tags = concat(local.base_tags, ["role:worker", "node:${each.key}"])
 }
 
-# ─── DNS Record ──────────────────────────────────────────────────────────
+# ─── DNS ────────────────────────────────────────────────────────────────
 
 resource "scaleway_domain_record" "k8s_api" {
-  count    = var.enable_dns ? 1 : 0
+  count    = local.dns_enabled ? 1 : 0
   dns_zone = var.dns_zone
-  name     = var.dns_subdomain
+  name     = "${var.dns_subdomain_prefix}-${local.env}-${local.instance}-${local.region}"
   type     = "A"
   data     = scaleway_lb_ip.k8s_api.ip_address
   ttl      = 300
 }
 
-# ─── Bootstrap & Kubeconfig ───────────────────────────────────────────────
+# ─── Bootstrap & Kubeconfig ─────────────────────────────────────────────
 
 resource "talos_machine_bootstrap" "this" {
   client_configuration = module.talos.client_configuration_raw
-  node                 = scaleway_instance_ip.cp["cp-1"].address
-  endpoint             = scaleway_instance_ip.cp["cp-1"].address
+  node                 = scaleway_instance_ip.cp["cp-01"].address
+  endpoint             = scaleway_instance_ip.cp["cp-01"].address
 
   depends_on = [scaleway_instance_server.cp]
 }
 
 resource "talos_cluster_kubeconfig" "this" {
   client_configuration = module.talos.client_configuration_raw
-  node                 = scaleway_instance_ip.cp["cp-1"].address
-  endpoint             = scaleway_instance_ip.cp["cp-1"].address
+  node                 = scaleway_instance_ip.cp["cp-01"].address
+  endpoint             = scaleway_instance_ip.cp["cp-01"].address
 
   depends_on = [talos_machine_bootstrap.this]
 }
 
 data "talos_client_configuration" "this" {
-  cluster_name         = var.cluster_name
+  cluster_name         = local.prefix
   client_configuration = module.talos.client_configuration_raw
   endpoints            = [for name, ip in scaleway_instance_ip.cp : ip.address]
   nodes = concat(
@@ -320,4 +386,3 @@ data "talos_client_configuration" "this" {
     [for name, ip in scaleway_instance_ip.wrk : ip.address],
   )
 }
-

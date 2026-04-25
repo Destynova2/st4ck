@@ -1,0 +1,19 @@
+# Force kubelet to register the node with its Scaleway VPC private IP
+# (172.16.0.0/22, eth1) instead of the public IP (eth0).
+#
+# Why: Scaleway Instances on a VPC have two NICs — eth0 public and eth1
+# private. By default Talos picks eth0 as kubelet --node-ip, which makes
+# K8s register InternalIP = public IP. Cilium then sources its VXLAN
+# tunnel from that public IP, but the cluster security group only allows
+# UDP/8472 from the VPC subnet → tunnel dropped → "Cluster health: 1/6
+# reachable" + cross-node webhook calls time out.
+#
+# Setting validSubnets to the VPC CIDR makes Talos pick the eth1 IP. K8s
+# then registers nodes with InternalIP = 172.16.x.x, Cilium VXLAN flows
+# stay inside the VPC, and the existing SG rule (ip_range = VPC subnet)
+# accepts them.
+machine:
+  kubelet:
+    nodeIP:
+      validSubnets:
+        - 172.16.0.0/22
