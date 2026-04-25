@@ -259,13 +259,13 @@ flux-bootstrap-init:
 
 flux-bootstrap-apply: flux-bootstrap-init ## Install Flux + GitRepository + root Kustomization
 	@echo "--- Scanning Gitea SSH host key from $(VB_HOST):2222 ---"
-	$(eval GITEA_KNOWN_HOSTS := $(shell ssh-keyscan -p 2222 -t ed25519 $(VB_HOST) 2>/dev/null))
+	$(eval GITEA_KNOWN_HOSTS := $(shell ssh-keyscan -p 2222 -t ed25519,rsa $(VB_HOST) 2>/dev/null))
 	@test -n "$(GITEA_KNOWN_HOSTS)" || { echo "ERROR: ssh-keyscan failed for $(VB_HOST):2222. Is Gitea running?"; exit 1; }
 	$(TF) -chdir=$(TF_FLUX) apply -auto-approve $(K8S_COMMON_VARS) \
 		-var="gitea_known_hosts=$(GITEA_KNOWN_HOSTS)"
 
 flux-bootstrap-destroy: flux-bootstrap-init
-	$(eval GITEA_KNOWN_HOSTS := $(shell ssh-keyscan -p 2222 -t ed25519 $(VB_HOST) 2>/dev/null || echo "destroy-noop ssh-ed25519 AAAA"))
+	$(eval GITEA_KNOWN_HOSTS := $(shell ssh-keyscan -p 2222 -t ed25519,rsa $(VB_HOST) 2>/dev/null || echo "destroy-noop ssh-ed25519 AAAA"))
 	$(TF) -chdir=$(TF_FLUX) destroy -auto-approve $(K8S_COMMON_VARS) \
 		-var="gitea_known_hosts=$(GITEA_KNOWN_HOSTS)"
 
