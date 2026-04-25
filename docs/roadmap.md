@@ -230,7 +230,7 @@
 ### Gate 1 — Criteres de passage
 
 - [x] Management cluster 6 noeuds Talos stable (3 CP + 3 workers)
-- [x] Pipeline CI/CD complet (Woodpecker + OpenTofu, 7 stacks)
+- [x] Pipeline CI/CD complet (Woodpecker + OpenTofu, 8 core stacks + 5 KaaS)
 - [x] Harbor registry (S3 Garage backend, Trivy scan integre)
 - [x] Observabilite complete (metriques + logs + alertes)
 - [x] Secrets & PKI (OpenBao infra/app + cert-manager + Root/Intermediate CA)

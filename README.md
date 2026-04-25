@@ -9,7 +9,7 @@
 ```mermaid
 graph LR
     B[Bootstrap<br/>Podman pod] -->|PKI + state backend| C[Cluster<br/>6 Talos nodes]
-    C -->|7 stacks sequential| K[Platform<br/>27 Helm charts]
+    C -->|8 core stacks sequential| K[Platform<br/>13 stacks total inc. KaaS]
     K -->|day-2| F[Flux v2<br/>GitOps]
 
     style B fill:#4a9,stroke:#333,color:#fff
@@ -22,7 +22,7 @@ graph LR
 ```bash
 # Prerequisites: opentofu, podman, kubectl
 make bootstrap && make bootstrap-export   # Platform pod (OpenBao + Gitea + Woodpecker)
-make scaleway-up                          # Full cluster + 7 stacks (~15 min)
+make scaleway-up                          # Full cluster + 8 core stacks (~30-45 min)
 make scaleway-headlamp                    # Open dashboard (token in clipboard)
 ```
 
@@ -114,7 +114,7 @@ scw_organization_id = "<your-org-id>"
 | High-level design | [HLD](docs/hld-talos-platform.md) |
 | Low-level designs | [LLDs](docs/lld/) |
 | Component inventory | [Technology Stack](docs/techno.md) |
-| Architecture decisions | [ADRs](docs/adr/) (22 ADRs) |
+| Architecture decisions | [ADRs](docs/adr/) (26 ADRs) |
 | AI agent context | [AGENTS.md](AGENTS.md) |
 
 ## Project structure
@@ -122,7 +122,7 @@ scw_organization_id = "<your-org-id>"
 ```
 st4ck/
 ├── bootstrap/          # Platform pod: OpenBao + Gitea + Woodpecker
-├── envs/               # Provider-specific infra (Scaleway, local, Outscale, VMware)
+├── envs/               # Provider-specific infra (Scaleway, local libvirt, VMware airgap)
 ├── modules/            # Shared Terraform module (talos-cluster)
 ├── stacks/             # 1 stack = 1 folder (TF + values + flux/)
 ├── clusters/management # Thin kustomization → stacks/*/flux/

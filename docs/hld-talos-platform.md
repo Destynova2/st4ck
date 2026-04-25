@@ -171,11 +171,11 @@ This system is a **sovereign infrastructure platform** (category "Defense/sovere
 | Nodes per cluster | 6 | 3 CP + 3 workers |
 | Pods per cluster | 100-300 | Infrastructure stacks only |
 | Secrets in OpenBao | ~50 | Identity + storage + infra |
-| Total tfstate size | ~10-50 MB | 8 stacks x ~2-6 MB each |
+| Total tfstate size | ~10-50 MB | 13 stacks x ~2-6 MB each (8 core + 5 KaaS) |
 | Raft storage (OpenBao) | < 1 GB | States + secrets + KV versions |
 | Raft snapshot (backup) | ~10-50 MB | Compressed |
 | K8s API bandwidth | < 1 Mbps | Deployment and reconciliation |
-| Full deployment time | ~15-20 min | Bootstrap (2min) + cluster (5min) + 7 stacks (10min) |
+| Full deployment time | ~30-45 min | Bootstrap (2min) + cluster (15min) + 8 core stacks (~25min) |
 
 **Conclusion:** Sizing is modest. A single OpenBao Raft node (bootstrap) is sufficient. The architecture is sized for security and robustness, not for throughput.
 

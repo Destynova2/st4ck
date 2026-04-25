@@ -33,19 +33,30 @@ talos/
 │   └── talos-cluster/                  # Common module: secrets, machine configs
 │
 ├── stacks/                             # 1 stack = 1 folder (TF + values + flux)
-│   ├── cni/                            # Cilium CNI (main.tf + values.yaml + flux/)
+│   │  ─── Core (deployed by `make scaleway-up` / `make k8s-up`) ───
+│   ├── cni/                            # Cilium CNI (eBPF, replaces kube-proxy)
 │   ├── pki/                            # OpenBao + cert-manager + CA secrets
 │   ├── monitoring/                     # vm-k8s-stack + VictoriaLogs + Headlamp
 │   ├── identity/                       # Kratos + Hydra + Pomerium
 │   ├── security/                       # Trivy + Tetragon + Kyverno
 │   ├── storage/                        # local-path + Garage + Velero + Harbor
 │   ├── flux-bootstrap/                 # Flux v2 + GitRepository + root Kustomization
-│   └── external-secrets/               # Flux only (ESO + ClusterSecretStore)
+│   ├── external-secrets/               # Flux only (ESO + ClusterSecretStore)
+│   │  ─── KaaS / Phase A (deployed by `make kaas-up`) ─────────────
+│   ├── capi/                           # Cluster API + CABPT + Talos infra provider
+│   ├── kamaji/                         # Hosted control planes for tenant clusters
+│   ├── autoscaling/                    # Karpenter + provider-cluster-api + NodePools
+│   ├── gateway-api/                    # Cilium Gateway API + tenant TLSRoute
+│   └── managed-cluster/                # Cozystack-style `Kubernetes` CR controller
 │
 ├── clusters/management/                # Thin kustomization.yaml → ../../stacks/*/flux/
-├── patches/                            # Machine config patches (cilium-cni, registry-mirror)
-├── scripts/                            # Day-2 + validation scripts
+├── patches/                            # Machine config patches (cilium-cni,
+│                                       #   registry-mirror, kubelet-nodeip-vpc, …)
+├── scripts/                            # Day-2 + validation + brigade helpers
 ├── docs/
+│   ├── adr/                            # 26 ADRs (architecture decisions)
+│   ├── reviews/                        # cli-cycle audit reports per pass
+│   └── …
 └── tests/
 ```
 

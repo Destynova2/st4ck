@@ -17,7 +17,7 @@ Deploying a hardened Kubernetes platform in defense/sovereign contexts requires 
 ```mermaid
 graph LR
     KMS[kms-bootstrap<br/>PKI + state backend] --> INFRA[Infrastructure<br/>cluster 6 noeuds]
-    INFRA --> STACKS[7 stacks K8s<br/>sequentiel ~15min]
+    INFRA --> STACKS[8 core stacks K8s<br/>sequentiel ~25min<br/>+ 5 KaaS optionnels]
     STACKS --> FLUX[Flux day-2<br/>GitOps self-healing]
 ```
 

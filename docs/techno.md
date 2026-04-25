@@ -192,4 +192,4 @@ envs/scaleway/
 
 ---
 
-*Total : ~27 composants Helm, 7 stacks Terraform, 2 environnements cloud + 1 air-gap, 1 VM CI Podman Quadlet*
+*Total : ~27 composants Helm, 13 stacks Terraform (8 core + 5 KaaS Phase A), 2 environnements cloud + 1 air-gap, 1 VM CI Podman Quadlet*
