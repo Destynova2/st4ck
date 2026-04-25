@@ -557,6 +557,64 @@ scaleway-destroy: scaleway-init ## Destroy the Talos cluster for the current con
 	$(SCW_CLUSTER_ENV) $(TF) -chdir=$(TF_SCALEWAY) destroy -auto-approve $(SCW_CLUSTER_VARS)
 
 # ═══════════════════════════════════════════════════════════════════════
+# scaleway-cp-replace — destroy + recreate one CP node (W2 fix)
+#
+# Use case: a CP node's etcd member is corrupted (e.g. node IP changed
+# after cluster bootstrap, or member was force-removed). Talos's
+# official replace-control-plane-node procedure adapted to IaC:
+#
+#   1. Remove the etcd member (from a healthy peer) so the cluster
+#      doesn't keep waiting for the dead one.
+#   2. tofu taint the scaleway_instance_server.cp[NODE] so the next
+#      apply destroys + recreates the VM with a fresh disk.
+#   3. tofu apply — VM boots with user_data containing the current
+#      machine config (kubelet nodeIP patch + everything), Talos joins
+#      the existing cluster as a fresh member, talos_machine_configuration_apply
+#      keeps the config in sync.
+#
+# Usage:
+#   make scaleway-cp-replace NODE=cp-02 ENV=dev INSTANCE=mgmt REGION=fr-par
+#
+# Prereqs: at least one OTHER CP must be healthy (for etcd quorum +
+# member removal API). With 3 CPs, replacing one is safe.
+# ═══════════════════════════════════════════════════════════════════════
+
+.PHONY: scaleway-cp-replace
+
+NODE ?=
+TALOSCONFIG_FILE := $(HOME)/.talos/config-$(CTX_ID)
+
+scaleway-cp-replace: scaleway-init ## Replace one CP node (NODE=cp-XX) — etcd remove + tofu recreate
+	@test -n "$(NODE)" || { echo "ERROR: NODE=cp-XX is required (e.g. NODE=cp-02)"; exit 1; }
+	@test -f "$(CTX_FILE)" || { echo "ERROR: $(CTX_FILE) not found"; exit 1; }
+	@echo ">>> [1/4] export talosconfig + find a healthy peer CP"
+	@mkdir -p $(dir $(TALOSCONFIG_FILE))
+	@$(SCW_CLUSTER_ENV) $(TF) -chdir=$(TF_SCALEWAY) output -raw talosconfig > $(TALOSCONFIG_FILE)
+	@HEALTHY_CP=$$($(SCW_CLUSTER_ENV) $(TF) -chdir=$(TF_SCALEWAY) output -json controlplane_ips \
+	  | jq -r 'to_entries[] | select(.key != "$(NODE)") | .value' | head -1); \
+	test -n "$$HEALTHY_CP" || { echo "ERROR: no healthy peer CP found"; exit 1; }; \
+	echo "   healthy peer: $$HEALTHY_CP"; \
+	echo ">>> [2/4] etcd member remove for $(NODE) (if present)"; \
+	BAD_ID=$$(talosctl --talosconfig $(TALOSCONFIG_FILE) -e $$HEALTHY_CP -n $$HEALTHY_CP \
+	  etcd members 2>/dev/null | awk -v h="st4ck-$(ENV)-$(INSTANCE)-$(REGION)-$(NODE)" '$$3 == h {print $$2}'); \
+	if [ -n "$$BAD_ID" ]; then \
+	  echo "   removing etcd member $$BAD_ID ($(NODE))"; \
+	  talosctl --talosconfig $(TALOSCONFIG_FILE) -e $$HEALTHY_CP -n $$HEALTHY_CP \
+	    etcd remove-member $$BAD_ID; \
+	else \
+	  echo "   $(NODE) not in etcd members (nothing to remove)"; \
+	fi
+	@echo ">>> [3/4] tofu taint scaleway_instance_server.cp[\"$(NODE)\"]"
+	$(SCW_CLUSTER_ENV) $(TF) -chdir=$(TF_SCALEWAY) taint 'scaleway_instance_server.cp["$(NODE)"]'
+	@echo ">>> [4/4] tofu apply — recreate $(NODE), Talos joins fresh"
+	$(SCW_CLUSTER_ENV) $(TF) -chdir=$(TF_SCALEWAY) apply -auto-approve $(SCW_CLUSTER_VARS)
+	@echo ""
+	@echo "================================================================"
+	@echo "  $(NODE) recreated. Verify etcd membership in ~60s with:"
+	@echo "    talosctl --talosconfig $(TALOSCONFIG_FILE) -e <peer-ip> -n <peer-ip> etcd members"
+	@echo "================================================================"
+
+# ═══════════════════════════════════════════════════════════════════════
 # Scaleway — stage 3: CI VM (Gitea + Woodpecker + platform pod)
 # One CI VM per (ENV, INSTANCE, REGION) context.
 # For shared dev CI: make scaleway-ci-apply ENV=dev INSTANCE=shared REGION=fr-par

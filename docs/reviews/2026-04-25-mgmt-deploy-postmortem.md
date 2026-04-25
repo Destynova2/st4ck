@@ -105,7 +105,7 @@ make k8s-identity-apply ENV=<env> INSTANCE=<instance> REGION=<region>
 
 (Hydra recovery is symmetric — replace `kratos` with `hydra` and the label selector.)
 
-### W2 — etcd member loss after Talos node IP migration
+### W2 — etcd member loss after Talos node IP migration (RESOLVED via Make target)
 
 **Symptom**: `talosctl etcd members` shows fewer than the expected number of CP nodes. The missing node's etcd service is in `Waiting → Health Fail` with logs:
 ```
@@ -113,22 +113,24 @@ discovery failed: couldn't find local name "<hostname>" in the initial cluster c
 ```
 K8s LB intermittently routes to the missing node's apiserver if the LB healthcheck is too lenient. Symptom on the operator side: `kubectl get` randomly returns `No resources found in <ns>` 1/N requests.
 
-**Why no auto-fix**: Recovery requires `talosctl reset` which is destructive. Should not be automated. The race itself only happens when nodeIP is changed *after* the cluster bootstrap — fresh deploys with the patch in place from t=0 don't hit this.
+**Permanent fix** — committed in this session:
 
-**Manual recovery** (for the affected CP node, e.g. cp-02 with public IP `<cp-02-ip>`):
 ```bash
-TALOSCONFIG=~/.talos/config-<ctx>
-talosctl --talosconfig $TALOSCONFIG -e <cp-02-ip> -n <cp-02-ip> reset \
-  --graceful=false --system-labels-to-wipe=EPHEMERAL --reboot=false
-# Wait for the node to re-join etcd:
-talosctl --talosconfig $TALOSCONFIG -e <healthy-cp-ip> -n <healthy-cp-ip> etcd members
-# Once cp-02 reappears in the list, the LB will start routing correctly again.
+make scaleway-cp-replace NODE=cp-02 ENV=<env> INSTANCE=<inst> REGION=<region>
 ```
 
-If the LB routes to a broken CP during operator work, bypass the LB by writing a CP-direct kubeconfig:
+Wraps Talos's official replace-control-plane-node procedure as IaC:
+1. `talosctl etcd remove-member` from a healthy peer (idempotent — skipped if not present)
+2. `tofu taint scaleway_instance_server.cp["<NODE>"]`
+3. `tofu apply` recreates the VM. Talos boots fresh with the current machine config (kubelet nodeIP patch already in user_data), joins the existing cluster as a new etcd member.
+
+Prereq: at least one OTHER CP must be healthy (etcd quorum). With 3 CPs, replacing one is safe.
+
+**Bypass for operator work while a CP is being replaced** (avoid LB flapping):
 ```bash
 sed 's|server: https://<lb-ip>:6443|server: https://<healthy-cp-ip>:6443|' \
   ~/.kube/<ctx> > ~/.kube/<ctx>-cp01
+KUBECONFIG=~/.kube/<ctx>-cp01 kubectl ...
 ```
 
 ## What worked well
