@@ -1,0 +1,133 @@
+{{/*
+========================================================================
+20-kms-provision — Provision Transit key + AppRole in OpenBao (Helm hook)
+========================================================================
+One-shot Job (post-install + post-upgrade hook). Creates everything the
+vault-kms-plugin sidecar needs to encrypt this tenant's apiserver state:
+
+  1. Transit key  : <transitMount>/keys/<keyName>      (aes256-gcm96)
+                    auto_rotate_period derived from `encryption.keyRotation`
+  2. ACL policy   : kamaji-kms-tenant-<tenant>
+                    (allows encrypt/decrypt on the key only)
+  3. AppRole role : kamaji-kms-tenant-<tenant>
+                    bound to the policy above
+  4. role_id + secret_id stored in K8s Secret  <fullname>-kms-approle
+                    (mounted into the TCP pod via 40-)
+
+The Job authenticates to OpenBao via the projected SA token of
+`<vault.provisionerServiceAccount>`. That SA must have an OpenBao policy
+allowing `transit/keys/*`, `auth/<approle>/role/*`, and `sys/policies/acl/*`.
+
+  TODO (stacks/pki): create the `kms-provisioner` ServiceAccount in this
+  tenant namespace, bind it via a Vault Kubernetes auth role to the
+  `kamaji-kms-admin` policy. Until then, the Job will fail to login and
+  the chart will need `--set encryption.enabled=false` for first install.
+========================================================================
+*/}}
+{{- if .Values.encryption.enabled -}}
+{{- $rotateSeconds := "" -}}
+{{- $kr := .Values.encryption.keyRotation | default "90d" -}}
+{{- if hasSuffix "d" $kr -}}
+{{- $rotateSeconds = printf "%dh" (mul (int (trimSuffix "d" $kr)) 24) -}}
+{{- else -}}
+{{- $rotateSeconds = $kr -}}
+{{- end -}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.vault.provisionerServiceAccount | quote }}
+  namespace: {{ include "st4ck.namespace" . | quote }}
+  labels:
+    {{- include "st4ck.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-kms-provision" (include "st4ck.fullname" .) | quote }}
+  namespace: {{ include "st4ck.namespace" . | quote }}
+  labels:
+    {{- include "st4ck.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "st4ck.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: kms-provision
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ .Values.vault.provisionerServiceAccount | quote }}
+      containers:
+        - name: vault
+          image: {{ .Values.vault.cliImage | quote }}
+          env:
+            - name: VAULT_ADDR
+              value: {{ .Values.vault.address | quote }}
+            - name: VAULT_AUTH_PATH
+              value: {{ .Values.vault.approleAuthPath | quote }}
+            - name: TRANSIT_MOUNT
+              value: {{ .Values.vault.transitMount | quote }}
+            - name: KEY_NAME
+              value: {{ include "st4ck.kmsKeyName" . | quote }}
+            - name: ROTATE_PERIOD
+              value: {{ $rotateSeconds | quote }}
+            - name: POLICY_NAME
+              value: {{ include "st4ck.kmsPolicyName" . | quote }}
+            - name: ROLE_NAME
+              value: {{ include "st4ck.kmsApproleName" . | quote }}
+            - name: APPROLE_SECRET
+              value: {{ include "st4ck.kmsApproleSecret" . | quote }}
+            - name: TENANT_NAMESPACE
+              value: {{ include "st4ck.namespace" . | quote }}
+          command: ["/bin/sh", "-eu", "-c"]
+          args:
+            - |
+              # Login as the provisioner SA via Kubernetes auth.
+              SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+              vault write -field=token auth/kubernetes/login \
+                role="${ROLE_NAME}-provisioner" \
+                jwt="${SA_TOKEN}" > /tmp/.token || {
+                echo "ERROR: vault login failed (check kms-provisioner SA binding)"
+                exit 1
+              }
+              export VAULT_TOKEN=$(cat /tmp/.token)
+
+              # Idempotent Transit key create.
+              if ! vault read -format=json "${TRANSIT_MOUNT}/keys/${KEY_NAME}" >/dev/null 2>&1; then
+                vault write -f "${TRANSIT_MOUNT}/keys/${KEY_NAME}" type=aes256-gcm96
+              fi
+              vault write "${TRANSIT_MOUNT}/keys/${KEY_NAME}/config" \
+                auto_rotate_period="${ROTATE_PERIOD}"
+
+              # Render and apply ACL policy.
+              cat <<EOF | vault policy write "${POLICY_NAME}" -
+              path "${TRANSIT_MOUNT}/encrypt/${KEY_NAME}" { capabilities = ["update"] }
+              path "${TRANSIT_MOUNT}/decrypt/${KEY_NAME}" { capabilities = ["update"] }
+              path "${TRANSIT_MOUNT}/keys/${KEY_NAME}"     { capabilities = ["read"] }
+              EOF
+
+              # Idempotent AppRole role.
+              vault write "auth/${VAULT_AUTH_PATH}/role/${ROLE_NAME}" \
+                token_policies="${POLICY_NAME}" \
+                token_ttl=1h token_max_ttl=24h \
+                secret_id_ttl=0 secret_id_num_uses=0
+
+              ROLE_ID=$(vault read -field=role_id "auth/${VAULT_AUTH_PATH}/role/${ROLE_NAME}/role-id")
+              SECRET_ID=$(vault write -f -field=secret_id "auth/${VAULT_AUTH_PATH}/role/${ROLE_NAME}/secret-id")
+
+              # Persist into K8s Secret used by the kms sidecar.
+              kubectl -n "${TENANT_NAMESPACE}" create secret generic "${APPROLE_SECRET}" \
+                --from-literal=role_id="${ROLE_ID}" \
+                --from-literal=secret_id="${SECRET_ID}" \
+                --dry-run=client -o yaml | kubectl apply -f -
+{{- end }}

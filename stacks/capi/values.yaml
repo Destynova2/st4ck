@@ -1,0 +1,23 @@
+# cluster-api-operator Helm values
+# Chart: oci://registry-1.docker.io/kubernetesio/cluster-api-operator
+#
+# The operator reconciles CoreProvider / BootstrapProvider /
+# ControlPlaneProvider / InfrastructureProvider CRs and installs the
+# corresponding CAPI components. We keep the chart lean — cert-manager is
+# already deployed by stacks/pki, so we disable the bundled one.
+
+cert-manager:
+  enabled: false
+
+# Let the operator watch all namespaces (default). We install provider CRs
+# into dedicated namespaces (capi-system, cabpt-system, capi-kamaji-system,
+# caps-system) so RBAC stays namespaced.
+
+# Operator resources — conservative defaults; tune per-env via overrides.
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi

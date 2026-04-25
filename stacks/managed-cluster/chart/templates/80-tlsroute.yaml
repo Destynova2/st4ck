@@ -1,0 +1,39 @@
+{{/*
+========================================================================
+80-tlsroute — Cilium Gateway API TLSRoute for the tenant apiserver
+========================================================================
+One tenant-<T>-api.<baseDomain> per tenant → TLS passthrough to the
+Kamaji-generated apiserver Service in the tenant namespace.
+
+Backend service naming: Kamaji creates a ClusterIP Service named after
+the TenantControlPlane resource (`<tcp-name>`) in the same namespace,
+listening on port 6443. We route directly to that.
+
+If Kamaji evolves to a different naming scheme (e.g. `<tcp-name>-api`),
+update `include "st4ck.tcpName"` or add a dedicated helper.
+========================================================================
+*/}}
+---
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TLSRoute
+metadata:
+  name: {{ printf "%s-apiserver" (include "st4ck.fullname" .) | quote }}
+  namespace: {{ include "st4ck.namespace" . | quote }}
+  labels:
+    {{- include "st4ck.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ .Values.ingress.gatewayName | quote }}
+      namespace: {{ .Values.ingress.gatewayNamespace | quote }}
+      sectionName: https
+  hostnames:
+    - {{ include "st4ck.apiHost" . | quote }}
+  rules:
+    - backendRefs:
+        - group: ""
+          kind: Service
+          name: {{ include "st4ck.tcpName" . | quote }}
+          port: {{ .Values.ingress.apiserverPort | default 6443 }}
+          weight: 1

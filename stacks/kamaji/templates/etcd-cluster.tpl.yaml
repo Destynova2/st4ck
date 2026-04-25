@@ -1,0 +1,103 @@
+# EtcdCluster template — rendered per-tenant by stacks/managed-cluster.
+# This file is NOT applied by the kamaji stack itself.
+#
+# Rendering engine: Helm (Go template + sprig).
+#
+# Backs a Kamaji DataStore (kind: DataStore, driver: etcd) — one per tenant.
+# Reference: ADR-025 §3.2 Per-tenant etcd.
+---
+apiVersion: etcd.aenix.io/v1alpha1
+kind: EtcdCluster
+metadata:
+  name: {{ printf "%s-etcd" .Values.tenant.name | quote }}
+  namespace: {{ printf "tenant-%s" .Values.tenant.name | quote }}
+  labels:
+    st4ck.io/tenant: {{ .Values.tenant.name | quote }}
+    app.kubernetes.io/managed-by: managed-cluster
+spec:
+  replicas: {{ .Values.datastore.replicas | default 3 }}
+  version: {{ .Values.datastore.version | default "v3.5.15" | quote }}
+
+  storage:
+    volumeClaimTemplate:
+      metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.datastore.storageClass | default "scw-bssd" | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.datastore.size | default "10Gi" | quote }}
+
+  podTemplate:
+    spec:
+      # Anti-affinity: spread etcd replicas across management workers.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: etcd
+                  st4ck.io/tenant: {{ .Values.tenant.name | quote }}
+              topologyKey: kubernetes.io/hostname
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 50
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: etcd
+                    st4ck.io/tenant: {{ .Values.tenant.name | quote }}
+                topologyKey: topology.kubernetes.io/zone
+      containers:
+        - name: etcd
+          resources:
+            requests:
+              cpu: {{ .Values.datastore.requestsCPU | default "100m" | quote }}
+              memory: {{ .Values.datastore.requestsMem | default "256Mi" | quote }}
+            limits:
+              cpu: {{ .Values.datastore.limitsCPU | default "1" | quote }}
+              memory: {{ .Values.datastore.limitsMem | default "1Gi" | quote }}
+
+  # ─── Raft snapshot to Garage S3 (ADR-025 §3.2 Backup) ────────────
+  # Velero Schedule picks up these PVs; the operator also supports
+  # scheduled snapshots uploaded to S3 when configured.
+  backup:
+    enabled: {{ .Values.datastore.backup.enabled | default true }}
+    schedule: {{ .Values.datastore.backup.schedule | default "0 */6 * * *" | quote }}
+    # Optional S3 target — wire once Garage bucket+creds are provisioned
+    # for the tenant (ESO secret).
+    # s3:
+    #   endpoint: {{ .Values.datastore.backup.s3.endpoint | quote }}
+    #   bucket:   {{ printf "tenant-%s-etcd-backup" .Values.tenant.name | quote }}
+    #   secretRef:
+    #     name: {{ printf "%s-etcd-backup-s3" .Values.tenant.name | quote }}
+---
+# Kamaji DataStore that points at the EtcdCluster above.
+apiVersion: kamaji.clastix.io/v1alpha1
+kind: DataStore
+metadata:
+  name: {{ printf "%s-etcd" .Values.tenant.name | quote }}
+spec:
+  driver: etcd
+  endpoints:
+    {{- range $i, $_ := until (int (.Values.datastore.replicas | default 3)) }}
+    - {{ printf "%s-etcd-%d.%s-etcd.tenant-%s.svc:2379" $.Values.tenant.name $i $.Values.tenant.name $.Values.tenant.name | quote }}
+    {{- end }}
+  tlsConfig:
+    certificateAuthority:
+      certificate:
+        secretReference:
+          name: {{ printf "%s-etcd-ca" .Values.tenant.name | quote }}
+          namespace: {{ printf "tenant-%s" .Values.tenant.name | quote }}
+          keyPath: ca.crt
+    clientCertificate:
+      certificate:
+        secretReference:
+          name: {{ printf "%s-etcd-client" .Values.tenant.name | quote }}
+          namespace: {{ printf "tenant-%s" .Values.tenant.name | quote }}
+          keyPath: tls.crt
+      privateKey:
+        secretReference:
+          name: {{ printf "%s-etcd-client" .Values.tenant.name | quote }}
+          namespace: {{ printf "tenant-%s" .Values.tenant.name | quote }}
+          keyPath: tls.key

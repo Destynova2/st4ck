@@ -1,0 +1,37 @@
+{{/*
+========================================================================
+50-cluster-capi — CAPI Cluster (cluster.x-k8s.io/v1beta1)
+========================================================================
+Ties together the Kamaji control plane (51-) and the Scaleway infrastructure
+(52-). CIDRs come from values.clusterNetwork (Cilium default 10.244/16 pods,
+10.96/12 services).
+
+Note: Kamaji exposes the apiserver via a generated Service in the tenant
+namespace; the Cluster's controlPlaneEndpoint is reconciled by Kamaji CP
+provider — we don't set it here.
+========================================================================
+*/}}
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: Cluster
+metadata:
+  name: {{ include "st4ck.fullname" . | quote }}
+  namespace: {{ include "st4ck.namespace" . | quote }}
+  labels:
+    {{- include "st4ck.labels" . | nindent 4 }}
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks:
+        - {{ .Values.clusterNetwork.podsCIDR | default "10.244.0.0/16" | quote }}
+    services:
+      cidrBlocks:
+        - {{ .Values.clusterNetwork.servicesCIDR | default "10.96.0.0/12" | quote }}
+  controlPlaneRef:
+    apiVersion: controlplane.cluster.x-k8s.io/v1alpha2
+    kind: KamajiControlPlane
+    name: {{ include "st4ck.kamajiCPName" . | quote }}
+  infrastructureRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+    kind: ScalewayCluster
+    name: {{ include "st4ck.scwClusterName" . | quote }}

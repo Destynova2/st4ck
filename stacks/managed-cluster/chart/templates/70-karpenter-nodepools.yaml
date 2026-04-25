@@ -1,0 +1,63 @@
+{{/*
+========================================================================
+70-karpenter-nodepools — one Karpenter NodePool per Karpenter-enabled pool
+========================================================================
+Uses the CAPI Karpenter provider (kubernetes-sigs/karpenter-provider-cluster-api).
+`nodeClassRef` points at the MachineDeployment (62-) — the provider adjusts
+the MD's replicas as Karpenter schedules pods.
+
+Weight orders pools cheap-first (see ADR-025 §3.5). Pools without
+`karpenter.enabled` are skipped — their MD operates in classic mode
+(no autoscaling beyond `replicas`).
+========================================================================
+*/}}
+{{- $top := . -}}
+{{- range $_, $pool := .Values.workers }}
+{{- if and $pool.karpenter $pool.karpenter.enabled }}
+{{- $mdName := printf "%s-%s" (include "st4ck.fullname" $top) $pool.name }}
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: {{ printf "%s-%s" (include "st4ck.fullname" $top) $pool.name | quote }}
+  labels:
+    {{- include "st4ck.labels" $top | nindent 4 }}
+    st4ck.io/pool: {{ $pool.name | quote }}
+spec:
+  weight: {{ $pool.karpenter.weight | default 50 }}
+  template:
+    metadata:
+      labels:
+        st4ck.io/tenant: {{ $top.Values.tenant.name | quote }}
+        st4ck.io/pool: {{ $pool.name | quote }}
+        {{- range $k, $v := $pool.labels }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
+    spec:
+      nodeClassRef:
+        group: cluster.x-k8s.io
+        kind: MachineDeployment
+        name: {{ $mdName | quote }}
+      requirements:
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values:
+            - {{ $pool.instanceType | quote }}
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+      {{- with $pool.taints }}
+      taints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      expireAfter: 720h  # 30d — forces node rotation for OS patching
+  limits:
+    cpu: {{ mul (int ($pool.max | default 10)) 16 | quote }}
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 30s
+{{- end }}
+{{- end }}

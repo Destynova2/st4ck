@@ -1,0 +1,131 @@
+{{/*
+========================================================================
+40-tenant-control-plane — Kamaji TenantControlPlane
+========================================================================
+Inherits the shape of stacks/kamaji/templates/tenant-control-plane.tpl.yaml
+and refines it with:
+  - vault-kms-plugin sidecar (extraContainers)
+  - kms-sock emptyDir + encryption-config Secret volume
+  - apiserver.extraArgs for `--encryption-provider-config`
+  - required pod anti-affinity across mgmt workers
+  - resources mapped from the `controlPlane.apiServer.resourcesPreset`
+  - ClusterIP service (external exposure is via Gateway API, see 80-)
+
+Dependencies: DataStore (11-), encryption-config Secret (30-),
+kms-credentials Secret (created by the 20- Job).
+========================================================================
+*/}}
+---
+apiVersion: kamaji.clastix.io/v1alpha1
+kind: TenantControlPlane
+metadata:
+  name: {{ include "st4ck.tcpName" . | quote }}
+  namespace: {{ include "st4ck.namespace" . | quote }}
+  labels:
+    {{- include "st4ck.labels" . | nindent 4 }}
+spec:
+  dataStore: {{ include "st4ck.dataStoreName" . | quote }}
+
+  controlPlane:
+    deployment:
+      replicas: {{ .Values.controlPlane.replicas | default 2 }}
+      strategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxSurge: 1
+          maxUnavailable: 0
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                kamaji.clastix.io/name: {{ include "st4ck.tcpName" . | quote }}
+            topologyKey: kubernetes.io/hostname
+      resources:
+        apiServer:
+          {{- include "st4ck.apiServerResources" . | nindent 10 }}
+        controllerManager: {}
+        scheduler: {}
+      {{- if .Values.encryption.enabled }}
+      extraContainers:
+        - name: vault-kms-plugin
+          image: {{ .Values.encryption.sidecarImage | quote }}
+          env:
+            - name: VAULT_ADDR
+              value: {{ .Values.vault.address | quote }}
+            - name: VAULT_MOUNT
+              value: {{ .Values.vault.transitMount | quote }}
+            - name: VAULT_TRANSIT_KEY
+              value: {{ include "st4ck.kmsKeyName" . | quote }}
+            - name: VAULT_AUTH_METHOD
+              value: "approle"
+            - name: VAULT_AUTH_PATH
+              value: {{ .Values.vault.approleAuthPath | quote }}
+            - name: VAULT_ROLE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "st4ck.kmsApproleSecret" . | quote }}
+                  key: role_id
+            - name: VAULT_SECRET_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "st4ck.kmsApproleSecret" . | quote }}
+                  key: secret_id
+          volumeMounts:
+            - name: kms-sock
+              mountPath: /run/kms
+      extraVolumes:
+        - name: kms-sock
+          emptyDir: {}
+        - name: encryption-config
+          secret:
+            secretName: {{ include "st4ck.encryptionConfigSecret" . | quote }}
+      {{- end }}
+
+    apiServer:
+      {{- $extraArgs := list }}
+      {{- if .Values.encryption.enabled }}
+      {{- $extraArgs = append $extraArgs "--encryption-provider-config=/etc/kubernetes/enc/config.yaml" }}
+      {{- $extraArgs = append $extraArgs "--encryption-provider-config-automatic-reload=true" }}
+      {{- end }}
+      {{- range $k, $v := .Values.controlPlane.apiServer.extraArgs }}
+      {{- $extraArgs = append $extraArgs (printf "--%s=%s" $k (toString $v)) }}
+      {{- end }}
+      {{- if $extraArgs }}
+      extraArgs:
+        {{- range $extraArgs }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.encryption.enabled }}
+      extraVolumeMounts:
+        - name: encryption-config
+          mountPath: /etc/kubernetes/enc
+          readOnly: true
+        - name: kms-sock
+          mountPath: /run/kms
+      {{- end }}
+
+    service:
+      serviceType: ClusterIP
+
+  kubernetes:
+    version: {{ printf "v%s" .Values.kubernetes.version | quote }}
+    kubelet:
+      cgroupfs: systemd
+    admissionControllers:
+      - ResourceQuota
+      - LimitRanger
+      - MutatingAdmissionWebhook
+      - ValidatingAdmissionWebhook
+
+  networkProfile:
+    port: {{ .Values.ingress.apiserverPort | default 6443 }}
+    certSANs:
+      - {{ include "st4ck.apiHost" . | quote }}
+
+  addons:
+    coreDNS: {}
+    kubeProxy: {}
+    konnectivity:
+      server:
+        port: 8132

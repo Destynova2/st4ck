@@ -1,0 +1,120 @@
+# prometheus-adapter — wires HPA v2 custom/external metrics to VictoriaMetrics.
+# Chart: prometheus-community/prometheus-adapter
+# Prometheus endpoint (URL + port) is injected via terraform `set` from
+# var.victoriametrics_url (default http://vmsingle.monitoring.svc:8429).
+
+replicas: 2
+
+logLevel: 4
+
+# Resource sizing — adapter is mostly translation, not CPU-heavy.
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Registration against the K8s API aggregation layer.
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+
+# ─── Adapter rules ────────────────────────────────────────────────────
+# These translate Prometheus/VictoriaMetrics queries into the custom /
+# external metrics API consumed by HPA v2.
+#
+# Four common building blocks provided here:
+#   1. http_requests_per_second  — pods/{namespace}/http_requests_per_second
+#   2. http_request_p99_latency  — pods/{namespace}/http_request_p99_latency
+#   3. kafka_consumer_lag        — external metric, any workload can scale on a
+#                                   specific consumer group lag
+#   4. queue_depth               — generic in-cluster queue depth gauge
+
+rules:
+  default: false
+
+  custom:
+    # 1) Requests/s — per pod
+    - seriesQuery: 'http_requests_total{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: { resource: "namespace" }
+          pod:       { resource: "pod" }
+      name:
+        matches: "^(.*)_total$"
+        as: "${1}_per_second"
+      metricsQuery: |
+        sum by (<<.GroupBy>>) (
+          rate(<<.Series>>{<<.LabelMatchers>>}[2m])
+        )
+
+    # 2) p99 latency — per pod (histogram)
+    - seriesQuery: 'http_request_duration_seconds_bucket{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: { resource: "namespace" }
+          pod:       { resource: "pod" }
+      name:
+        matches: "^http_request_duration_seconds_bucket$"
+        as: "http_request_p99_latency"
+      metricsQuery: |
+        histogram_quantile(0.99,
+          sum by (le, <<.GroupBy>>) (
+            rate(<<.Series>>{<<.LabelMatchers>>}[5m])
+          )
+        )
+
+    # 4) Generic queue depth — per pod gauge
+    - seriesQuery: 'queue_depth{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: { resource: "namespace" }
+          pod:       { resource: "pod" }
+      name:
+        matches: "^(.*)$"
+        as: "${1}"
+      metricsQuery: |
+        avg by (<<.GroupBy>>) (<<.Series>>{<<.LabelMatchers>>})
+
+  external:
+    # 3) Kafka consumer lag — external metric, per consumer group.
+    # HPA usage:
+    #   metrics:
+    #     - type: External
+    #       external:
+    #         metric:
+    #           name: kafka_consumer_lag
+    #           selector:
+    #             matchLabels:
+    #               consumergroup: my-service
+    #         target:
+    #           type: AverageValue
+    #           averageValue: "100"
+    - seriesQuery: 'kafka_consumergroup_lag{consumergroup!=""}'
+      resources:
+        namespaced: false
+      name:
+        matches: "^kafka_consumergroup_lag$"
+        as: "kafka_consumer_lag"
+      metricsQuery: |
+        sum by (consumergroup, topic) (
+          max_over_time(<<.Series>>{<<.LabelMatchers>>}[2m])
+        )
+
+# ─── Resource metrics (optional — metrics-server usually handles this) ───
+# Keep disabled; metrics-server (or vmagent's kubelet scrape) owns
+# `cpu` / `memory` resource metrics.
+resource:
+  cpu:
+    enabled: false
+  memory:
+    enabled: false
+
+# Prometheus source — url + port injected via terraform `set`.
+# Path where VictoriaMetrics serves Prom HTTP API: /prometheus/api/v1
+prometheus:
+  path: "/prometheus"

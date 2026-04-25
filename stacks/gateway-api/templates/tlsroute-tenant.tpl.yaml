@@ -1,0 +1,42 @@
+# ═══════════════════════════════════════════════════════════════════════
+# Per-tenant TLSRoute template — rendered by stacks/managed-cluster.
+#
+# NOT applied by stacks/gateway-api. This file exists only as a
+# source-of-truth template consumed via Terraform `templatefile()` by
+# the downstream ManagedCluster stack.
+#
+# Template variables:
+#   tenant            — tenant identifier (DNS-safe label)
+#   base_domain       — e.g. "st4ck.local"  → hostname "<tenant>-api.<base_domain>"
+#   gateway_name      — shared Gateway name       (default: tenant-api-gw)
+#   gateway_namespace — shared Gateway namespace  (default: kamaji-system)
+#   tenant_namespace  — namespace of the TenantControlPlane (e.g. "tenant-<tenant>")
+#   apiserver_service — Kamaji-generated TCP Service fronting the tenant
+#                       apiserver pods (typically "<tcp-name>" in tenant_namespace)
+#   apiserver_port    — apiserver TCP port (usually 6443)
+# ═══════════════════════════════════════════════════════════════════════
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TLSRoute
+metadata:
+  name: ${tenant}-apiserver
+  namespace: ${tenant_namespace}
+  labels:
+    app.kubernetes.io/part-of: st4ck
+    app.kubernetes.io/managed-by: opentofu
+    st4ck.io/tenant: ${tenant}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: ${gateway_name}
+      namespace: ${gateway_namespace}
+      sectionName: https
+  hostnames:
+    - ${tenant}-api.${base_domain}
+  rules:
+    - backendRefs:
+        - group: ""
+          kind: Service
+          name: ${apiserver_service}
+          port: ${apiserver_port}
+          weight: 1

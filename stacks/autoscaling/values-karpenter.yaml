@@ -1,0 +1,58 @@
+# Karpenter core — default values
+# Chart: oci://public.ecr.aws/karpenter/karpenter
+# Docs:  https://karpenter.sh/docs/
+
+replicas: 2
+
+logLevel: info
+logEncoding: console
+
+# Leader election + HA
+controller:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 1Gi
+
+# Webhook service (cert-manager issues the TLS cert)
+webhook:
+  enabled: true
+  port: 8443
+
+# Pod disruption budget — at least one replica always available.
+podDisruptionBudget:
+  name: karpenter
+  maxUnavailable: 1
+
+# Tolerate running on management CP nodes (small mgmt cluster)
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+
+# Hard anti-affinity: spread replicas across mgmt workers.
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: karpenter
+        topologyKey: kubernetes.io/hostname
+
+# Karpenter settings — clusterName is injected via `set` from variables.tf.
+settings:
+  batchMaxDuration: 10s
+  batchIdleDuration: 1s
+  featureGates:
+    driftEnabled: true
+    spotToSpotConsolidation: true
+
+serviceMonitor:
+  enabled: true
+  additionalLabels:
+    release: vm-k8s-stack

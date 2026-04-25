@@ -1,0 +1,46 @@
+# ─────────────────────────────────────────────────────────────────────
+# TEMPLATE — NOT applied by this stack.
+# Rendered per tenant by `stacks/managed-cluster`.
+#
+# Pool: burst  (cheapest tier, weight 60 → picked first when requirements match)
+# Ref:  ADR-025 section 3.5
+# ─────────────────────────────────────────────────────────────────────
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: burst
+  labels:
+    st4ck.io/tenant: "{{ .Tenant }}"
+    st4ck.io/pool: "burst"
+spec:
+  weight: 60
+  template:
+    metadata:
+      labels:
+        st4ck.io/pool: "burst"
+    spec:
+      nodeClassRef:
+        group: cluster.x-k8s.io
+        kind: MachineDeployment
+        name: "{{ .MachineDeployment }}-burst"
+      requirements:
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values:
+            - DEV1-S
+            - DEV1-M
+            - DEV1-L
+            - DEV1-XL
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+      expireAfter: 168h  # 7d — burst nodes churn faster
+  limits:
+    cpu: "500"
+    memory: "2000Gi"
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 30s

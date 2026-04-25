@@ -1,0 +1,44 @@
+{{/*
+========================================================================
+51-kamaji-controlplane — CAPI KamajiControlPlane
+========================================================================
+The Kamaji CP provider reconciles this CR into the TenantControlPlane we
+already rendered in 40-. `dataStoreName` references the DataStore (11-).
+
+controlplane.cluster.x-k8s.io/v1alpha2 is the current GA-ish path. The
+TCP pod templates inherit from the TenantControlPlane once the provider
+stitches both CRs together (they share a name prefix via Kamaji).
+========================================================================
+*/}}
+---
+apiVersion: controlplane.cluster.x-k8s.io/v1alpha2
+kind: KamajiControlPlane
+metadata:
+  name: {{ include "st4ck.kamajiCPName" . | quote }}
+  namespace: {{ include "st4ck.namespace" . | quote }}
+  labels:
+    {{- include "st4ck.labels" . | nindent 4 }}
+spec:
+  dataStoreName: {{ include "st4ck.dataStoreName" . | quote }}
+  replicas: {{ .Values.controlPlane.replicas | default 2 }}
+  version: {{ printf "v%s" .Values.kubernetes.version | quote }}
+  {{- $extraArgs := list }}
+  {{- if .Values.encryption.enabled }}
+  {{- $extraArgs = append $extraArgs "--encryption-provider-config=/etc/kubernetes/enc/config.yaml" }}
+  {{- $extraArgs = append $extraArgs "--encryption-provider-config-automatic-reload=true" }}
+  {{- end }}
+  {{- range $k, $v := .Values.controlPlane.apiServer.extraArgs }}
+  {{- $extraArgs = append $extraArgs (printf "--%s=%s" $k (toString $v)) }}
+  {{- end }}
+  {{- if $extraArgs }}
+  apiServer:
+    extraArgs:
+      {{- range $extraArgs }}
+      - {{ . | quote }}
+      {{- end }}
+  {{- end }}
+  network:
+    serviceType: ClusterIP
+  addons:
+    coreDNS: {}
+    kubeProxy: {}

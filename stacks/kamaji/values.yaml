@@ -1,0 +1,69 @@
+# Kamaji Helm values — st4ck management cluster
+# Reference: https://github.com/clastix/kamaji/blob/master/charts/kamaji/values.yaml
+# ADR: docs/adr/025-kamaji-detailed-architecture.md
+
+# ─── Image ────────────────────────────────────────────────────────────
+image:
+  pullPolicy: IfNotPresent
+
+# ─── Runtime ──────────────────────────────────────────────────────────
+loggingLevel: info
+
+replicaCount: 2
+
+# ─── Resources (conservative; bump for prod scale) ────────────────────
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# ─── Admission webhook — cert-manager issued serving cert ─────────────
+# Uses the "internal-ca" ClusterIssuer provisioned by stacks/pki.
+# Kamaji's chart supports `cert-manager` mode to auto-create a Certificate.
+webhook:
+  enabled: true
+  certManager:
+    enabled: true
+    issuerRef:
+      group: cert-manager.io
+      kind: ClusterIssuer
+      name: internal-ca
+
+# ─── Metrics / Observability ──────────────────────────────────────────
+metrics:
+  enabled: true
+
+serviceMonitor:
+  enabled: false   # monitoring stack can opt-in later
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"
+
+# ─── CRDs (installed by the chart) ────────────────────────────────────
+installCRDs: true
+
+# ─── Scheduling ───────────────────────────────────────────────────────
+nodeSelector: {}
+tolerations: []
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: kamaji
+          topologyKey: kubernetes.io/hostname
+
+# ─── DataStore bootstrap ──────────────────────────────────────────────
+# The default "etcd" DataStore shipped by the chart is NOT used in st4ck:
+# each tenant gets its own EtcdCluster (Ænix) wired via its own DataStore
+# resource rendered by stacks/managed-cluster. We disable the default here
+# to avoid a dangling reference.
+datastore:
+  enabled: false

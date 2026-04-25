@@ -1,0 +1,51 @@
+{{/*
+========================================================================
+11-etcd-datastore — Kamaji DataStore (kamaji.clastix.io/v1alpha1)
+========================================================================
+Points the tenant's TenantControlPlane (rendered in 40-) at the
+EtcdCluster (rendered in 10-).
+
+Endpoints follow the Ænix etcd-operator service naming:
+    <etcd-name>-<index>.<etcd-name>.<namespace>.svc:2379
+
+Cert references:
+  - ca:     <etcd-name>-ca         (issued by cert-manager via etcd-operator)
+  - client: <etcd-name>-client
+========================================================================
+*/}}
+{{- if eq .Values.datastore.backend "etcd" -}}
+{{- $name := include "st4ck.etcdName" . -}}
+{{- $ns := include "st4ck.namespace" . -}}
+{{- $replicas := int (.Values.datastore.replicas | default 3) -}}
+---
+apiVersion: kamaji.clastix.io/v1alpha1
+kind: DataStore
+metadata:
+  name: {{ include "st4ck.dataStoreName" . | quote }}
+  labels:
+    {{- include "st4ck.labels" . | nindent 4 }}
+spec:
+  driver: etcd
+  endpoints:
+    {{- range $i := until $replicas }}
+    - {{ printf "%s-%d.%s.%s.svc:2379" $name $i $name $ns | quote }}
+    {{- end }}
+  tlsConfig:
+    certificateAuthority:
+      certificate:
+        secretReference:
+          name: {{ printf "%s-ca" $name | quote }}
+          namespace: {{ $ns | quote }}
+          keyPath: ca.crt
+    clientCertificate:
+      certificate:
+        secretReference:
+          name: {{ printf "%s-client" $name | quote }}
+          namespace: {{ $ns | quote }}
+          keyPath: tls.crt
+      privateKey:
+        secretReference:
+          name: {{ printf "%s-client" $name | quote }}
+          namespace: {{ $ns | quote }}
+          keyPath: tls.key
+{{- end }}

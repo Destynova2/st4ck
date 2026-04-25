@@ -1,0 +1,96 @@
+{{/*
+========================================================================
+10-etcd-cluster — Per-tenant etcd (Ænix etcd-operator)
+========================================================================
+Renders a dedicated EtcdCluster CR (etcd.aenix.io/v1alpha1) used as the
+backing store for the tenant's Kamaji DataStore.
+
+Why per-tenant: blast-radius isolation (corruption, quota exhaustion,
+compaction events stay within the tenant). See ADR-025 §3.2.
+
+Topology:
+  - hard anti-affinity across mgmt nodes (hostname)
+  - soft anti-affinity across mgmt zones
+  - Block PV (scw-bssd) sized from values
+  - mTLS via cert-manager ClusterIssuer "internal-ca"
+  - Raft snapshots scheduled to Garage S3 (uplink wired in 1x stacks/storage)
+
+Dependencies:
+  - stacks/kamaji      → installs etcd-operator
+  - stacks/pki         → ClusterIssuer "internal-ca"
+========================================================================
+*/}}
+{{- if eq .Values.datastore.backend "etcd" -}}
+---
+apiVersion: etcd.aenix.io/v1alpha1
+kind: EtcdCluster
+metadata:
+  name: {{ include "st4ck.etcdName" . | quote }}
+  namespace: {{ include "st4ck.namespace" . | quote }}
+  labels:
+    {{- include "st4ck.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.datastore.replicas | default 3 }}
+  version: {{ .Values.datastore.version | default "v3.5.15" | quote }}
+
+  storage:
+    volumeClaimTemplate:
+      metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.datastore.storageClass | default "scw-bssd" | quote }}
+        resources:
+          requests:
+            storage: {{ .Values.datastore.storageSize | default "10Gi" | quote }}
+
+  # mTLS material — cert-manager Certificates issued from the management
+  # cluster ClusterIssuer "internal-ca". The etcd-operator picks up these
+  # Secrets via the standard convention <name>-{ca,server,client}.
+  security:
+    tls:
+      issuerRef:
+        kind: ClusterIssuer
+        name: internal-ca
+        group: cert-manager.io
+
+  podTemplate:
+    metadata:
+      labels:
+        {{- include "st4ck.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: etcd
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: st4ck-managed-cluster
+                  st4ck.io/tenant: {{ .Values.tenant.name | quote }}
+                  app.kubernetes.io/component: etcd
+              topologyKey: kubernetes.io/hostname
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 50
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: st4ck-managed-cluster
+                    st4ck.io/tenant: {{ .Values.tenant.name | quote }}
+                    app.kubernetes.io/component: etcd
+                topologyKey: topology.kubernetes.io/zone
+      containers:
+        - name: etcd
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+
+  backup:
+    enabled: {{ .Values.datastore.backup.enabled | default true }}
+    schedule: {{ .Values.datastore.backup.schedule | default "0 */6 * * *" | quote }}
+    # S3 uplink wired by stacks/storage (Garage). When the per-tenant
+    # bucket + creds Secret exist, set spec.backup.s3.{endpoint,bucket,secretRef}.
+{{- end }}

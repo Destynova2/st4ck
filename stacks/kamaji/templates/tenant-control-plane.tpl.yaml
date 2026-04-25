@@ -1,0 +1,135 @@
+# TenantControlPlane template — rendered per-tenant by stacks/managed-cluster.
+# This file is NOT applied by the kamaji stack itself.
+#
+# Rendering engine: Helm (Go template + sprig). The st4ck ManagedCluster
+# controller / Helm chart fills in the placeholders from the ManagedCluster CR.
+#
+# References:
+#   - ADR-025 §3.1 Topology
+#   - ADR-025 §3.3 KMS Transit
+#   - https://github.com/clastix/kamaji
+---
+apiVersion: kamaji.clastix.io/v1alpha1
+kind: TenantControlPlane
+metadata:
+  name: {{ .Values.tenant.name | quote }}
+  namespace: {{ printf "tenant-%s" .Values.tenant.name | quote }}
+  labels:
+    st4ck.io/tenant: {{ .Values.tenant.name | quote }}
+    app.kubernetes.io/managed-by: managed-cluster
+spec:
+  dataStore: {{ printf "%s-etcd" .Values.tenant.name | quote }}
+
+  controlPlane:
+    deployment:
+      replicas: {{ .Values.controlPlane.replicas | default 3 }}
+      strategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxSurge: 1
+          maxUnavailable: 0
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                kamaji.clastix.io/name: {{ .Values.tenant.name | quote }}
+            topologyKey: kubernetes.io/hostname
+      # ─── KMS sidecar injection (ADR-025 §3.3) ─────────────────────
+      # Uncomment once OpenBao Transit engine + AppRole are provisioned
+      # for this tenant (ESO ExternalSecret drives the approle secret-id).
+      #
+      # extraContainers:
+      #   - name: vault-kms-plugin
+      #     image: {{ .Values.kms.sidecarImage | default "ghcr.io/st4ck/vault-kms-plugin@sha256:REPLACE_ME" | quote }}
+      #     env:
+      #       - name: VAULT_ADDR
+      #         value: {{ .Values.kms.vaultAddr | default "https://openbao-infra.secrets.svc:8200" | quote }}
+      #       - name: VAULT_TRANSIT_KEY
+      #         value: {{ printf "tenant-%s" .Values.tenant.name | quote }}
+      #       - name: VAULT_MOUNT
+      #         value: {{ .Values.kms.mount | default "transit" | quote }}
+      #       - name: VAULT_AUTH_METHOD
+      #         value: "approle"
+      #       - name: VAULT_ROLE_ID
+      #         valueFrom:
+      #           secretKeyRef:
+      #             name: {{ printf "%s-kms-approle" .Values.tenant.name | quote }}
+      #             key: role_id
+      #       - name: VAULT_SECRET_ID
+      #         valueFrom:
+      #           secretKeyRef:
+      #             name: {{ printf "%s-kms-approle" .Values.tenant.name | quote }}
+      #             key: secret_id
+      #     volumeMounts:
+      #       - name: kms-sock
+      #         mountPath: /run/kms
+      # extraVolumes:
+      #   - name: kms-sock
+      #     emptyDir: {}
+      resources:
+        apiServer:
+          requests:
+            cpu: {{ .Values.controlPlane.apiServer.requestsCPU | default "250m" | quote }}
+            memory: {{ .Values.controlPlane.apiServer.requestsMem | default "512Mi" | quote }}
+          limits:
+            cpu: {{ .Values.controlPlane.apiServer.limitsCPU | default "2" | quote }}
+            memory: {{ .Values.controlPlane.apiServer.limitsMem | default "2Gi" | quote }}
+        controllerManager: {}
+        scheduler: {}
+
+    service:
+      serviceType: ClusterIP
+
+  kubernetes:
+    version: {{ .Values.kubernetes.version | default "v1.35.4" | quote }}
+    kubelet:
+      cgroupfs: systemd
+    admissionControllers:
+      - ResourceQuota
+      - LimitRanger
+      - MutatingAdmissionWebhook
+      - ValidatingAdmissionWebhook
+
+  networkProfile:
+    port: 6443
+    certSANs:
+      - {{ printf "%s-api.st4ck.%s" .Values.tenant.name (.Values.ingress.domain | default "example.com") | quote }}
+
+  addons:
+    coreDNS: {}
+    kubeProxy: {}
+    konnectivity:
+      server:
+        port: 8132
+
+  # ─── Encryption at rest (ADR-025 §3.3) ────────────────────────────
+  # Uncomment together with the KMS sidecar above.
+  #
+  # apiServer:
+  #   extraArgs:
+  #     - --encryption-provider-config=/etc/kubernetes/encryption/config.yaml
+  #     - --encryption-provider-config-automatic-reload=true
+  #   extraVolumeMounts:
+  #     - name: encryption-config
+  #       mountPath: /etc/kubernetes/encryption
+  #       readOnly: true
+  #     - name: kms-sock
+  #       mountPath: /run/kms
+  #   extraVolumes:
+  #     - name: encryption-config
+  #       secret:
+  #         secretName: {{ printf "%s-encryption-config" .Values.tenant.name | quote }}
+  #
+  # ---
+  # # Shipped as a Secret alongside the TenantControlPlane:
+  # apiVersion: apiserver.config.k8s.io/v1
+  # kind: EncryptionConfiguration
+  # resources:
+  #   - resources: [secrets, configmaps]
+  #     providers:
+  #       - kms:
+  #           name: openbao-transit
+  #           endpoint: unix:///run/kms/socket
+  #           cachesize: 1000
+  #           timeout: 3s
+  #       - identity: {}

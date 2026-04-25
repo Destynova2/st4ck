@@ -1,0 +1,54 @@
+# ─────────────────────────────────────────────────────────────────────
+# TEMPLATE — NOT applied by this stack.
+# Rendered per tenant by `stacks/managed-cluster`.
+#
+# Pool: gpu-h100  (NVIDIA H100, weight 10 — reserved for training workloads)
+# Ref:  ADR-025 section 3.5
+# ─────────────────────────────────────────────────────────────────────
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: gpu-h100
+  labels:
+    st4ck.io/tenant: "{{ .Tenant }}"
+    st4ck.io/pool: "gpu-h100"
+spec:
+  weight: 10
+  template:
+    metadata:
+      labels:
+        st4ck.io/pool: "gpu-h100"
+        nvidia.com/gpu.product: "H100"
+    spec:
+      nodeClassRef:
+        group: cluster.x-k8s.io
+        kind: MachineDeployment
+        name: "{{ .MachineDeployment }}-gpu-h100"
+      requirements:
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values:
+            - H100-1-80G
+            - H100-2-80G
+            - H100-SXM-8-80G
+        - key: nvidia.com/gpu.product
+          operator: In
+          values: ["H100"]
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+      taints:
+        - key: nvidia.com/gpu
+          effect: NoSchedule
+        - key: st4ck.io/pool
+          value: gpu-h100
+          effect: NoSchedule
+      expireAfter: 72h  # 3d — H100s are expensive, force rotation
+  limits:
+    nvidia.com/gpu: "8"
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 30s

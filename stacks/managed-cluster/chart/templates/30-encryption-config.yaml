@@ -1,0 +1,39 @@
+{{/*
+========================================================================
+30-encryption-config — EncryptionConfiguration Secret
+========================================================================
+Mounted as `/etc/kubernetes/enc/config.yaml` inside the TCP apiserver
+container. Points at the vault-kms-plugin UDS `/run/kms/socket` (provided
+by the sidecar in the TCP deployment — see 40-).
+
+The `identity: {}` provider is kept as a read fallback so that, during
+key rotation, already-stored envelopes remain decryptable until a full
+re-encryption pass (`kubectl get secrets -A -o yaml | kubectl replace -f -`).
+========================================================================
+*/}}
+{{- if .Values.encryption.enabled -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "st4ck.encryptionConfigSecret" . | quote }}
+  namespace: {{ include "st4ck.namespace" . | quote }}
+  labels:
+    {{- include "st4ck.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  config.yaml: |
+    apiVersion: apiserver.config.k8s.io/v1
+    kind: EncryptionConfiguration
+    resources:
+      - resources:
+          - secrets
+          - configmaps
+        providers:
+          - kms:
+              apiVersion: v2
+              name: {{ .Values.encryption.kmsProvider | default "openbao-transit" | quote }}
+              endpoint: unix:///run/kms/socket
+              cachesize: 1000
+              timeout: 3s
+          - identity: {}
+{{- end }}

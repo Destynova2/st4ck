@@ -1,0 +1,29 @@
+{{/*
+========================================================================
+52-scaleway-cluster — CAPI Scaleway infrastructure
+========================================================================
+Renders a ScalewayCluster (infrastructure.cluster.x-k8s.io/v1alpha1) per
+tenant. CAPS (cluster-api-provider-scaleway) then provisions the needed
+network artefacts (VPC, LB rules via Gateway controller, etc.).
+
+`projectId` is supplied by the TF wrapper from the IAM-stage output. The
+Scaleway credentials Secret is NOT created here — stacks/capi already
+seeds `scaleway-credentials` in caps-system and CAPS controllers use
+that cluster-wide.
+========================================================================
+*/}}
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: ScalewayCluster
+metadata:
+  name: {{ include "st4ck.scwClusterName" . | quote }}
+  namespace: {{ include "st4ck.namespace" . | quote }}
+  labels:
+    {{- include "st4ck.labels" . | nindent 4 }}
+spec:
+  projectID: {{ .Values.scaleway.projectId | quote }}
+  region: {{ .Values.scaleway.region | default "fr-par" | quote }}
+  failureDomains:
+    - {{ .Values.scaleway.zone | default "fr-par-1" | quote }}
+  # CAPS uses the shared `scaleway-credentials` Secret in caps-system (see
+  # stacks/capi). No explicit reference here — CAPS resolves it cluster-wide.

@@ -1,0 +1,47 @@
+
+st4ck-managed-cluster {{ .Chart.Version }} — tenant {{ .Values.tenant.name | quote }} deployed.
+
+══════════════════════════════════════════════════════════════════════
+Tenant context
+══════════════════════════════════════════════════════════════════════
+  Context ID    : {{ include "st4ck.contextId" . }}
+  Namespace     : {{ include "st4ck.namespace" . }}
+  K8s version   : v{{ .Values.kubernetes.version }}
+  Talos version : {{ .Values.kubernetes.talosVersion }}
+  TCP replicas  : {{ .Values.controlPlane.replicas }}
+  Datastore     : {{ .Values.datastore.backend }} × {{ .Values.datastore.replicas }}
+  KMS           : {{ if .Values.encryption.enabled -}}
+                    {{ .Values.encryption.kmsProvider }} / key={{ include "st4ck.kmsKeyName" . }}
+                  {{- else -}}
+                    DISABLED
+                  {{- end }}
+
+══════════════════════════════════════════════════════════════════════
+API access
+══════════════════════════════════════════════════════════════════════
+  Hostname        : {{ include "st4ck.apiHost" . }}
+  DNS wildcard    : *.{{ .Values.ingress.baseDomain }} → Scaleway LB (Cilium Gateway)
+  Retrieve kubeconfig:
+    kubectl get secret {{ include "st4ck.fullname" . }}-tenant-kubeconfig \
+      -n {{ include "st4ck.namespace" . }} \
+      -o jsonpath='{.data.admin\.conf}' | base64 -d > ~/.kube/tenant-{{ .Values.tenant.name }}
+
+══════════════════════════════════════════════════════════════════════
+Karpenter NodePools
+══════════════════════════════════════════════════════════════════════
+{{- range $_, $pool := .Values.workers }}
+{{- if and $pool.karpenter $pool.karpenter.enabled }}
+  - {{ $pool.name }}  (weight {{ $pool.karpenter.weight | default 50 }}, type {{ $pool.instanceType }}, max {{ $pool.max }})
+{{- end }}
+{{- end }}
+
+══════════════════════════════════════════════════════════════════════
+{{- if .Values.controlPlane.dedicated }}
+
+  ⚠ WARNING: controlPlane.dedicated=true is NOT implemented in Phase A.
+    The chart is still rendering the Kamaji (hosted) control plane.
+    Dedicated CP VMs (KubeadmControlPlane path) are tracked under
+    ADR-025 §6.1 and will be enabled in a later release.
+
+══════════════════════════════════════════════════════════════════════
+{{- end }}

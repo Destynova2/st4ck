@@ -1,0 +1,49 @@
+# ─────────────────────────────────────────────────────────────────────
+# TEMPLATE — NOT applied by this stack.
+# Rendered per tenant by `stacks/managed-cluster`.
+#
+# Pool: gpu-l4  (NVIDIA L4 single-GPU, weight 10 — scale-to-zero friendly)
+# Ref:  ADR-025 section 3.5
+# ─────────────────────────────────────────────────────────────────────
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: gpu-l4
+  labels:
+    st4ck.io/tenant: "{{ .Tenant }}"
+    st4ck.io/pool: "gpu-l4"
+spec:
+  weight: 10
+  template:
+    metadata:
+      labels:
+        st4ck.io/pool: "gpu-l4"
+        nvidia.com/gpu.product: "L4"
+    spec:
+      nodeClassRef:
+        group: cluster.x-k8s.io
+        kind: MachineDeployment
+        name: "{{ .MachineDeployment }}-gpu-l4"
+      requirements:
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values:
+            - L4-1-24G
+        - key: nvidia.com/gpu.product
+          operator: In
+          values: ["L4"]
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+      taints:
+        - key: nvidia.com/gpu
+          effect: NoSchedule
+      expireAfter: 168h  # 7d
+  limits:
+    nvidia.com/gpu: "16"
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 30s

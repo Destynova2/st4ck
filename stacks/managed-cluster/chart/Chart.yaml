@@ -1,0 +1,21 @@
+apiVersion: v2
+name: st4ck-managed-cluster
+description: Renders a ManagedCluster spec into Kamaji + CAPI + Karpenter + Gateway API resources for a Talos/Scaleway tenant.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.30.0-0"
+keywords:
+  - kamaji
+  - talos
+  - kaas
+  - scaleway
+  - capi
+home: https://github.com/st4ck
+maintainers:
+  - name: st4ck
+    email: ops@st4ck.local
+# No dependencies — CRDs for Kamaji, CAPI, Karpenter, Gateway API, Ænix
+# etcd-operator are installed by upstream stacks (capi, kamaji, autoscaling,
+# gateway-api). This chart ONLY renders tenant-scoped resources that rely
+# on those CRDs being present in the management cluster.

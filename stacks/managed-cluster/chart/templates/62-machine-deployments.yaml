@@ -1,0 +1,50 @@
+{{/*
+========================================================================
+62-machine-deployments — one MachineDeployment per pool
+========================================================================
+Each MachineDeployment ties a ScalewayMachineTemplate (60-) to a
+TalosConfigTemplate (61-) and seeds the initial replica count.
+
+Karpenter (70-) takes over day-to-day scaling; `replicas` here is only
+the bootstrap size (usually equal to `min` or `0` for scale-to-zero
+pools like GPU).
+========================================================================
+*/}}
+{{- $top := . }}
+{{- range $_, $pool := .Values.workers }}
+{{- $mdName := printf "%s-%s" (include "st4ck.fullname" $top) $pool.name }}
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachineDeployment
+metadata:
+  name: {{ $mdName | quote }}
+  namespace: {{ include "st4ck.namespace" $top | quote }}
+  labels:
+    {{- include "st4ck.labels" $top | nindent 4 }}
+    st4ck.io/pool: {{ $pool.name | quote }}
+spec:
+  clusterName: {{ include "st4ck.fullname" $top | quote }}
+  replicas: {{ $pool.replicas | default 0 }}
+  selector:
+    matchLabels:
+      cluster.x-k8s.io/cluster-name: {{ include "st4ck.fullname" $top | quote }}
+      st4ck.io/pool: {{ $pool.name | quote }}
+  template:
+    metadata:
+      labels:
+        cluster.x-k8s.io/cluster-name: {{ include "st4ck.fullname" $top | quote }}
+        st4ck.io/tenant: {{ $top.Values.tenant.name | quote }}
+        st4ck.io/pool: {{ $pool.name | quote }}
+    spec:
+      clusterName: {{ include "st4ck.fullname" $top | quote }}
+      version: {{ printf "v%s" $top.Values.kubernetes.version | quote }}
+      bootstrap:
+        configRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+          kind: TalosConfigTemplate
+          name: {{ $mdName | quote }}
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+        kind: ScalewayMachineTemplate
+        name: {{ $mdName | quote }}
+{{- end }}

@@ -1,0 +1,6 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Placeholder — Flux day-2 reconciliation for CAPI (operator + provider CRs)
+# will be added once the OpenTofu stack has bootstrapped the CRDs.
+# See ADR-025 §8 item #3 (stacks/capi) and the flux-bootstrap handoff.
+resources: []

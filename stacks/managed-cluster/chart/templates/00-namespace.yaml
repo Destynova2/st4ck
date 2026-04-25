@@ -1,0 +1,22 @@
+{{/*
+========================================================================
+00-namespace — Tenant namespace
+========================================================================
+Owns: the namespace that hosts every per-tenant resource produced by this
+chart (TenantControlPlane, EtcdCluster, CAPI Cluster, MachineDeployments,
+TLSRoute, NodePools, kms-credentials Secret, ...).
+
+The Pod Security level is `baseline` — Kamaji's TCP pods do not require
+privileged contexts.
+========================================================================
+*/}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "st4ck.namespace" . | quote }}
+  labels:
+    {{- include "st4ck.labels" . | nindent 4 }}
+    pod-security.kubernetes.io/enforce: baseline
+  annotations:
+    st4ck.io/tenant: {{ .Values.tenant.name | quote }}
+    st4ck.io/managed-cluster-version: {{ .Chart.Version | quote }}

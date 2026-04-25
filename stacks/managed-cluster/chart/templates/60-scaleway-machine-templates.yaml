@@ -1,0 +1,39 @@
+{{/*
+========================================================================
+60-scaleway-machine-templates — one ScalewayMachineTemplate per pool
+========================================================================
+CAPS (cluster-api-provider-scaleway) uses ScalewayMachineTemplate to
+materialise worker VMs. Each pool gets its own template so instance types,
+root volume sizes and tags are isolated.
+
+`image` comes from stacks/scaleway/image (Talos image builder). The TF
+wrapper injects it via --set scaleway.image=<name>.
+========================================================================
+*/}}
+{{- $top := . -}}
+{{- range $_, $pool := .Values.workers }}
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha1
+kind: ScalewayMachineTemplate
+metadata:
+  name: {{ printf "%s-%s" (include "st4ck.fullname" $top) $pool.name | quote }}
+  namespace: {{ include "st4ck.namespace" $top | quote }}
+  labels:
+    {{- include "st4ck.labels" $top | nindent 4 }}
+    st4ck.io/pool: {{ $pool.name | quote }}
+spec:
+  template:
+    spec:
+      commercialType: {{ $pool.instanceType | quote }}
+      image:
+        name: {{ $top.Values.scaleway.image | quote }}
+      rootVolume:
+        size: {{ $pool.rootVolumeSizeGB | default 50 }}
+        type: b_ssd
+      publicNetwork:
+        enabled: false
+      tags:
+        - {{ printf "st4ck-tenant:%s" $top.Values.tenant.name | quote }}
+        - {{ printf "st4ck-pool:%s" $pool.name | quote }}
+        - {{ printf "managed-by:managed-cluster" | quote }}
+{{- end }}

@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "st4ck-managed-cluster values",
+  "type": "object",
+  "required": ["tenant", "kubernetes", "controlPlane", "datastore", "ingress", "workers", "scaleway"],
+  "additionalProperties": true,
+  "properties": {
+    "tenant": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,19}$",
+          "description": "DNS label — 1..20 chars, [a-z][a-z0-9-]*"
+        },
+        "namespace": {
+          "type": "string",
+          "pattern": "^([a-z][a-z0-9-]{0,61}[a-z0-9])?$"
+        }
+      }
+    },
+    "kubernetes": {
+      "type": "object",
+      "required": ["version", "talosVersion"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "talosVersion": {
+          "type": "string",
+          "pattern": "^v\\d+\\.\\d+\\.\\d+$"
+        }
+      }
+    },
+    "controlPlane": {
+      "type": "object",
+      "properties": {
+        "replicas": {"type": "integer", "minimum": 1, "maximum": 7},
+        "dedicated": {"type": "boolean"},
+        "apiServer": {
+          "type": "object",
+          "properties": {
+            "resourcesPreset": {
+              "type": "string",
+              "enum": ["small", "medium", "large"]
+            },
+            "extraArgs": {"type": "object"}
+          }
+        }
+      }
+    },
+    "datastore": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": ["etcd", "kine-postgres"]
+        },
+        "replicas": {"type": "integer", "minimum": 1, "maximum": 7},
+        "storageSize": {"type": "string"},
+        "storageClass": {"type": "string"},
+        "version": {"type": "string"},
+        "backup": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "schedule": {"type": "string"}
+          }
+        }
+      }
+    },
+    "encryption": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "kmsProvider": {"type": "string", "enum": ["openbao-transit"]},
+        "keyName": {"type": "string"},
+        "keyRotation": {"type": "string", "pattern": "^\\d+[smhd]$"},
+        "sidecarImage": {"type": "string", "minLength": 1}
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "required": ["gatewayName", "gatewayNamespace", "baseDomain"],
+      "properties": {
+        "gatewayName": {"type": "string"},
+        "gatewayNamespace": {"type": "string"},
+        "baseDomain": {"type": "string", "minLength": 3},
+        "apiserverPort": {"type": "integer", "minimum": 1, "maximum": 65535}
+      }
+    },
+    "clusterNetwork": {
+      "type": "object",
+      "properties": {
+        "podsCIDR": {"type": "string"},
+        "servicesCIDR": {"type": "string"}
+      }
+    },
+    "workers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "instanceType"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,30}$"
+          },
+          "instanceType": {"type": "string", "minLength": 1},
+          "rootVolumeSizeGB": {"type": "integer", "minimum": 10},
+          "replicas": {"type": "integer", "minimum": 0},
+          "min": {"type": "integer", "minimum": 0},
+          "max": {"type": "integer", "minimum": 0},
+          "karpenter": {
+            "type": "object",
+            "properties": {
+              "enabled": {"type": "boolean"},
+              "weight": {"type": "integer", "minimum": 1, "maximum": 100}
+            }
+          },
+          "taints": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["key", "effect"],
+              "properties": {
+                "key": {"type": "string"},
+                "value": {"type": "string"},
+                "effect": {
+                  "type": "string",
+                  "enum": ["NoSchedule", "PreferNoSchedule", "NoExecute"]
+                }
+              }
+            }
+          },
+          "labels": {"type": "object"}
+        }
+      }
+    },
+    "scaleway": {
+      "type": "object",
+      "required": ["region"],
+      "properties": {
+        "projectId": {"type": "string"},
+        "region": {"type": "string", "minLength": 2},
+        "zone": {"type": "string"},
+        "image": {"type": "string"}
+      }
+    },
+    "vault": {
+      "type": "object",
+      "properties": {
+        "address": {"type": "string", "format": "uri"},
+        "transitMount": {"type": "string"},
+        "approleAuthPath": {"type": "string"},
+        "provisionerServiceAccount": {"type": "string"},
+        "cliImage": {"type": "string"}
+      }
+    },
+    "addons": {
+      "type": "object",
+      "properties": {
+        "fluxcd": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "gitRepo": {"type": "string"}
+          }
+        },
+        "cilium": {
+          "type": "object",
+          "properties": {
+            "gatewayAPI": {"type": "boolean"}
+          }
+        }
+      }
+    }
+  }
+}

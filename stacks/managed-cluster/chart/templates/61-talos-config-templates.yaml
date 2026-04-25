@@ -1,0 +1,51 @@
+{{/*
+========================================================================
+61-talos-config-templates — one TalosConfigTemplate per pool
+========================================================================
+CABPT (cluster-api-bootstrap-provider-talos) uses a TalosConfigTemplate to
+generate per-node machine configs.
+
+The `configPatches` inject node-level labels / taints declared in the
+ManagedCluster spec (spec.workers[*].labels / .taints). Talos v1.12 reads
+`machine.kubelet.extraArgs` to pass these to the kubelet at boot.
+========================================================================
+*/}}
+{{- $top := . -}}
+{{- range $_, $pool := .Values.workers }}
+{{- $labelStr := "" -}}
+{{- range $k, $v := $pool.labels }}
+{{- $labelStr = printf "%s%s=%s," $labelStr $k $v -}}
+{{- end }}
+{{- $labelStr = trimSuffix "," $labelStr }}
+{{- $taintStr := "" -}}
+{{- range $_, $t := $pool.taints }}
+{{- $taintStr = printf "%s%s=%s:%s," $taintStr $t.key (default "" $t.value) $t.effect -}}
+{{- end }}
+{{- $taintStr = trimSuffix "," $taintStr }}
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+kind: TalosConfigTemplate
+metadata:
+  name: {{ printf "%s-%s" (include "st4ck.fullname" $top) $pool.name | quote }}
+  namespace: {{ include "st4ck.namespace" $top | quote }}
+  labels:
+    {{- include "st4ck.labels" $top | nindent 4 }}
+    st4ck.io/pool: {{ $pool.name | quote }}
+spec:
+  template:
+    spec:
+      generateType: worker
+      talosVersion: {{ $top.Values.kubernetes.talosVersion | quote }}
+      configPatches:
+        - op: add
+          path: /machine/kubelet/extraArgs
+          value:
+            {{- if $labelStr }}
+            node-labels: {{ printf "st4ck.io/tenant=%s,st4ck.io/pool=%s,%s" $top.Values.tenant.name $pool.name $labelStr | quote }}
+            {{- else }}
+            node-labels: {{ printf "st4ck.io/tenant=%s,st4ck.io/pool=%s" $top.Values.tenant.name $pool.name | quote }}
+            {{- end }}
+            {{- if $taintStr }}
+            register-with-taints: {{ $taintStr | quote }}
+            {{- end }}
+{{- end }}

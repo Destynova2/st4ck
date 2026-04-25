@@ -1,0 +1,120 @@
+# ═══════════════════════════════════════════════════════════════════════
+# st4ck-managed-cluster — default values
+#
+# Mirrors the `ManagedCluster` CR spec defined in ADR-025 §3.7. The Tofu
+# wrapper (`stacks/managed-cluster/main.tf`) flattens a tenant context YAML
+# into this shape and passes it to `helm_release`.
+# ═══════════════════════════════════════════════════════════════════════
+
+tenant:
+  # DNS-label, 1–20 chars, [a-z0-9-]. Used for namespace, API hostname, etc.
+  name: alice
+  # Defaults to "tenant-<tenant.name>" in the _helpers.tpl helper.
+  namespace: ""
+
+kubernetes:
+  version: "1.35.4"
+  talosVersion: "v1.12.6"
+
+# Management-cluster-side control plane.
+controlPlane:
+  replicas: 2
+  # Escape hatch — when true the chart would render a KubeadmControlPlane
+  # with dedicated CP VMs per tenant. Phase A does NOT implement this path;
+  # NOTES.txt emits a warning.
+  dedicated: false
+  apiServer:
+    # small | medium | large — mapped to CPU/memory in _helpers.tpl.
+    resourcesPreset: small
+    extraArgs: {}
+
+datastore:
+  # Phase A: etcd only. kine-postgres stays as a future backend.
+  backend: etcd
+  replicas: 3
+  storageSize: 10Gi
+  storageClass: scw-bssd
+  version: v3.5.15
+  backup:
+    enabled: true
+    schedule: "0 */6 * * *"
+
+encryption:
+  enabled: true
+  kmsProvider: openbao-transit
+  # Defaults to "tenant-<tenant.name>" via _helpers.tpl.
+  keyName: ""
+  keyRotation: 90d
+  # Pin the kms sidecar image via the TF wrapper (var.kms_plugin_image).
+  sidecarImage: "localhost/vault-kms-plugin:latest"
+
+ingress:
+  gatewayName: tenant-api-gw
+  gatewayNamespace: kamaji-system
+  baseDomain: st4ck.local
+  apiserverPort: 6443
+
+# Podi network defaults — tenant clusters run Cilium; CIDRs override per-tenant.
+clusterNetwork:
+  podsCIDR: 10.244.0.0/16
+  servicesCIDR: 10.96.0.0/12
+
+# Worker pools. `replicas` seeds the initial MachineDeployment size before
+# Karpenter takes over. Scale-to-zero is supported via min: 0.
+workers:
+  - name: general
+    instanceType: POP2-8C-32G
+    rootVolumeSizeGB: 50
+    replicas: 1
+    min: 1
+    max: 10
+    karpenter:
+      enabled: true
+      weight: 50
+    taints: []
+    labels: {}
+  - name: gpu-l4
+    instanceType: L4-1-24G
+    rootVolumeSizeGB: 100
+    replicas: 0
+    min: 0
+    max: 2
+    karpenter:
+      enabled: true
+      weight: 10
+    taints:
+      - key: nvidia.com/gpu
+        effect: NoSchedule
+    labels:
+      accelerator: l4
+
+# Scaleway infra wiring — projectId & image are provided by the TF wrapper
+# (IAM stage + image stage outputs). region/zone default to fr-par/fr-par-1.
+scaleway:
+  projectId: ""
+  region: fr-par
+  zone: fr-par-1
+  image: ""
+
+# OpenBao Transit endpoint for the per-tenant KEK (ADR-025 §3.3). The
+# kms-provision Job (templates/20-*) creates the Transit key + AppRole and
+# stores role_id/secret_id in a per-tenant Secret.
+vault:
+  address: "https://openbao-infra.pki.svc:8200"
+  transitMount: transit
+  approleAuthPath: approle
+  # SA that exercises the Vault admin policy in the KMS provision Job.
+  # TODO (stacks/pki): bind `kms-provisioner` SA to an OpenBao policy
+  # that can create Transit keys + AppRole roles + policies.
+  provisionerServiceAccount: kms-provisioner
+  # CLI image running in the Job — pinned via TF wrapper when needed.
+  cliImage: "docker.io/hashicorp/vault:1.17"
+
+# Day-2 addons that can be toggled per tenant.
+addons:
+  fluxcd:
+    enabled: false
+    gitRepo: ""
+  cilium:
+    # Informational — actual Gateway API flag lives in stacks/cni.
+    gatewayAPI: true

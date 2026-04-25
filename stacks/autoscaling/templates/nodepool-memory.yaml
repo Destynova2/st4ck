@@ -1,0 +1,49 @@
+# ─────────────────────────────────────────────────────────────────────
+# TEMPLATE — NOT applied by this stack.
+# Rendered per tenant by `stacks/managed-cluster`.
+#
+# Pool: memory  (RAM-optimised workloads — weight 40)
+# Ref:  ADR-025 section 3.5
+# ─────────────────────────────────────────────────────────────────────
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: memory
+  labels:
+    st4ck.io/tenant: "{{ .Tenant }}"
+    st4ck.io/pool: "memory"
+spec:
+  weight: 40
+  template:
+    metadata:
+      labels:
+        st4ck.io/pool: "memory"
+    spec:
+      nodeClassRef:
+        group: cluster.x-k8s.io
+        kind: MachineDeployment
+        name: "{{ .MachineDeployment }}-memory"
+      requirements:
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values:
+            - POP2-HM-8C-64G
+            - POP2-HM-16C-128G
+            - POP2-HM-32C-256G
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+      taints:
+        - key: st4ck.io/pool
+          value: memory
+          effect: PreferNoSchedule
+      expireAfter: 720h
+  limits:
+    cpu: "1000"
+    memory: "8000Gi"
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 30s
