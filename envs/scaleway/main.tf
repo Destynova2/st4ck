@@ -87,6 +87,7 @@ locals {
   cilium_patch            = file("${path.module}/../../patches/cilium-cni.yaml")
   registry_mirror_patch   = file("${path.module}/../../patches/registry-mirror.yaml")
   kubelet_nodeip_patch    = file("${path.module}/../../patches/kubelet-nodeip-vpc.yaml")
+  etcd_vpc_patch          = file("${path.module}/../../patches/etcd-vpc-cp-only.yaml")
   volume_config_patch     = file("${path.module}/volume-config-patch.yaml")
   # OIDC CA is produced by bootstrap (kms-output/) — absent during validate/plan pre-bootstrap.
   oidc_ca_pem           = try(file("${path.module}/../../kms-output/root-ca.pem"), "")
@@ -131,34 +132,37 @@ module "talos" {
     local.volume_config_patch,
   ]
 
-  controlplane_config_patches = local.oidc_enabled ? [
-    yamlencode({
-      machine = {
-        files = [{
-          content     = local.oidc_ca_pem
-          permissions = 420
-          path        = "/var/etc/kubernetes/oidc-ca.pem"
-          op          = "create"
-        }]
-      }
-      cluster = {
-        apiServer = {
-          extraArgs = {
-            "oidc-issuer-url"     = "https://hydra-public.identity.svc:4444/"
-            "oidc-client-id"      = "kubernetes"
-            "oidc-username-claim" = "sub"
-            "oidc-groups-claim"   = "groups"
-            "oidc-ca-file"        = "/var/etc/kubernetes/oidc-ca.pem"
-          }
-          extraVolumes = [{
-            hostPath  = "/var/etc/kubernetes"
-            mountPath = "/var/etc/kubernetes"
-            readonly  = true
+  controlplane_config_patches = concat(
+    [local.etcd_vpc_patch],
+    local.oidc_enabled ? [
+      yamlencode({
+        machine = {
+          files = [{
+            content     = local.oidc_ca_pem
+            permissions = 420
+            path        = "/var/etc/kubernetes/oidc-ca.pem"
+            op          = "create"
           }]
         }
-      }
-    }),
-  ] : []
+        cluster = {
+          apiServer = {
+            extraArgs = {
+              "oidc-issuer-url"     = "https://hydra-public.identity.svc:4444/"
+              "oidc-client-id"      = "kubernetes"
+              "oidc-username-claim" = "sub"
+              "oidc-groups-claim"   = "groups"
+              "oidc-ca-file"        = "/var/etc/kubernetes/oidc-ca.pem"
+            }
+            extraVolumes = [{
+              hostPath  = "/var/etc/kubernetes"
+              mountPath = "/var/etc/kubernetes"
+              readonly  = true
+            }]
+          }
+        }
+      }),
+    ] : []
+  )
 }
 
 # ─── Private network ────────────────────────────────────────────────────

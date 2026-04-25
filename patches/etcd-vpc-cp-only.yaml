@@ -1,0 +1,33 @@
+# Pin etcd peer advertise to the Scaleway VPC private network.
+#
+# Apply scope: control-plane nodes only. Workers reject `cluster.etcd.*`
+# (etcd doesn't run on workers) — wire this in via the module's
+# var.controlplane_config_patches, NOT var.common_config_patches.
+#
+# Why this is critical on multi-NIC cloud nodes (eth0 public + eth1 VPC):
+# without `cluster.etcd.advertisedSubnets`, Talos picks "first available"
+# IP non-deterministically when assembling the etcd peer URL. On
+# Scaleway, sometimes a CP picks eth0 (public IP), sometimes eth1
+# (VPC). When one CP advertises public and others advertise private,
+# the new member can't be added to the etcd cluster — it tries to
+# bootstrap solo and crashes with:
+#   "couldn't find local name <hostname> in the initial cluster configuration"
+# This drops the cluster to 1 voter + 1 stuck learner instead of 3
+# voters; the LB then routes 1/N kube-apiserver requests to a CP whose
+# etcd is broken, which surfaces as intermittent "No resources found"
+# kubectl errors.
+#
+# Pinning advertisedSubnets to 172.16.0.0/16 guarantees every CP
+# advertises its eth1 IP — consistent peer URLs across the cluster,
+# and traffic stays within the SG rule (port 2380 UDP/TCP allowed only
+# from the VPC subnet).
+#
+# listenSubnets defaults to advertisedSubnets when not set, so etcd
+# also listens only on eth1 — no public-side exposure of the etcd
+# data-plane.
+#
+# Reference: https://www.talos.dev/v1.12/introduction/prodnotes/#multihoming
+cluster:
+  etcd:
+    advertisedSubnets:
+      - 172.16.0.0/16
