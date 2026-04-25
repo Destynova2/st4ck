@@ -15,5 +15,9 @@
 machine:
   kubelet:
     nodeIP:
+      # Scaleway VPC private subnet is auto-allocated within 172.16.0.0/16,
+      # any /22 in that block (e.g. 172.16.0.0/22, 172.16.12.0/22, …) — so
+      # match the whole /16 instead of a specific /22 to survive VPC
+      # re-allocation across destroy/create cycles.
       validSubnets:
-        - 172.16.0.0/22
+        - 172.16.0.0/16
