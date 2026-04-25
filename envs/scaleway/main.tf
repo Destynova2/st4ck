@@ -369,6 +369,40 @@ resource "talos_machine_bootstrap" "this" {
   depends_on = [scaleway_instance_server.cp]
 }
 
+# ─── Push machine configurations to running nodes ────────────────────────
+# Without these resources, changes to patches/ only affect the *generated*
+# config (consumed by user_data on next VM creation). They DON'T reach
+# already-running nodes — those keep the config baked in at first boot.
+# A patch change would then silently no-op until someone runs
+# `talosctl patch machineconfig` by hand on each node.
+#
+# These resources call the Talos Apply API on every node whenever the
+# rendered config diverges. Talos figures out per-field whether a
+# kubelet/etcd/network restart is enough (e.g. machine.kubelet.*) or a
+# full reboot is needed and does the minimum disruption.
+
+resource "talos_machine_configuration_apply" "cp" {
+  for_each = scaleway_instance_server.cp
+
+  client_configuration        = module.talos.client_configuration_raw
+  machine_configuration_input = module.talos.controlplane_machine_configurations[each.key]
+  node                        = scaleway_instance_ip.cp[each.key].address
+  endpoint                    = scaleway_instance_ip.cp[each.key].address
+
+  depends_on = [talos_machine_bootstrap.this]
+}
+
+resource "talos_machine_configuration_apply" "wrk" {
+  for_each = scaleway_instance_server.wrk
+
+  client_configuration        = module.talos.client_configuration_raw
+  machine_configuration_input = module.talos.worker_machine_configurations[each.key]
+  node                        = scaleway_instance_ip.wrk[each.key].address
+  endpoint                    = scaleway_instance_ip.wrk[each.key].address
+
+  depends_on = [talos_machine_bootstrap.this]
+}
+
 resource "talos_cluster_kubeconfig" "this" {
   client_configuration = module.talos.client_configuration_raw
   node                 = scaleway_instance_ip.cp["cp-01"].address
