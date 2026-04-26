@@ -46,12 +46,52 @@ apiserver:
     limits:
       memory: 1Gi
 
-# Use embedded Postgres for now (single-replica, OK for dev).
-# Production: switch to external CNPG cluster (mirror what identity stack
-# does for Hydra/Kratos).
-postgres:
-  enabled: true
-  embedded: true
+# Database: use external CNPG cluster (openclarity-pg) instead of the
+# chart's bundled Bitnami postgres (paywall post-Aug-2025) or SQLite
+# (no concurrent writes, harder backup). The credentials secret is
+# re-keyed by stacks/security/main.tf from CNPG's openclarity-pg-app.
+apiserver:
+  database:
+    postgresql:
+      enabled: false
+    sqlite:
+      enabled: false
+    externalPostgresql:
+      enabled: true
+      host: openclarity-pg-rw.security.svc.cluster.local
+      port: 5432
+      sslMode: disable                       # CNPG accepts plain TCP on the rw service
+      auth:
+        existingSecret: openclarity-pg-credentials  # keys: username, password, database
+
+# Disable the bundled Bitnami postgres subchart.
+postgresql:
+  enabled: false
+
+# Orchestrator: scan in-cluster pods (default chart preset = AWS EC2 scanning).
+# - provider: kubernetes  → drops the AWS provider that requires Region etc.
+# - serviceAccount.create=true: chart's clusterrole.yaml template attaches
+#   the cluster-wide pod discovery RBAC to the SA (without create=true the
+#   binding is skipped and orchestrator can't list pods to scan).
+# - kubernetes.{}: defaults to .Release.Namespace for both
+#   ContainerRuntimeDiscovery + Scanner (we deploy in `security`).
+orchestrator:
+  provider: kubernetes
+  serviceAccount:
+    create: true
+    automountServiceAccountToken: true
+  kubernetes: {}
+
+# Disable the Container Runtime Discovery server. It uses containers-tools
+# which requires writing to /etc/containers — incompatible with Talos's
+# read-only root filesystem (security feature, not a bug).
+#
+# We don't need it: orchestrator with provider=kubernetes already discovers
+# images via the K8s API (looking at every pod's spec.containers[*].image),
+# which doesn't need to talk to the CRI on the host. cr-discovery only
+# adds value on bare-metal/VM where the K8s API is missing context.
+crDiscoveryServer:
+  enabled: false
 
 # ─── Scanner job resources ───────────────────────────────────────────
 scannerJobs:

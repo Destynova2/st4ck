@@ -79,27 +79,57 @@ resource "helm_release" "flux" {
   depends_on = [kubernetes_namespace.flux_system]
 }
 
-# ─── Service ExternalName: gitea.ci.internal → CI VM public IP ─────
-# Without this, Flux GitRepository can't resolve gitea.ci.internal via the
-# cluster's internal DNS (CoreDNS). ExternalName creates a DNS CNAME inside
-# the cluster pointing to the CI VM hostname/IP that hosts Gitea.
+# ─── Service + Endpoints: gitea.flux-system.svc → CI VM IP ─────────
+# Pattern K8s standard pour pointer un nom in-cluster vers une IP externe.
 #
-# Why an ExternalName Service instead of hardcoding the IP in the
-# GitRepository url:
-#   - Cluster-internal DNS keeps working if the CI VM's public IP changes
-#     (just update the var.gitea_external_host, the Service stays)
-#   - NetworkPolicies can target the Service (not a raw IP)
-#   - The public IP doesn't appear in committed manifests (cleaner audit)
+# Pourquoi pas Service ExternalName ?
+#   ExternalName attend un *hostname* RFC 1123 (CNAME-able). K8s accepte
+#   silencieusement une IP en valeur, mais CoreDNS ne peut pas générer
+#   un CNAME vers une IP → NXDOMAIN à la résolution. Bug confirmé sur
+#   `gitea.flux-system.svc.cluster.local` lookup depuis source-controller.
+#
+# Solution : Service sans selector (K8s ne génère pas d'Endpoints
+# automatiquement) + Endpoints object explicite avec l'IP. CoreDNS sert
+# alors un A record direct → la résolution marche.
+#
+# Tradeoffs vs hardcoding l'IP dans la GitRepository url :
+#   - Cluster DNS reste valide si le CI VM IP change (modif d'un seul Endpoint)
+#   - NetworkPolicies peuvent targetter le Service
+#   - L'IP publique n'apparaît pas dans les manifests committed
 resource "kubernetes_service" "gitea_external" {
   metadata {
     name      = "gitea"
     namespace = "flux-system"
   }
   spec {
-    type          = "ExternalName"
-    external_name = var.gitea_external_host
+    # Pas de selector → K8s ne crée pas d'Endpoints automatiquement,
+    # nous les créons manuellement ci-dessous.
+    port {
+      name        = "ssh"
+      port        = 22
+      target_port = 2222
+      protocol    = "TCP"
+    }
   }
   depends_on = [kubernetes_namespace.flux_system]
+}
+
+resource "kubernetes_endpoints" "gitea_external" {
+  metadata {
+    name      = "gitea"  # Doit matcher le Service (pour wiring auto)
+    namespace = "flux-system"
+  }
+  subset {
+    address {
+      ip = var.gitea_external_host
+    }
+    port {
+      name     = "ssh"
+      port     = 2222
+      protocol = "TCP"
+    }
+  }
+  depends_on = [kubernetes_service.gitea_external]
 }
 
 # ─── GitRepository source (SSH) ──────────────────────────────────

@@ -6,11 +6,10 @@ operator:
   clusterComplianceEnabled: false
   # Disable node scanning entirely (Talos: no systemd, read-only fs — ADR-004)
   scanNodeCollectorLimit: 0
-  # Limit concurrent scan jobs to 1: in Standalone mode each job downloads
-  # the Trivy DB into an emptyDir, and parallel jobs hit each other's
-  # cache lockfile (FATAL: cache may be in use by another process).
-  # Server mode (mode: ClientServer) would let us go higher — see ADR-027.
-  concurrentScanJobsLimit: 1
+  # Default concurrentScanJobsLimit (10). Server mode (below) eliminates
+  # the cache-lock contention by sharing a single DB across all scans, so
+  # we can scan more pods in parallel without hurting throughput.
+  concurrentScanJobsLimit: 10
   scanJobTimeout: 10m
   # Auto-cleanup completed scan jobs after 5 minutes
   scanJobTTL: 300s
@@ -24,16 +23,28 @@ nodeCollector:
 
 trivy:
   ignoreUnfixed: true
-  # Slow mode: download DB inside each scan job (no persistent storage needed)
-  mode: Standalone
-  slow: true
-  # Scan job container resources (downloads ~500MB vuln DB)
+  # ClientServer mode: a single trivy-server pod (StatefulSet) maintains
+  # the vuln DB in a PVC, all scan jobs are thin clients querying it.
+  # Eliminates the cache-lock contention that Standalone mode hits when
+  # multiple containers in the same scan job try to write to /tmp/trivy
+  # in parallel (the FATAL "cache may be in use by another process" loop).
+  # See ADR-027.
+  mode: ClientServer
+  # Scan job container resources (no DB download in client mode = lighter)
   resources:
     requests:
       cpu: 100m
-      memory: 256Mi
+      memory: 128Mi
     limits:
-      memory: 1Gi
+      memory: 512Mi
+  # Trivy server pod (single replica is fine — DB is read-mostly)
+  server:
+    enabled: true
+    replicas: 1
+    persistence:
+      enabled: true
+      storageClassName: local-path
+      size: 5Gi
 
 # Operator pod resources
 resources:
