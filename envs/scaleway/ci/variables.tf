@@ -92,3 +92,19 @@ variable "gitea_admin_email" {
   type    = string
   default = "admin@st4ck.local"
 }
+
+# ─── VPC attachment (private NIC into a cluster's VPC) ───────────────────
+# When set, the CI VM gets a private NIC in the named instance's VPC
+# (`{namespace}-{env}-{vpc_attach_instance}-{region}-pn`). Lets in-cluster
+# components like Flux source-controller reach Gitea/vault-backend over
+# private addresses instead of routing back through the public IP (which
+# the security group rightly drops).
+#
+# Use the cluster's instance name, NOT the CI's own. For dev-shared CI
+# serving the dev-mgmt cluster: vpc_attach_instance = "mgmt".
+# Empty (default) = no private NIC, public-only behavior.
+variable "vpc_attach_instance" {
+  description = "Instance name whose VPC the CI VM joins (private NIC). Empty = no attachment."
+  type        = string
+  default     = ""
+}

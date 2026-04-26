@@ -22,7 +22,7 @@ variable "kyverno_version" {
 }
 
 variable "openclarity_version" {
-  description = "OpenClarity Helm chart version (Linux Foundation / OpenSSF)."
+  description = "OpenClarity Helm chart version (Linux Foundation / OpenSSF). Published as OCI at ghcr.io/openclarity/charts/openclarity."
   type        = string
-  default     = "1.1.5"
+  default     = "1.1.3"
 }

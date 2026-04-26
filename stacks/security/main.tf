@@ -75,17 +75,77 @@ resource "helm_release" "trivy_operator" {
 #   - Grype DB: Anchore syft + GitHub Security Advisories
 # Defense-in-depth without paying for Snyk.
 
+# ─── CNPG Cluster for OpenClarity (mirrors identity stack pattern) ──
+# OpenClarity needs a Postgres backend. Bitnami's bundled chart fails
+# on the Aug-2025 Docker Hub paywall; SQLite works but loses features
+# (no concurrent writes, harder backup). Use a dedicated CNPG cluster
+# in this namespace. Depends on the CNPG operator from the identity
+# stack — operator is cluster-scoped so one install handles all CRs.
+
+resource "kubectl_manifest" "openclarity_pg_cluster" {
+  yaml_body = <<-YAML
+    apiVersion: postgresql.cnpg.io/v1
+    kind: Cluster
+    metadata:
+      name: openclarity-pg
+      namespace: security
+    spec:
+      instances: 2
+      storage:
+        size: 5Gi
+      bootstrap:
+        initdb:
+          database: openclarity
+          owner: openclarity
+  YAML
+
+  depends_on = [kubernetes_namespace.security]
+}
+
+data "kubernetes_secret" "openclarity_pg_app" {
+  metadata {
+    name      = "openclarity-pg-app"
+    namespace = "security"
+  }
+  depends_on = [kubectl_manifest.openclarity_pg_cluster]
+}
+
+# Re-key CNPG's secret into the {username,password,database} schema that
+# OpenClarity's externalPostgresql.auth.existingSecret expects.
+resource "kubernetes_secret" "openclarity_pg_credentials" {
+  metadata {
+    name      = "openclarity-pg-credentials"
+    namespace = "security"
+  }
+  data = {
+    username = data.kubernetes_secret.openclarity_pg_app.data["username"]
+    password = data.kubernetes_secret.openclarity_pg_app.data["password"]
+    database = "openclarity"
+  }
+  type = "Opaque"
+}
+
 resource "helm_release" "openclarity" {
   name             = "openclarity"
-  repository       = "https://openclarity.github.io/openclarity"
-  chart            = "openclarity"
+  # OpenClarity is published as an OCI artifact (no traditional Helm repo).
+  chart            = "oci://ghcr.io/openclarity/charts/openclarity"
   version          = var.openclarity_version
   namespace        = "security"
   create_namespace = false
 
   values = [file("${path.module}/values-openclarity.yaml")]
 
-  depends_on = [kubernetes_namespace.security]
+  # OpenClarity has 11+ pods (apiserver, orchestrator, ui, gateway, swagger-ui,
+  # uibackend, trivy-server, grype-server, exploit-db, freshclam, yara-rule).
+  # Helm wait=true with default 5min times out on slow clusters; switch to
+  # async mode and let the operator inspect pods himself.
+  wait    = false
+  timeout = 900
+
+  depends_on = [
+    kubernetes_namespace.security,
+    kubernetes_secret.openclarity_pg_credentials,
+  ]
 }
 
 # ─── Tetragon (eBPF runtime security observability) ──────────────────
@@ -124,6 +184,12 @@ resource "helm_release" "kyverno" {
 resource "tls_private_key" "cosign" {
   algorithm   = "ECDSA"
   ecdsa_curve = "P256"
+
+  # Rotation invalidates every existing image signature → Kyverno enforce
+  # blocks all pods → cluster-wide outage. Lock it down.
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 resource "kubernetes_secret" "cosign_public_key" {

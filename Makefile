@@ -266,20 +266,41 @@ flux-bootstrap-init:
 
 flux-bootstrap-apply: flux-bootstrap-init ## Install Flux + GitRepository + root Kustomization
 	@echo "--- Scanning Gitea SSH host key from $(VB_HOST):2222 ---"
-	$(eval GITEA_KNOWN_HOSTS := $(shell ssh-keyscan -q -p 2222 -t ed25519,rsa $(VB_HOST) 2>/dev/null))
+	@# Scan via the SSH tunnel ([localhost]:2222), then rewrite the hostname
+	@# to the in-cluster Service that Flux dials (gitea.flux-system.svc.
+	@# cluster.local). Same key fingerprint, but known_hosts entries are
+	@# hostname-keyed so we need the EXACT hostname Flux sees.
+	$(eval GITEA_KNOWN_HOSTS := $(shell ssh-keyscan -q -p 2222 -t ed25519,rsa $(VB_HOST) 2>/dev/null | sed 's|^\[localhost\]:2222|gitea.flux-system.svc.cluster.local|'))
 	@test -n "$(GITEA_KNOWN_HOSTS)" || { echo "ERROR: ssh-keyscan failed for $(VB_HOST):2222. Is Gitea running?"; exit 1; }
-	$(eval GITEA_HOST_FOR_SVC := $(shell $(TF) -chdir=$(TF_SCW_CI) output -raw ci_ip 2>/dev/null))
+	@# Prefer the CI VM's VPC IP (private NIC into cluster's VPC) so cluster
+	@# pods reach Gitea over the VPC instead of the public IP (which the SG
+	@# locks to management_cidrs). Fall back to public IP if no attachment.
+	@# NOTE: env vars are passed inline because $(shell) inherits make's own
+	@# env (not recipe-shell env) — `export` doesn't propagate to it.
+	$(eval GITEA_HOST_FOR_SVC := $(shell TF_HTTP_USERNAME='$(TF_HTTP_USERNAME)' TF_HTTP_PASSWORD='$(TF_HTTP_PASSWORD)' $(TF) -chdir=$(TF_SCW_CI) output -raw ci_vpc_ip 2>/dev/null))
+	$(eval GITEA_HOST_FOR_SVC := $(or $(GITEA_HOST_FOR_SVC),$(shell TF_HTTP_USERNAME='$(TF_HTTP_USERNAME)' TF_HTTP_PASSWORD='$(TF_HTTP_PASSWORD)' $(TF) -chdir=$(TF_SCW_CI) output -raw ci_ip 2>/dev/null)))
 	@test -n "$(GITEA_HOST_FOR_SVC)" || { echo "ERROR: ci_ip not in CI tofu state — run scaleway-ci-apply first"; exit 1; }
+	@# Pull Gitea admin password from CI tfstate so the gitea provider can
+	@# register Flux's deploy key. ci_admin user defaults to st4ck-admin.
+	$(eval GITEA_ADMIN_PWD := $(shell TF_HTTP_USERNAME='$(TF_HTTP_USERNAME)' TF_HTTP_PASSWORD='$(TF_HTTP_PASSWORD)' $(TF) -chdir=$(TF_SCW_CI) output -raw gitea_admin_password 2>/dev/null))
+	@test -n "$(GITEA_ADMIN_PWD)" || { echo "ERROR: gitea_admin_password not in CI tofu state"; exit 1; }
+	@echo "--- Gitea Endpoint target: $(GITEA_HOST_FOR_SVC) ---"
 	$(TF) -chdir=$(TF_FLUX) apply -auto-approve $(K8S_COMMON_VARS) \
 		-var="gitea_known_hosts=$(GITEA_KNOWN_HOSTS)" \
-		-var="gitea_external_host=$(GITEA_HOST_FOR_SVC)"
+		-var="gitea_external_host=$(GITEA_HOST_FOR_SVC)" \
+		-var="gitea_admin_password=$(GITEA_ADMIN_PWD)" \
+		-var="flux_deploy_key_suffix=$(CTX_ID)"
 
 flux-bootstrap-destroy: flux-bootstrap-init
-	$(eval GITEA_KNOWN_HOSTS := $(shell ssh-keyscan -q -p 2222 -t ed25519,rsa $(VB_HOST) 2>/dev/null || echo "destroy-noop ssh-ed25519 AAAA"))
-	$(eval GITEA_HOST_FOR_SVC := $(shell $(TF) -chdir=$(TF_SCW_CI) output -raw ci_ip 2>/dev/null || echo "destroy-noop"))
+	$(eval GITEA_KNOWN_HOSTS := $(shell ssh-keyscan -q -p 2222 -t ed25519,rsa $(VB_HOST) 2>/dev/null | sed 's|^\[localhost\]:2222|gitea.flux-system.svc.cluster.local|' || echo "destroy-noop ssh-ed25519 AAAA"))
+	$(eval GITEA_HOST_FOR_SVC := $(shell TF_HTTP_USERNAME='$(TF_HTTP_USERNAME)' TF_HTTP_PASSWORD='$(TF_HTTP_PASSWORD)' $(TF) -chdir=$(TF_SCW_CI) output -raw ci_vpc_ip 2>/dev/null))
+	$(eval GITEA_HOST_FOR_SVC := $(or $(GITEA_HOST_FOR_SVC),$(shell TF_HTTP_USERNAME='$(TF_HTTP_USERNAME)' TF_HTTP_PASSWORD='$(TF_HTTP_PASSWORD)' $(TF) -chdir=$(TF_SCW_CI) output -raw ci_ip 2>/dev/null),destroy-noop))
+	$(eval GITEA_ADMIN_PWD := $(shell TF_HTTP_USERNAME='$(TF_HTTP_USERNAME)' TF_HTTP_PASSWORD='$(TF_HTTP_PASSWORD)' $(TF) -chdir=$(TF_SCW_CI) output -raw gitea_admin_password 2>/dev/null || echo "destroy-noop"))
 	$(TF) -chdir=$(TF_FLUX) destroy -auto-approve $(K8S_COMMON_VARS) \
 		-var="gitea_known_hosts=$(GITEA_KNOWN_HOSTS)" \
-		-var="gitea_external_host=$(GITEA_HOST_FOR_SVC)"
+		-var="gitea_external_host=$(GITEA_HOST_FOR_SVC)" \
+		-var="gitea_admin_password=$(GITEA_ADMIN_PWD)" \
+		-var="flux_deploy_key_suffix=$(CTX_ID)"
 
 # ─── KaaS stacks — Kamaji + CAPI + autoscaling + gateway (management cluster) ──
 
@@ -649,6 +670,11 @@ scaleway-cp-replace: scaleway-init ## Replace one CP node (NODE=cp-XX) — etcd 
 
 .PHONY: scaleway-ci-init scaleway-ci-apply scaleway-ci-destroy
 
+# CI_VPC_ATTACH (optional) — name of the cluster instance whose VPC the
+# CI VM should join via a private NIC. Used so Flux source-controller can
+# reach Gitea over the VPC (cluster's egress IP isn't in the CI SG, so the
+# public route is dropped). For the dev-shared CI serving dev-mgmt:
+#   make scaleway-ci-apply ENV=dev INSTANCE=shared CI_VPC_ATTACH=mgmt
 SCW_CI_VARS = \
 	-var="context_file=$(CTX_FILE)" \
 	-var="project_id=$(SCW_PROJECT_ID)" \
@@ -657,7 +683,8 @@ SCW_CI_VARS = \
 	-var="scw_image_access_key=$(SCW_IMG_AK)" \
 	-var="scw_image_secret_key=$(SCW_IMG_SK)" \
 	-var="scw_cluster_access_key=$(SCW_CLUSTER_AK)" \
-	-var="scw_cluster_secret_key=$(SCW_CLUSTER_SK)"
+	-var="scw_cluster_secret_key=$(SCW_CLUSTER_SK)" \
+	-var="vpc_attach_instance=$(CI_VPC_ATTACH)"
 
 scaleway-ci-init: ## terraform init for CI VM (context-scoped state)
 	$(call tf_init,$(TF_SCW_CI),$(STATE_CI))
@@ -708,7 +735,7 @@ scaleway-fetch-creds: ## scp kms-output/ from the CI VM to local
 	scp $(SSH_OPTS) "root@$$CI_IP:/opt/talos/kms-output/*" $(KMS_OUTPUT)/ && \
 	echo "[fetch-creds] $$(ls $(KMS_OUTPUT) | wc -l) files copied to $(KMS_OUTPUT)/"
 
-scaleway-tunnel-start: ## Open background SSH tunnel local:8080 (vault-backend) + :2222 (Gitea SSH) -> CI VM
+scaleway-tunnel-start: ## Open background SSH tunnel local:8080 (vault-backend) + :2222 (Gitea SSH) + :3000 (Gitea HTTP) -> CI VM
 	@if [ -f $(CI_TUNNEL_PIDFILE) ] && kill -0 $$(cat $(CI_TUNNEL_PIDFILE)) 2>/dev/null; then \
 		echo "[tunnel] already running (pid $$(cat $(CI_TUNNEL_PIDFILE)))"; \
 	else \
@@ -722,7 +749,7 @@ scaleway-tunnel-start: ## Open background SSH tunnel local:8080 (vault-backend) 
 		test -n "$$CI_IP" || { echo "ERROR: ci_ip not found via tofu OR scw API. Is the CI VM provisioned?"; exit 1; }; \
 		echo "[tunnel] CI VM = $$CI_IP"; \
 		ssh-keygen -R "$$CI_IP" >/dev/null 2>&1 || true; \
-		ssh $(SSH_OPTS) -L 8080:localhost:8080 -L 2222:localhost:2222 -N -f "root@$$CI_IP" && \
+		ssh $(SSH_OPTS) -L 8080:localhost:8080 -L 2222:localhost:2222 -L 3000:localhost:3000 -N -f "root@$$CI_IP" && \
 		pgrep -f "ssh.*$$CI_IP.*-L 8080" | head -1 > $(CI_TUNNEL_PIDFILE) && \
 		echo "[tunnel] up (pid $$(cat $(CI_TUNNEL_PIDFILE)))"; \
 	fi
@@ -1314,3 +1341,224 @@ brigade-tier3-em-smoke-cleanup: ## Remove all worktrees + branches for tier3-em-
 	  git branch -D $$b 2>/dev/null || true; \
 	done
 	@echo "Cleanup complete. The chore/phase-a-tier3-em-smoke branch is preserved (it has the sprint commits)."
+
+# ═══════════════════════════════════════════════════════════════════════
+# Deliberate key rotation — bypass `lifecycle.ignore_changes = all`
+#
+# Every entropy-bearing resource (CAs, seal keys, signing keys, OAuth
+# secrets, …) was hardened with `ignore_changes = all` after the
+# 2026-04-26 bao-seal-key incident (see docs/reviews/2026-04-26-bao-
+# seal-key-postmortem.md and docs/how-to/rotate-keys.md). That blocks
+# *automatic* rotation. To rotate ON PURPOSE, use the targets below.
+#
+# Pattern: `tofu state rm <addr>` removes the resource from state without
+# touching the cloud, then `tofu apply` recreates it with fresh entropy.
+# Each target adds the safeties specific to that resource (snapshots,
+# downstream restarts, manual steps that can't be automated).
+#
+# Safety: every target requires CONFIRM=yes-rotate-<resource> to avoid
+# fat-finger rotations. Read the printed warning before confirming.
+# ═══════════════════════════════════════════════════════════════════════
+
+.PHONY: rotate-list rotate-confirm-or-die
+
+rotate-list: ## List all rotatable resources with their blast radius
+	@echo "================================================================"
+	@echo " Rotatable resources (deliberate tofu state rm + apply)"
+	@echo "================================================================"
+	@echo ""
+	@echo " CATASTROPHIC — destroys data permanently if mishandled:"
+	@echo "   make rotate-bao-seal-key      ENV=.. INSTANCE=.. REGION=.."
+	@echo "   make rotate-openbao-seal-key  ENV=.. INSTANCE=.. REGION=.."
+	@echo "   make rotate-root-ca"
+	@echo ""
+	@echo " HIGH — wide outage, all sessions invalidated:"
+	@echo "   make rotate-sub-ca CA={infra,app}"
+	@echo "   make rotate-hydra-secret      ENV=.. INSTANCE=.. REGION=.."
+	@echo "   make rotate-pomerium-secrets  ENV=.. INSTANCE=.. REGION=.."
+	@echo "   make rotate-garage-rpc-secret ENV=.. INSTANCE=.. REGION=.."
+	@echo "   make rotate-cosign-key        ENV=.. INSTANCE=.. REGION=.."
+	@echo ""
+	@echo " MEDIUM — single-service auth blip:"
+	@echo "   make rotate-flux-ssh-key      ENV=.. INSTANCE=.. REGION=.."
+	@echo "   make rotate-garage-admin-token  ENV=.. INSTANCE=.. REGION=.."
+	@echo "   make rotate-harbor-admin-password ENV=.. INSTANCE=.. REGION=.."
+	@echo "   make rotate-wp-agent-secret   ENV=.. INSTANCE=.. REGION=.."
+	@echo ""
+	@echo " Each target requires CONFIRM=yes-rotate-<resource>."
+	@echo " Full procedure docs: docs/how-to/rotate-keys.md"
+
+# Helper: enforce CONFIRM env var. Caller passes `expected` literal.
+# Usage: $(call rotate_confirm,resource-name)
+define rotate_confirm
+	@if [ "$$CONFIRM" != "yes-rotate-$(1)" ]; then \
+		echo "ERROR: rotation of '$(1)' requires CONFIRM=yes-rotate-$(1)"; \
+		echo "       (read the warning above carefully, then re-run with that env var)"; \
+		exit 1; \
+	fi
+endef
+
+# ─── CATASTROPHIC tier ───────────────────────────────────────────────────
+
+.PHONY: rotate-bao-seal-key rotate-openbao-seal-key rotate-root-ca rotate-sub-ca
+
+rotate-bao-seal-key: ## Rotate CI VM bao seal key (DESTROYS bao raft data + tfstate)
+	@echo "================================================================"
+	@echo " ROTATE: random_bytes.bao_seal_key (envs/scaleway/ci)"
+	@echo "================================================================"
+	@echo " WARNING: static-seal mode encrypts bao raft data WITH this key."
+	@echo " Rotating it WITHOUT first wiping the raft data = unrecoverable"
+	@echo " loss of every secret in OpenBao (incl. ALL tfstate via vault-"
+	@echo " backend). This target performs the full destructive sequence:"
+	@echo "   1. snapshot bao raft data → kms-output/raft-snapshot-*.snap"
+	@echo "   2. wipe platform-bao-data + bao-seal-key volumes on the CI VM"
+	@echo "   3. tofu state rm random_bytes.bao_seal_key + backup file"
+	@echo "   4. tofu apply (TF generates fresh key)"
+	@echo "   5. launch.sh re-init bao with new key on empty volume"
+	@echo "   6. RE-DEPLOY all stacks that wrote secrets to bao"
+	@echo "================================================================"
+	$(call rotate_confirm,bao-seal-key)
+	@echo ">>> [1/5] snapshot current bao raft data"
+	@$(MAKE) state-snapshot
+	@echo ">>> [2/5] wipe bao volumes on CI VM"
+	@CI_IP=$$($(TF) -chdir=$(TF_SCW_CI) output -raw ci_ip) && \
+		ssh $(SSH_OPTS) "root@$$CI_IP" 'podman pod stop platform 2>/dev/null; podman volume rm platform-bao-data bao-seal-key 2>/dev/null || true'
+	@echo ">>> [3/5] state rm bao_seal_key + backup file"
+	@$(TF) -chdir=$(TF_SCW_CI) state rm random_bytes.bao_seal_key local_sensitive_file.bao_seal_key_backup local_sensitive_file.platform_unseal_key
+	@echo ">>> [4/5] apply (regenerate fresh key + push to CI VM)"
+	@$(MAKE) scaleway-ci-apply ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+	@echo ">>> [5/5] DONE — every tfstate stored in vault-backend is now"
+	@echo "    pointing at an empty bao. Run scaleway-down + scaleway-up"
+	@echo "    to redeploy everything that depended on those secrets."
+
+rotate-openbao-seal-key: ## Rotate in-cluster OpenBao seal key (DESTROYS in-cluster bao state)
+	@echo "================================================================"
+	@echo " ROTATE: random_bytes.openbao_seal_key (stacks/pki)"
+	@echo "================================================================"
+	@echo " WARNING: same destructive semantics as bao-seal-key but for the"
+	@echo " IN-CLUSTER OpenBao (Hydra/Pomerium/Garage/Harbor seeds, ESO"
+	@echo " secrets). After rotation, redeploy stacks/identity + storage."
+	@echo "================================================================"
+	$(call rotate_confirm,openbao-seal-key)
+	@echo ">>> [1/3] state rm openbao_seal_key + delete in-cluster volumes"
+	@kubectl --kubeconfig=$(KC_FILE) -n secrets delete pvc -l app.kubernetes.io/name=openbao --ignore-not-found=true
+	@$(TF) -chdir=$(TF_PKI) state rm random_bytes.openbao_seal_key
+	@echo ">>> [2/3] apply pki (fresh key + reseeds bao)"
+	@$(MAKE) k8s-pki-apply ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+	@echo ">>> [3/3] DONE — redeploy identity + storage to re-fill bao seeds"
+	@echo "    make k8s-identity-apply k8s-storage-apply ENV=... INSTANCE=... REGION=..."
+
+rotate-root-ca: ## Rotate Root CA + auto-cascade Sub-CAs (whole PKI chain)
+	@echo "================================================================"
+	@echo " ROTATE: tls_private_key.root_ca + cert + ALL sub-CAs"
+	@echo "================================================================"
+	@echo " WARNING: invalidates the entire internal PKI chain. cert-manager"
+	@echo " ClusterIssuer 'internal-ca' will issue new certs under the new"
+	@echo " chain. Every workload doing mTLS needs a restart."
+	@echo "================================================================"
+	$(call rotate_confirm,root-ca)
+	@echo ">>> [1/4] backup current root CA → kms-output/root-ca.pem.old-$$(date +%s)"
+	@cp $(KMS_OUTPUT)/root-ca.pem $(KMS_OUTPUT)/root-ca.pem.old-$$(date +%s)
+	@echo ">>> [2/4] state rm root + sub CAs in bootstrap/tofu"
+	@$(TF) -chdir=$(TF_BOOTSTRAP)/tofu state rm \
+		tls_private_key.root_ca tls_self_signed_cert.root_ca \
+		tls_private_key.infra_ca tls_locally_signed_cert.infra_ca \
+		tls_private_key.app_ca  tls_locally_signed_cert.app_ca
+	@echo ">>> [3/4] re-apply bootstrap to regenerate"
+	@$(MAKE) bootstrap
+	@echo ">>> [4/4] re-apply pki + restart cert-manager + all mTLS workloads"
+	@$(MAKE) k8s-pki-apply ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+	@kubectl --kubeconfig=$(KC_FILE) rollout restart deploy -n cert-manager
+
+rotate-sub-ca: ## Rotate one Sub-CA (CA=infra or CA=app). Existing leaf certs survive until expiry.
+	@echo "================================================================"
+	@echo " ROTATE: tls_*.$(CA)_ca (Sub-CA only, root preserved)"
+	@echo "================================================================"
+	@test "$(CA)" = "infra" -o "$(CA)" = "app" || { echo "ERROR: CA= must be 'infra' or 'app'"; exit 1; }
+	$(call rotate_confirm,sub-ca-$(CA))
+	@$(TF) -chdir=$(TF_BOOTSTRAP)/tofu state rm \
+		tls_private_key.$(CA)_ca tls_locally_signed_cert.$(CA)_ca tls_cert_request.$(CA)_ca
+	@$(MAKE) bootstrap
+	@$(MAKE) k8s-pki-apply ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+
+# ─── HIGH tier — sessions/tokens invalidated ─────────────────────────────
+
+.PHONY: rotate-hydra-secret rotate-pomerium-secrets rotate-garage-rpc-secret rotate-cosign-key
+
+rotate-hydra-secret: ## Rotate Hydra system_secret (logs out every OAuth user)
+	@echo "ROTATE hydra_system_secret — every active OAuth session will be invalidated."
+	$(call rotate_confirm,hydra-secret)
+	@$(TF) -chdir=$(TF_PKI) state rm random_password.hydra_system_secret
+	@$(MAKE) k8s-pki-apply ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+	@kubectl --kubeconfig=$(KC_FILE) rollout restart deploy/hydra -n identity 2>/dev/null || \
+		kubectl --kubeconfig=$(KC_FILE) -n identity delete pod -l app.kubernetes.io/name=hydra
+
+rotate-pomerium-secrets: ## Rotate Pomerium shared+cookie+client secrets (logs out everyone)
+	@echo "ROTATE pomerium_{shared,cookie,client}_secret — all sessions invalidated."
+	$(call rotate_confirm,pomerium-secrets)
+	@$(TF) -chdir=$(TF_PKI) state rm \
+		random_bytes.pomerium_shared_secret \
+		random_bytes.pomerium_cookie_secret \
+		random_password.pomerium_client_secret \
+		random_password.oidc_client_secret
+	@$(MAKE) k8s-pki-apply ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+	@kubectl --kubeconfig=$(KC_FILE) rollout restart deploy/pomerium -n identity 2>/dev/null || true
+
+rotate-garage-rpc-secret: ## Rotate Garage cluster RPC secret (brief node-to-node outage)
+	@echo "ROTATE garage_rpc_secret — Garage cluster splits/heals as nodes pick up new secret."
+	$(call rotate_confirm,garage-rpc-secret)
+	@$(TF) -chdir=$(TF_PKI) state rm random_bytes.garage_rpc_secret
+	@$(MAKE) k8s-pki-apply ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+	@kubectl --kubeconfig=$(KC_FILE) -n garage rollout restart sts/garage 2>/dev/null || true
+
+rotate-cosign-key: ## Rotate Cosign signing keypair (must re-sign every image)
+	@echo "================================================================"
+	@echo " ROTATE: tls_private_key.cosign"
+	@echo "================================================================"
+	@echo " WARNING: every existing image signature becomes unverifiable."
+	@echo " Kyverno verifyImages policy will block all new pods until images"
+	@echo " are re-signed with the new key."
+	@echo " After this rotation: cosign sign --key cosign.key <image>"
+	@echo " for every image still in use."
+	@echo "================================================================"
+	$(call rotate_confirm,cosign-key)
+	@$(TF) -chdir=$(TF_SECURITY) state rm tls_private_key.cosign
+	@$(MAKE) k8s-security-apply ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+	@echo ""
+	@echo "NEW PUBLIC KEY:"
+	@$(TF) -chdir=$(TF_SECURITY) output -raw cosign_public_key 2>/dev/null || \
+		kubectl --kubeconfig=$(KC_FILE) -n security get secret cosign-public-key -o jsonpath='{.data.cosign\.pub}' | base64 -d
+	@echo ""
+
+# ─── MEDIUM tier — single-service blip ───────────────────────────────────
+
+.PHONY: rotate-flux-ssh-key rotate-garage-admin-token rotate-harbor-admin-password rotate-wp-agent-secret
+
+rotate-flux-ssh-key: ## Rotate Flux→Gitea SSH deploy key (manual: update Gitea after)
+	@echo "================================================================"
+	@echo " ROTATE: tls_private_key.flux_ssh"
+	@echo "================================================================"
+	@echo " AFTER rotation, replace the deploy key in Gitea with the new"
+	@echo " public key printed below (UI: repo settings → deploy keys)."
+	@echo "================================================================"
+	$(call rotate_confirm,flux-ssh-key)
+	@$(TF) -chdir=$(TF_FLUX) state rm tls_private_key.flux_ssh
+	@$(MAKE) flux-bootstrap-apply ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+	@echo ""
+	@echo "NEW PUBLIC KEY (paste into Gitea deploy keys for the repo):"
+	@$(TF) -chdir=$(TF_FLUX) output -raw flux_ssh_public_key
+
+rotate-garage-admin-token: ## Rotate Garage admin API token (~5min ESO sync)
+	$(call rotate_confirm,garage-admin-token)
+	@$(TF) -chdir=$(TF_PKI) state rm random_password.garage_admin_token
+	@$(MAKE) k8s-pki-apply ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+
+rotate-harbor-admin-password: ## Rotate Harbor admin password (~5min ESO sync)
+	$(call rotate_confirm,harbor-admin-password)
+	@$(TF) -chdir=$(TF_PKI) state rm random_password.harbor_admin_password
+	@$(MAKE) k8s-pki-apply ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
+
+rotate-wp-agent-secret: ## Rotate Woodpecker agent secret (next CI job picks it up)
+	$(call rotate_confirm,wp-agent-secret)
+	@$(TF) -chdir=$(TF_SCW_CI) state rm random_password.wp_agent_secret
+	@$(MAKE) scaleway-ci-apply ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)

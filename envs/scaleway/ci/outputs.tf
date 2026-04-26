@@ -13,6 +13,26 @@ output "ci_ip" {
   value       = scaleway_instance_ip.ci.address
 }
 
+# Private VPC IPv4 — populated only when var.vpc_attach_instance is set.
+# Use this in flux-bootstrap so cluster pods reach Gitea over the VPC
+# (the public IP is locked to management_cidrs by the SG).
+#
+# Provider 2.73 populates scaleway_instance_server.private_ips as a list
+# of {id, address} entries — both IPv4 and IPv6 are allocated when the
+# private NIC attaches. We filter to the IPv4 in 172.16.0.0/16 (the
+# cluster VPC's subnet) since the cluster's nodeIP is also IPv4.
+output "ci_vpc_ip" {
+  description = "Private IPv4 IPAM IP of the CI VM in the attached cluster VPC. Empty if no attachment."
+  value = try(
+    [
+      for ip in scaleway_instance_server.ci.private_ips :
+      split("/", ip.address)[0]
+      if length(regexall("^172\\.16\\.", ip.address)) > 0
+    ][0],
+    "",
+  )
+}
+
 output "gitea_url" {
   description = "Gitea URL."
   value       = "http://${scaleway_instance_ip.ci.address}:3000"

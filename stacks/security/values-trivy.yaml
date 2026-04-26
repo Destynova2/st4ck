@@ -6,9 +6,15 @@ operator:
   clusterComplianceEnabled: false
   # Disable node scanning entirely (Talos: no systemd, read-only fs — ADR-004)
   scanNodeCollectorLimit: 0
-  # Default concurrentScanJobsLimit (10). Server mode (below) eliminates
-  # the cache-lock contention by sharing a single DB across all scans, so
-  # we can scan more pods in parallel without hurting throughput.
+  # Built-in trivy-server StatefulSet — a single pod with a PVC-backed
+  # DB, all scan jobs are thin clients. Eliminates the cache-lock
+  # contention that Standalone mode hits when multiple containers in
+  # one scan job write to /tmp/trivy in parallel (the FATAL "cache may
+  # be in use by another process" loop). The chart auto-sets
+  # trivy.mode=ClientServer + serverURL when this is true. See ADR-027.
+  builtInTrivyServer: true
+  # Server mode shares a single DB across scans → no per-scan lock
+  # → can run the chart default in parallel.
   concurrentScanJobsLimit: 10
   scanJobTimeout: 10m
   # Auto-cleanup completed scan jobs after 5 minutes
@@ -23,13 +29,6 @@ nodeCollector:
 
 trivy:
   ignoreUnfixed: true
-  # ClientServer mode: a single trivy-server pod (StatefulSet) maintains
-  # the vuln DB in a PVC, all scan jobs are thin clients querying it.
-  # Eliminates the cache-lock contention that Standalone mode hits when
-  # multiple containers in the same scan job try to write to /tmp/trivy
-  # in parallel (the FATAL "cache may be in use by another process" loop).
-  # See ADR-027.
-  mode: ClientServer
   # Scan job container resources (no DB download in client mode = lighter)
   resources:
     requests:
@@ -37,14 +36,14 @@ trivy:
       memory: 128Mi
     limits:
       memory: 512Mi
-  # Trivy server pod (single replica is fine — DB is read-mostly)
+  # Built-in trivy-server StatefulSet sizing. The chart's templates/trivy-server/
+  # statefulset.yaml is gated by operator.builtInTrivyServer above and pulls
+  # storage + replicas from these keys.
+  storageClassEnabled: true
+  storageClassName: local-path
+  storageSize: 5Gi
   server:
-    enabled: true
     replicas: 1
-    persistence:
-      enabled: true
-      storageClassName: local-path
-      size: 5Gi
 
 # Operator pod resources
 resources:

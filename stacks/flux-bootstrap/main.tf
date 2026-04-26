@@ -16,6 +16,10 @@ terraform {
       source  = "hashicorp/tls"
       version = "~> 4.0"
     }
+    gitea = {
+      source  = "go-gitea/gitea"
+      version = "~> 0.6"
+    }
   }
 }
 
@@ -34,14 +38,56 @@ provider "kubectl" {
   load_config_file = true
 }
 
+# Gitea API access — used to register Flux's SSH public key as a deploy
+# key on the management repo. Reaches Gitea via the SSH tunnel set up by
+# `make scaleway-tunnel-start` (localhost:3000 → CI VM platform-gitea).
+provider "gitea" {
+  base_url = var.gitea_api_url
+  username = var.gitea_admin_user
+  password = var.gitea_admin_password
+}
+
 # ─── SSH Key Pair (for Flux → Gitea) ──────────────────────────────
-# Ed25519 key pair — public key must be added to Gitea as a deploy key.
-# The SSH CA infrastructure (openbao-cluster-init.sh) is available for
-# workloads that use the system ssh binary (CI runners, custom controllers).
-# Flux source-controller uses go-git which doesn't support SSH CA certs.
+# Ed25519 key pair. The public key is registered as a Gitea deploy key
+# below (gitea_deploy_key.flux). Flux source-controller uses go-git
+# which doesn't support SSH CA certs — that's why this is a per-key
+# trust, not a CA-signed cert.
 
 resource "tls_private_key" "flux_ssh" {
   algorithm = "ED25519"
+
+  # Rotation breaks Flux ↔ Gitea momentarily until gitea_deploy_key
+  # below catches up. Idempotent re-applies preserve the key; explicit
+  # rotation needs `tofu state rm` + apply (the gitea_deploy_key resource
+  # also gets refreshed since its `key` attribute references the new pubkey).
+  lifecycle {
+    ignore_changes = all
+  }
+}
+
+# ─── Register Flux's public key as a Gitea deploy key ─────────────────
+# Read-only access (Flux only needs to clone). Title is namespaced so
+# multiple environments (dev/staging/prod) can each register their own
+# Flux key against the same repo without collision.
+#
+# This resource is the missing piece historically — the comment above
+# tls_private_key.flux_ssh said "must be added to Gitea as a deploy key"
+# but nothing actually did it (path-B redeploy 2026-04-26 surfaced the
+# bug). Now automated.
+#
+# NOTE: gitea_repository_key.repository wants the numeric repo ID, not
+# the path. We look it up via data "gitea_repo" — depends on the repo
+# already existing (created in bootstrap/tofu/gitea.tf as ${ci_admin}/talos).
+data "gitea_repo" "management" {
+  username = var.gitea_repo_owner
+  name     = var.gitea_repo_name
+}
+
+resource "gitea_repository_key" "flux" {
+  repository = data.gitea_repo.management.id
+  title      = "flux-source-controller-${var.flux_deploy_key_suffix}"
+  key        = trimspace(tls_private_key.flux_ssh.public_key_openssh)
+  read_only  = true
 }
 
 # ─── Flux Namespace ──────────────────────────────────────────────
@@ -137,6 +183,14 @@ resource "kubernetes_endpoints" "gitea_external" {
 # above). The DNS short-name "gitea" works inside flux-system but the
 # FQDN is portable across namespaces if Flux ever needs to reach it
 # from elsewhere.
+locals {
+  # Composed from owner+name so the URL stays in sync with the actual
+  # Gitea path (bootstrap/tofu/gitea.tf creates ${ci_admin}/talos).
+  # Fixed hostname:port = the in-cluster Service this stack provisions
+  # above, which the Endpoints object routes to var.gitea_external_host:2222.
+  gitea_ssh_url = "ssh://git@gitea.flux-system.svc.cluster.local:22/${var.gitea_repo_owner}/${var.gitea_repo_name}.git"
+}
+
 resource "kubectl_manifest" "flux_git_repo" {
   yaml_body = <<-YAML
     apiVersion: source.toolkit.fluxcd.io/v1
@@ -146,7 +200,7 @@ resource "kubectl_manifest" "flux_git_repo" {
       namespace: flux-system
     spec:
       interval: 5m
-      url: ${var.gitea_ssh_url}
+      url: ${local.gitea_ssh_url}
       ref:
         branch: main
       secretRef:
@@ -157,6 +211,7 @@ resource "kubectl_manifest" "flux_git_repo" {
     helm_release.flux,
     kubernetes_secret.flux_ssh_identity,
     kubernetes_service.gitea_external,
+    gitea_repository_key.flux,
   ]
 }
 

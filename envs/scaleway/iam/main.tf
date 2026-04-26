@@ -56,6 +56,14 @@ locals {
         "InstancesFullAccess",
         "BlockStorageFullAccess",
         "VPCFullAccess",
+        # Attach the CI VM to the cluster's Private Network so in-cluster
+        # Flux can reach Gitea over the VPC. The Scaleway provider's
+        # private_network block on instance_server calls the legacy
+        # compute_private_networks API which needs write perms — read-only
+        # is enough to *list* the PN but not to attach a NIC.
+        "PrivateNetworksFullAccess",
+        # Read IPAM IPs allocated to the CI VM's NIC.
+        "IPAMReadOnly",
         "ObjectStorageFullAccess",
       ]
     }

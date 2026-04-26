@@ -104,11 +104,25 @@ variable "scw_cluster_secret_key" {
 
 resource "random_bytes" "seal_key" {
   length = 32
+
+  # CRITICAL — see envs/scaleway/ci/main.tf:random_bytes.bao_seal_key for
+  # the full postmortem. This key encrypts the OpenBao raft data under
+  # static-seal mode; rotating it without first wiping bao data destroys
+  # every secret in the bootstrap pod's bao instance (including local
+  # tfstate via vault-backend). ignore_changes=all means even a `tofu
+  # taint` or version bump can't trigger an automatic rotation.
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 resource "random_password" "agent_secret" {
   length  = 64
   special = false
+
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 # ─── ConfigMap YAML ────────────────────────────────────────────────────

@@ -1,8 +1,20 @@
 # ─── PKI via TLS provider (no OpenBao PKI engine needed) ─────────────
+#
+# IDEMPOTENCY INVARIANT: every key+cert here has lifecycle.ignore_changes
+# = all so they're generated ONCE and reused on every subsequent apply.
+# Same reasoning as random_bytes.bao_seal_key (see envs/scaleway/ci/main.tf):
+# silent rotation on state loss would invalidate the entire PKI chain
+# (cert-manager ClusterIssuer "internal-ca", ESO, Pomerium, all internal
+# services trust the root CA). Rotating any of these MUST be a deliberate
+# `tofu state rm` + apply.
 
 resource "tls_private_key" "root_ca" {
   algorithm   = "ECDSA"
   ecdsa_curve = "P384"
+
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 resource "tls_self_signed_cert" "root_ca" {
@@ -20,6 +32,10 @@ resource "tls_self_signed_cert" "root_ca" {
     "cert_signing",
     "crl_signing",
   ]
+
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 resource "local_file" "root_ca" {
@@ -32,6 +48,10 @@ resource "local_file" "root_ca" {
 resource "tls_private_key" "infra_ca" {
   algorithm   = "ECDSA"
   ecdsa_curve = "P384"
+
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 resource "tls_cert_request" "infra_ca" {
@@ -56,6 +76,10 @@ resource "tls_locally_signed_cert" "infra_ca" {
     "crl_signing",
     "digital_signature",
   ]
+
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 resource "local_sensitive_file" "infra_ca_key" {
@@ -79,6 +103,10 @@ resource "local_file" "infra_ca_chain" {
 resource "tls_private_key" "app_ca" {
   algorithm   = "ECDSA"
   ecdsa_curve = "P384"
+
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 resource "tls_cert_request" "app_ca" {
@@ -103,6 +131,10 @@ resource "tls_locally_signed_cert" "app_ca" {
     "crl_signing",
     "digital_signature",
   ]
+
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 resource "local_sensitive_file" "app_ca_key" {

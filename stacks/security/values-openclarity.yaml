@@ -82,16 +82,23 @@ orchestrator:
     automountServiceAccountToken: true
   kubernetes: {}
 
-# Disable the Container Runtime Discovery server. It uses containers-tools
-# which requires writing to /etc/containers — incompatible with Talos's
-# read-only root filesystem (security feature, not a bug).
+# Container Runtime Discovery DaemonSet — incompatible with Talos's
+# read-only root filesystem (it writes to /etc/containers; that's a
+# security feature of Talos, not a bug we should bypass with emptyDir).
 #
-# We don't need it: orchestrator with provider=kubernetes already discovers
-# images via the K8s API (looking at every pod's spec.containers[*].image),
-# which doesn't need to talk to the CRI on the host. cr-discovery only
-# adds value on bare-metal/VM where the K8s API is missing context.
+# We don't need it: orchestrator with provider=kubernetes already
+# discovers images via the K8s API (every pod's spec.containers[*].image),
+# which doesn't talk to the CRI on the host. cr-discovery only adds
+# value on bare-metal/VM where K8s context is missing.
+#
+# The chart has NO `crDiscoveryServer.enabled` toggle — the DaemonSet
+# template is gated only by `eq .Values.orchestrator.provider "kubernetes"`.
+# Cleanest non-fork workaround: schedule it on no nodes via an unsatisfiable
+# nodeSelector. The DS still exists in the API but stays at 0 ready pods,
+# never tries to mount /etc/containers, and never enters CreateContainerError.
 crDiscoveryServer:
-  enabled: false
+  nodeSelector:
+    st4ck.io/disable-cr-discovery: "true"
 
 # ─── Scanner job resources ───────────────────────────────────────────
 scannerJobs:

@@ -6,53 +6,89 @@
 
 # ─── Identity secrets ──────────────────────────────────────────────────
 
+# IDEMPOTENCY: every secret below has lifecycle.ignore_changes=all so a
+# state-loss + re-apply doesn't silently rotate them. Postmortem 2026-04-26
+# (random_bytes.bao_seal_key for context). Rotating any of these MUST be
+# a deliberate `tofu state rm <addr> && tofu apply`. The `keepers` block
+# is kept where present as belt-and-suspenders but is no longer the
+# primary defense.
+
 resource "random_password" "hydra_system_secret" {
   length  = 64
   special = false
 
-  # Ties the secret lifecycle to the target Hydra namespace (declared in
-  # stacks/identity as kubernetes_namespace.identity). A string constant
-  # instead of a cross-stack resource ref avoids the pki→identity cycle
-  # (identity already reads pki via terraform_remote_state).
-  # Regenerating the secret would break running Hydra sessions: we keep
-  # it stable unless the namespace name itself changes. See pass1 #12.
+  # Pre-existing keeper (kept as a hint that namespace-pinning was the
+  # intent before lifecycle was added — harmless now that ignore_changes
+  # blocks rotation entirely).
   keepers = {
     namespace = "identity"
+  }
+
+  lifecycle {
+    ignore_changes = all
   }
 }
 
 resource "random_password" "pomerium_client_secret" {
   length  = 64
   special = false
+
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 resource "random_password" "oidc_client_secret" {
   length  = 64
   special = false
+
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 resource "random_bytes" "pomerium_shared_secret" {
   length = 32
+
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 resource "random_bytes" "pomerium_cookie_secret" {
   length = 32
+
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 # ─── Storage secrets ──────────────────────────────────────────────────
 
 resource "random_bytes" "garage_rpc_secret" {
   length = 32
+
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 resource "random_password" "garage_admin_token" {
   length  = 64
   special = false
+
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 resource "random_password" "harbor_admin_password" {
   length  = 24
   special = false
+
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 # ─── Seed secrets into in-cluster OpenBao Infra ───────────────────────

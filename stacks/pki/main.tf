@@ -119,6 +119,14 @@ resource "kubernetes_secret" "pki_app_ca" {
 
 resource "random_bytes" "openbao_seal_key" {
   length = 32
+
+  # CATASTROPHIC if rotated: same logic as random_bytes.bao_seal_key
+  # in envs/scaleway/ci/main.tf — this is the static-seal key for the
+  # in-cluster OpenBao instances. Re-generation = unrecoverable Bao
+  # raft state (ESO secrets, Hydra/Pomerium/Garage/Harbor seeds, etc.).
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 resource "kubernetes_secret" "openbao_seal_key" {
@@ -137,6 +145,10 @@ resource "kubernetes_secret" "openbao_seal_key" {
 resource "random_password" "openbao_admin" {
   length  = 32
   special = false
+
+  lifecycle {
+    ignore_changes = all
+  }
 }
 
 resource "kubernetes_secret" "openbao_admin_password" {
