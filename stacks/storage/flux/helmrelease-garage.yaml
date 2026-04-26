@@ -10,13 +10,15 @@ spec:
       namespace: storage
   chart:
     spec:
-      chart: garage
-      version: "2.2.0"
+      # Vendored chart at this path inside the management GitRepository
+      # (Chart.yaml lives directly under stacks/storage/chart/).
+      # `chart` is the path INSIDE the source, not a chart name.
+      chart: ./stacks/storage/chart
       sourceRef:
         kind: GitRepository
         name: management
         namespace: flux-system
-      # Chart is vendored in stacks/storage/chart/
+      # version omitted — taken from Chart.yaml inside the path above
   install:
     createNamespace: false
   valuesFrom:
