@@ -712,7 +712,15 @@ scaleway-tunnel-start: ## Open background SSH tunnel local:8080 (vault-backend) 
 	@if [ -f $(CI_TUNNEL_PIDFILE) ] && kill -0 $$(cat $(CI_TUNNEL_PIDFILE)) 2>/dev/null; then \
 		echo "[tunnel] already running (pid $$(cat $(CI_TUNNEL_PIDFILE)))"; \
 	else \
-		CI_IP=$$($(TF) -chdir=$(TF_SCW_CI) output -raw ci_ip); \
+		CI_NAME="$(NAMESPACE)-$(ENV)-$(INSTANCE)-$(REGION)-ci"; \
+		CI_IP=$$($(TF) -chdir=$(TF_SCW_CI) output -raw ci_ip 2>/dev/null); \
+		if [ -z "$$CI_IP" ]; then \
+			echo "[tunnel] tofu output unavailable (vault-backend down?), falling back to Scaleway API by name=$$CI_NAME"; \
+			CI_IP=$$(scw -p st4ck-readonly instance server list zone=$(REGION)-1 -o json 2>/dev/null \
+				| jq -r --arg n "$$CI_NAME" '.[] | select(.name == $$n) | .public_ip.address' | head -1); \
+		fi; \
+		test -n "$$CI_IP" || { echo "ERROR: ci_ip not found via tofu OR scw API. Is the CI VM provisioned?"; exit 1; }; \
+		echo "[tunnel] CI VM = $$CI_IP"; \
 		ssh-keygen -R "$$CI_IP" >/dev/null 2>&1 || true; \
 		ssh $(SSH_OPTS) -L 8080:localhost:8080 -L 2222:localhost:2222 -N -f "root@$$CI_IP" && \
 		pgrep -f "ssh.*$$CI_IP.*-L 8080" | head -1 > $(CI_TUNNEL_PIDFILE) && \
