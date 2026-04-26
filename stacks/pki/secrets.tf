@@ -302,10 +302,17 @@ resource "terraform_data" "bootstrap_openbao_pki" {
       # validated by the cert-manager Certificate CR itself, not the role.
       # max_ttl=720h (30d) — leaf-cert lifetime upper bound.
       echo "Writing pki_int/roles/cluster-issuer..."
+      # key_type=ec + key_bits=0: only ECDSA keys (any curve P-256/P-384).
+      # All Certificate CRs in this repo use ECDSA (matches root + intermediate
+      # which are ECDSA-P384). Default key_type=rsa would reject them with
+      # "role requires keys of type rsa". Locking to EC is more secure than
+      # key_type=any (refuses RSA + Ed25519 leaks).
       $BAO bao write pki_int/roles/cluster-issuer \
         allow_any_name=true \
         enforce_hostnames=false \
         max_ttl=720h \
+        key_type=ec \
+        key_bits=0 \
         allowed_uri_sans="spiffe://st4ck/*" >/dev/null
 
       # ─── 6. cert-manager Kubernetes auth role + policy ───────────
