@@ -146,7 +146,8 @@ resource "terraform_data" "seed_openbao_secrets" {
       # OpenBao listener is HTTPS (cert-manager-provided cert via openbao-infra-tls).
       # BAO_SKIP_VERIFY because we're hitting 127.0.0.1 from inside the pod —
       # the cert is for the cluster-internal DNS name, not the loopback.
-      BAO="kubectl -n secrets exec openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true"
+      # `-i` is required so heredoc stdin (bao policy write -) reaches the pod.
+      BAO="kubectl -n secrets exec -i openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true"
 
       echo "Waiting for OpenBao Infra API..."
       for i in $(seq 1 60); do
@@ -239,7 +240,8 @@ resource "terraform_data" "bootstrap_openbao_pki" {
     command = <<-EOT
       set -eu
 
-      BAO="kubectl -n secrets exec openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true"
+      # `-i` is required so heredoc stdin (bao policy write -) reaches the pod.
+      BAO="kubectl -n secrets exec -i openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true"
 
       echo "Waiting for OpenBao Infra API..."
       for i in $(seq 1 60); do
@@ -310,7 +312,10 @@ resource "terraform_data" "bootstrap_openbao_pki" {
       # Kubernetes auth method may already be enabled by another
       # bootstrap step (ESO uses it too) — silence "already in use".
       echo "Ensuring auth/kubernetes is enabled..."
-      $BAO bao auth enable kubernetes 2>&1 | grep -v "path is already in use" || true
+      # Idempotent: any HTTP 400 (already enabled, path conflict) is fine.
+      # Only abort if the auth method genuinely can't be queried after.
+      $BAO bao auth enable kubernetes 2>&1 || echo "  auth/kubernetes already enabled (or precondition failed — verifying below)"
+      $BAO bao auth list -format=json 2>&1 | grep -q '"kubernetes/"' || { echo "ERROR: auth/kubernetes not present"; exit 1; }
 
       # If kubernetes auth was just enabled it needs the cluster's CA +
       # K8s API URL configured. ESO bootstrap (auto-init Job) normally
