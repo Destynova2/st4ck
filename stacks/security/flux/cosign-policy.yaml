@@ -27,8 +27,15 @@ spec:
           attestors:
             - entries:
                 - keys:
+                    # Kyverno v1.17 ClusterPolicy CRD: the Secret MUST
+                    # contain a key literally named `cosign.pub`. There
+                    # is no `key:` field on the schema (validated against
+                    # crd .spec.rules.verifyImages.attestors.entries.keys
+                    # which only allows {ctlog, kms, publicKeys, rekor,
+                    # secret, signatureAlgorithm}). Older policy revs
+                    # had a custom `key:` here — schema rejected it
+                    # under server-side dry-run, so removed.
                     secret:
                       name: cosign-public-key
                       namespace: security
-                    key: cosign.pub
                     signatureAlgorithm: sha256
