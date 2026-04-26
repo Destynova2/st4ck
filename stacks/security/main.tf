@@ -81,6 +81,21 @@ resource "helm_release" "trivy_operator" {
 # in this namespace. Depends on the CNPG operator from the identity
 # stack — operator is cluster-scoped so one install handles all CRs.
 
+# ─── CNPG external certificates (Phase 1b-3) ───────────────────────
+# Same pattern as stacks/identity/main.tf — see header in
+# stacks/security/flux/openclarity-pg-certs.yaml for the full rationale.
+data "kubectl_file_documents" "openclarity_pg_certs" {
+  content = file("${path.module}/flux/openclarity-pg-certs.yaml")
+}
+
+resource "kubectl_manifest" "openclarity_pg_certs" {
+  for_each = data.kubectl_file_documents.openclarity_pg_certs.manifests
+
+  yaml_body = each.value
+
+  depends_on = [kubernetes_namespace.security]
+}
+
 resource "kubectl_manifest" "openclarity_pg_cluster" {
   yaml_body = <<-YAML
     apiVersion: postgresql.cnpg.io/v1
@@ -92,13 +107,23 @@ resource "kubectl_manifest" "openclarity_pg_cluster" {
       instances: 2
       storage:
         size: 5Gi
+      # Phase 1b-3: external certs from cert-manager (OpenBao PKI).
+      certificates:
+        serverCASecret: openclarity-pg-server-ca-tls
+        serverTLSSecret: openclarity-pg-server-tls
+        clientCASecret: openclarity-pg-client-ca-tls
+        replicationTLSSecret: openclarity-pg-replication-tls
       bootstrap:
         initdb:
           database: openclarity
           owner: openclarity
   YAML
 
-  depends_on = [kubernetes_namespace.security]
+  depends_on = [
+    kubernetes_namespace.security,
+    # All 4 cert Secrets must exist before CNPG inspects spec.certificates.
+    kubectl_manifest.openclarity_pg_certs,
+  ]
 }
 
 # Phase 1a-3: openclarity-pg-credentials is no longer materialized by Tofu.

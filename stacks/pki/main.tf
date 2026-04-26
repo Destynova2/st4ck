@@ -250,14 +250,111 @@ resource "kubernetes_secret" "cert_manager_ca" {
   depends_on = [kubernetes_namespace.cert_manager]
 }
 
-# ClusterIssuer — references the infra sub-CA keypair
-resource "kubectl_manifest" "cluster_issuer" {
-  yaml_body = file("${path.module}/cluster-issuer.yaml")
+# ─── OpenBao PKI CA bundle for Vault Issuer (Phase 1b-2) ────────────
+#
+# The Vault-kind ClusterIssuer "internal-ca" needs caBundleSecretRef to
+# validate OpenBao's TLS endpoint cert (Secret openbao-infra-tls in
+# secrets ns). For Phase 1b-2, that endpoint cert is still signed by
+# the bootstrap issuer → the bundle is the same infra-ca-chain that
+# intermediate-ca-keypair uses to sign things. Phase 2/3 may rotate.
+#
+# Secret lives in cert-manager namespace (matches cert-manager's
+# default --cluster-resource-namespace flag — Vault ClusterIssuer
+# resolves caBundleSecretRef in that namespace).
+resource "kubernetes_secret" "openbao_pki_ca_bundle" {
+  metadata {
+    name      = "openbao-pki-ca-bundle"
+    namespace = "cert-manager"
+  }
 
-  depends_on = [helm_release.cert_manager, kubernetes_secret.cert_manager_ca]
+  data = {
+    "ca.crt" = local.infra_ca_chain
+  }
+
+  depends_on = [kubernetes_namespace.cert_manager]
 }
 
+# ClusterIssuers — bootstrap (CA-secret) + day-2 (Vault/OpenBao PKI).
+# See cluster-issuer.yaml header for the chicken-and-egg rationale.
+#
+# Split into TWO Tofu resources to break a dependency cycle:
+#
+#   helm_release.openbao_infra
+#     ↳ kubectl_manifest.openbao_infra_cert  (needs an issuer at startup)
+#         ↳ cluster_issuer (bootstrap)       ← MUST exist pre-OpenBao
+#                                              (NO openbao dep, else cycle)
+#
+#   terraform_data.bootstrap_openbao_pki     ← needs openbao_infra running
+#     ↳ cluster_issuer (vault)               ← needs the pki_int role +
+#                                              cert-manager k8s auth role
+#                                              that bootstrap_openbao_pki
+#                                              creates
+#
+# The bootstrap issuer therefore MUST NOT depend on bootstrap_openbao_pki.
+# The Vault issuer depends on it (and on the bootstrap issuer being live,
+# transitively, since openbao-infra-tls is signed by the bootstrap issuer
+# and the Vault issuer's caBundleSecretRef points to the same chain).
+
+# ─── Bootstrap ClusterIssuer (CA-secret kind) ────────────────────────
+# Pre-OpenBao. Signs OpenBao's own endpoint cert. No OpenBao dependency.
+resource "kubectl_manifest" "cluster_issuer_bootstrap" {
+  yaml_body = <<-YAML
+    apiVersion: cert-manager.io/v1
+    kind: ClusterIssuer
+    metadata:
+      name: internal-ca-bootstrap
+    spec:
+      ca:
+        secretName: intermediate-ca-keypair
+  YAML
+
+  depends_on = [
+    helm_release.cert_manager,
+    kubernetes_secret.cert_manager_ca,
+  ]
+}
+
+# ─── Day-2 ClusterIssuer (Vault kind, OpenBao PKI backend) ───────────
+# Renamed locally to "internal-ca" — name kept stable so every existing
+# Certificate CR (hydra-tls, pomerium-*-tls, headlamp, etc.) renews from
+# OpenBao on its next cycle without YAML edits cascading.
+resource "kubectl_manifest" "cluster_issuer_vault" {
+  yaml_body = <<-YAML
+    apiVersion: cert-manager.io/v1
+    kind: ClusterIssuer
+    metadata:
+      name: internal-ca
+    spec:
+      vault:
+        server: https://openbao-infra.secrets.svc:8200
+        path: pki_int/sign/cluster-issuer
+        caBundleSecretRef:
+          name: openbao-pki-ca-bundle
+          key: ca.crt
+        auth:
+          kubernetes:
+            role: cert-manager
+            mountPath: /v1/auth/kubernetes
+            serviceAccountRef:
+              name: cert-manager
+              namespace: cert-manager
+  YAML
+
+  depends_on = [
+    helm_release.cert_manager,
+    kubernetes_secret.openbao_pki_ca_bundle,
+    terraform_data.bootstrap_openbao_pki,
+  ]
+}
+
+
 # ─── TLS certificates for in-cluster OpenBao ──────────────────────────
+#
+# Both OpenBao endpoint certs (infra + app) are issued by the BOOTSTRAP
+# ClusterIssuer (internal-ca-bootstrap, CA-secret kind). This breaks the
+# chicken-and-egg where the Vault issuer would need OpenBao reachable to
+# issue OpenBao's reachability cert. Every OTHER Certificate in the
+# cluster uses the Vault issuer "internal-ca" → audited by OpenBao.
 
 resource "kubectl_manifest" "openbao_infra_cert" {
   yaml_body = <<-YAML
@@ -269,7 +366,7 @@ resource "kubectl_manifest" "openbao_infra_cert" {
     spec:
       secretName: openbao-infra-tls
       issuerRef:
-        name: internal-ca
+        name: internal-ca-bootstrap
         kind: ClusterIssuer
       dnsNames:
         - openbao-infra
@@ -280,7 +377,7 @@ resource "kubectl_manifest" "openbao_infra_cert" {
       renewBefore: 720h  # 30 days
   YAML
 
-  depends_on = [kubectl_manifest.cluster_issuer, kubernetes_namespace.secrets]
+  depends_on = [kubectl_manifest.cluster_issuer_bootstrap, kubernetes_namespace.secrets]
 }
 
 resource "kubectl_manifest" "openbao_app_cert" {
@@ -293,7 +390,7 @@ resource "kubectl_manifest" "openbao_app_cert" {
     spec:
       secretName: openbao-app-tls
       issuerRef:
-        name: internal-ca
+        name: internal-ca-bootstrap
         kind: ClusterIssuer
       dnsNames:
         - openbao-app
@@ -304,5 +401,5 @@ resource "kubectl_manifest" "openbao_app_cert" {
       renewBefore: 720h
   YAML
 
-  depends_on = [kubectl_manifest.cluster_issuer, kubernetes_namespace.secrets]
+  depends_on = [kubectl_manifest.cluster_issuer_bootstrap, kubernetes_namespace.secrets]
 }

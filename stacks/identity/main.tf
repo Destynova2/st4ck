@@ -77,6 +77,25 @@ resource "helm_release" "cnpg_operator" {
   depends_on = [kubernetes_namespace.identity]
 }
 
+# ─── CNPG external certificates (Phase 1b-3) ───────────────────────
+#
+# Apply 4 Certificate CRs (server-ca, server, client-ca, replication)
+# BEFORE the Cluster CR so cert-manager has time to materialize the
+# Secrets. Without this ordering, CNPG would observe missing Secrets,
+# log a confused error and fall back to its self-managed PKI for the
+# initial bootstrap (then never switch).
+data "kubectl_file_documents" "identity_pg_certs" {
+  content = file("${path.module}/flux/identity-pg-certs.yaml")
+}
+
+resource "kubectl_manifest" "identity_pg_certs" {
+  for_each = data.kubectl_file_documents.identity_pg_certs.manifests
+
+  yaml_body = each.value
+
+  depends_on = [kubernetes_namespace.identity]
+}
+
 # ─── PostgreSQL Cluster (CNPG CRD) ──────────────────────────────
 
 resource "kubectl_manifest" "identity_pg_cluster" {
@@ -90,6 +109,15 @@ resource "kubectl_manifest" "identity_pg_cluster" {
       instances: 3
       storage:
         size: 2Gi
+      # Phase 1b-3: external certs from cert-manager (OpenBao PKI).
+      # Replaces CNPG's self-managed PKI so every cert is auditable in
+      # the OpenBao audit log. Replication CN MUST be streaming_replica
+      # (enforced by the Certificate CR identity-pg-replication).
+      certificates:
+        serverCASecret: identity-pg-server-ca-tls
+        serverTLSSecret: identity-pg-server-tls
+        clientCASecret: identity-pg-client-ca-tls
+        replicationTLSSecret: identity-pg-replication-tls
       bootstrap:
         initdb:
           database: identity
@@ -117,7 +145,12 @@ resource "kubectl_manifest" "identity_pg_cluster" {
         retentionPolicy: "14d"
   YAML
 
-  depends_on = [helm_release.cnpg_operator]
+  depends_on = [
+    helm_release.cnpg_operator,
+    # All 4 cert Secrets must exist before CNPG inspects spec.certificates
+    # — otherwise CNPG falls back to self-PKI and never recovers.
+    kubectl_manifest.identity_pg_certs,
+  ]
 }
 
 # ─── CNPG ScheduledBackup (daily at 02:00 UTC) ──────────────────

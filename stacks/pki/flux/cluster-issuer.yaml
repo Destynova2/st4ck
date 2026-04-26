@@ -1,7 +1,52 @@
+---
+# ═══════════════════════════════════════════════════════════════════════
+# Two ClusterIssuers — bootstrap chicken-and-egg resolution (Phase 1b-2)
+# ═══════════════════════════════════════════════════════════════════════
+#
+# See stacks/pki/cluster-issuer.yaml (the Tofu-applied copy) for the
+# full architectural rationale. Short version:
+#
+# - "internal-ca-bootstrap" (CA kind, secretName intermediate-ca-keypair):
+#   only used by openbao-infra-tls + openbao-app-tls, breaks the
+#   chicken-and-egg of OpenBao's endpoint cert depending on OpenBao.
+# - "internal-ca" (Vault kind, OpenBao PKI): every other cert in the
+#   cluster renews from here. Audit log of every issuance lives in
+#   OpenBao audit devices (see ADR-NN).
+#
+# Difference from the Tofu file: Flux can't run templatefile() at apply
+# time, so the caBundle is sourced from a Secret reference instead of
+# inlined. The Secret `openbao-pki-ca-bundle` lives in cert-manager ns
+# and is populated by the auto-init Job in stacks/pki/secrets.tf
+# (terraform_data.bootstrap_openbao_pki) — it contains the PEM bundle
+# that signs OpenBao's TLS endpoint. For Phase 1b-2 that's the same
+# infra-ca chain used by the bootstrap issuer; Phase 2 may rotate it.
+
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: internal-ca-bootstrap
+spec:
+  ca:
+    secretName: intermediate-ca-keypair
+---
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
   name: internal-ca
 spec:
-  ca:
-    secretName: intermediate-ca-keypair
+  vault:
+    server: https://openbao-infra.secrets.svc:8200
+    path: pki_int/sign/cluster-issuer
+    caBundleSecretRef:
+      name: openbao-pki-ca-bundle
+      key: ca.crt
+      # Lives in cert-manager namespace (matches --cluster-resource-namespace
+      # default of cert-manager). Populated by tofu (stacks/pki/main.tf →
+      # kubernetes_secret.openbao_pki_ca_bundle).
+    auth:
+      kubernetes:
+        role: cert-manager
+        mountPath: /v1/auth/kubernetes
+        serviceAccountRef:
+          name: cert-manager
+          namespace: cert-manager

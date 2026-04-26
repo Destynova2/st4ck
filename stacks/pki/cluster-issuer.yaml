@@ -1,7 +1,66 @@
+---
+# ═══════════════════════════════════════════════════════════════════════
+# Two ClusterIssuers — bootstrap chicken-and-egg resolution (Phase 1b-2)
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Problem: the day-2 ClusterIssuer "internal-ca" is now backed by
+# OpenBao's PKI Secrets Engine (Vault kind, server openbao-infra.secrets).
+# cert-manager validates that endpoint via spec.vault.caBundleSecretRef.
+# The CA bundle is the chain that signs OpenBao's TLS endpoint cert.
+# That endpoint cert (Secret openbao-infra-tls) is itself issued by
+# cert-manager — so if it asked the Vault issuer for itself, OpenBao
+# would have to be reachable to issue its own reachability cert.
+# Classic chicken-and-egg.
+#
+# Resolution: keep the OLD self-contained CA-secret issuer (renamed
+# "internal-ca-bootstrap") for the certs that sign OpenBao's own
+# endpoint. Every other cert in the cluster uses the new Vault-backed
+# "internal-ca" → those are issued by OpenBao PKI as the architecture
+# intends. Audit log of every issuance lives in OpenBao audit devices.
+#
+# Naming: the Vault issuer keeps the name "internal-ca" so every existing
+# Certificate CR (hydra-tls, pomerium-*-tls, headlamp, etc.) renews from
+# OpenBao on its next cycle without YAML edits cascading through the
+# codebase. ONLY openbao-infra-tls + openbao-app-tls switch to
+# "internal-ca-bootstrap".
+#
+# Trust chain: bootstrap issuer's intermediate-ca-keypair Secret
+# (kms-output/infra-ca-chain.pem) signs the OpenBao endpoint cert.
+# OpenBao's pki_int CA (separate trust anchor) signs every leaf issued
+# via the Vault issuer. Both roots are distributed to platform clients.
+# ADR-NN tracks unification or rotation roadmap.
+#
+# Day-2 deprecation plan (post-Gate 3):
+#   1. Provision OpenBao endpoint cert from a static CA outside
+#      cert-manager (Talos PKI or k8s native CA).
+#   2. Delete the bootstrap issuer + intermediate-ca-keypair Secret.
+#   3. Every cert flows through OpenBao PKI → single audit surface.
+
+# ─── Bootstrap issuer (CA-secret kind) ───────────────────────────────
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: internal-ca-bootstrap
+spec:
+  ca:
+    secretName: intermediate-ca-keypair
+---
+# ─── Day-2 issuer (Vault kind, OpenBao PKI backend) ──────────────────
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
   name: internal-ca
 spec:
-  ca:
-    secretName: intermediate-ca-keypair
+  vault:
+    server: https://openbao-infra.secrets.svc:8200
+    path: pki_int/sign/cluster-issuer
+    caBundleSecretRef:
+      name: openbao-pki-ca-bundle
+      key: ca.crt
+    auth:
+      kubernetes:
+        role: cert-manager
+        mountPath: /v1/auth/kubernetes
+        serviceAccountRef:
+          name: cert-manager
+          namespace: cert-manager

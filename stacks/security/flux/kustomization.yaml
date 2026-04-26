@@ -18,6 +18,8 @@ resources:
   # openclarity-pg-app into OpenBao at secret/security/db/openclarity,
   # then ExternalSecret renders the chart-shaped Secret OpenClarity reads.
   - external-secrets-openclarity.yaml
+  # Phase 1b-3: CNPG external certs (4 per cluster, OpenBao PKI signed)
+  - openclarity-pg-certs.yaml
 configMapGenerator:
   - name: trivy-values
     namespace: security

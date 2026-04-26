@@ -1,0 +1,107 @@
+---
+# ═══════════════════════════════════════════════════════════════════════
+# CNPG external certificates for openclarity-pg (Phase 1b-3)
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Mirrors stacks/identity/flux/identity-pg-certs.yaml — see header there
+# for full architectural rationale. Short version: opt CNPG out of its
+# self-managed PKI and route every cert through OpenBao via cert-manager
+# so they appear in the OpenBao audit log.
+#
+# 4 certs: serverCA, server, clientCA, replication. Replication CN MUST
+# be `streaming_replica`. duration 90d / renewBefore 15d (≥3× margin).
+# 2 instances → 2 per-pod FQDNs in server SAN list.
+
+# ─── Server CA ────────────────────────────────────────────────────────
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: openclarity-pg-server-ca
+  namespace: security
+spec:
+  secretName: openclarity-pg-server-ca-tls
+  isCA: true
+  commonName: openclarity-pg server CA
+  duration: 87600h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 384
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+---
+# ─── Server TLS cert ──────────────────────────────────────────────────
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: openclarity-pg-server-tls
+  namespace: security
+spec:
+  secretName: openclarity-pg-server-tls
+  duration: 2160h
+  renewBefore: 360h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  commonName: openclarity-pg-rw.security.svc
+  dnsNames:
+    - openclarity-pg-rw
+    - openclarity-pg-rw.security
+    - openclarity-pg-rw.security.svc
+    - openclarity-pg-rw.security.svc.cluster.local
+    - openclarity-pg-r
+    - openclarity-pg-r.security
+    - openclarity-pg-r.security.svc
+    - openclarity-pg-r.security.svc.cluster.local
+    - openclarity-pg-ro
+    - openclarity-pg-ro.security
+    - openclarity-pg-ro.security.svc
+    - openclarity-pg-ro.security.svc.cluster.local
+    # 2 instances → 2 per-pod FQDNs.
+    - openclarity-pg-1.openclarity-pg-rw.security.svc.cluster.local
+    - openclarity-pg-2.openclarity-pg-rw.security.svc.cluster.local
+  usages:
+    - server auth
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+---
+# ─── Client CA ────────────────────────────────────────────────────────
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: openclarity-pg-client-ca
+  namespace: security
+spec:
+  secretName: openclarity-pg-client-ca-tls
+  isCA: true
+  commonName: openclarity-pg client CA
+  duration: 87600h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 384
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+---
+# ─── Replication client cert (CN=streaming_replica REQUIRED) ─────────
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: openclarity-pg-replication
+  namespace: security
+spec:
+  secretName: openclarity-pg-replication-tls
+  duration: 2160h
+  renewBefore: 360h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  commonName: streaming_replica
+  usages:
+    - client auth
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer

@@ -1,0 +1,128 @@
+---
+# ═══════════════════════════════════════════════════════════════════════
+# CNPG external certificates for identity-pg (Phase 1b-3)
+# ═══════════════════════════════════════════════════════════════════════
+#
+# CNPG's default behaviour is to manage its OWN PKI internally (operator
+# generates a private CA, signs server + replication certs, rotates them
+# on a fixed schedule). That bypasses our cluster-wide trust chain
+# (OpenBao PKI via cert-manager) and produces certificates we can't
+# audit.
+#
+# .spec.certificates on the Cluster CR opts INTO external secrets
+# managed by cert-manager. CNPG then trusts whatever we put there.
+#
+# Four certs total per cluster (CNPG documented pattern):
+#   - serverCASecret       — CA that signs the server cert
+#   - serverTLSSecret      — server cert (clients connect with this)
+#   - clientCASecret       — CA used to validate client certs
+#   - replicationTLSSecret — client cert for replica → primary streaming
+#                            (commonName MUST be `streaming_replica`)
+#
+# duration / renewBefore: 90d / 15d so cert-manager renews comfortably
+# before CNPG sees the cert as "near expiry" (~3× safety margin per
+# CNPG ops guide). Below ~3× CNPG triggers an emergency rolling restart.
+#
+# Server SANs: include both bare service name and FQDN so libpq with
+# sslmode=verify-full works regardless of resolv.conf search paths.
+
+# ─── Server CA (issuer for serverTLSSecret) ──────────────────────────
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: identity-pg-server-ca
+  namespace: identity
+spec:
+  secretName: identity-pg-server-ca-tls
+  isCA: true
+  commonName: identity-pg server CA
+  duration: 87600h    # 10 years
+  renewBefore: 720h   # 30 days
+  privateKey:
+    algorithm: ECDSA
+    size: 384
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+---
+# ─── Server TLS cert (presented by Postgres to clients) ──────────────
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: identity-pg-server-tls
+  namespace: identity
+spec:
+  secretName: identity-pg-server-tls
+  duration: 2160h     # 90 days
+  renewBefore: 360h   # 15 days
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  commonName: identity-pg-rw.identity.svc
+  dnsNames:
+    - identity-pg-rw
+    - identity-pg-rw.identity
+    - identity-pg-rw.identity.svc
+    - identity-pg-rw.identity.svc.cluster.local
+    - identity-pg-r
+    - identity-pg-r.identity
+    - identity-pg-r.identity.svc
+    - identity-pg-r.identity.svc.cluster.local
+    - identity-pg-ro
+    - identity-pg-ro.identity
+    - identity-pg-ro.identity.svc
+    - identity-pg-ro.identity.svc.cluster.local
+    # Per-pod FQDNs (CNPG's headless service per instance) — needed
+    # for cert-validating connections to specific replicas during a
+    # switchover when the -rw service hasn't repointed yet.
+    - identity-pg-1.identity-pg-rw.identity.svc.cluster.local
+    - identity-pg-2.identity-pg-rw.identity.svc.cluster.local
+    - identity-pg-3.identity-pg-rw.identity.svc.cluster.local
+  usages:
+    - server auth
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+---
+# ─── Client CA (issuer for replication client cert + future user certs) ─
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: identity-pg-client-ca
+  namespace: identity
+spec:
+  secretName: identity-pg-client-ca-tls
+  isCA: true
+  commonName: identity-pg client CA
+  duration: 87600h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 384
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+---
+# ─── Replication client cert (replica → primary auth) ────────────────
+# CN MUST be `streaming_replica` — this is the role name CNPG auto-
+# creates inside Postgres and binds to the replication identity via
+# pg_hba.conf cert-based auth. Anything else and the standby can't
+# attach. This is documented in cnpg.io/docs/cloudnative-pg-1.x/certificates.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: identity-pg-replication
+  namespace: identity
+spec:
+  secretName: identity-pg-replication-tls
+  duration: 2160h
+  renewBefore: 360h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  commonName: streaming_replica
+  usages:
+    - client auth
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer

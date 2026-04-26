@@ -11,6 +11,8 @@ resources:
   - hydra-certificate.yaml
   - external-secrets.yaml
   - external-secrets-kratos.yaml
+  # Phase 1b-3: CNPG external certs (4 per cluster, OpenBao PKI signed)
+  - identity-pg-certs.yaml
 configMapGenerator:
   - name: kratos-values
     namespace: identity
