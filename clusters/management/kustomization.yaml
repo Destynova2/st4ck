@@ -1,7 +1,11 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# Applied by the Flux Kustomization `management` (stacks/flux-bootstrap/
+# main.tf) which dependsOn `management-eso`. By the time we run, ESO is
+# already installed (CRDs available), so the ClusterSecretStore in
+# external-secrets/flux-config can apply without dry-run failures.
 resources:
-  - ../../stacks/external-secrets/flux
+  - ../../stacks/external-secrets/flux-config   # ClusterSecretStore (depends on ESO CRD)
   - ../../stacks/cni/flux
   - ../../stacks/monitoring/flux
   - ../../stacks/pki/flux

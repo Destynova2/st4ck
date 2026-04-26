@@ -215,7 +215,44 @@ resource "kubectl_manifest" "flux_git_repo" {
   ]
 }
 
-# ─── Root Kustomization (points to clusters/management/) ────────
+# ─── Root Kustomizations: ESO first, then everything else ────────
+#
+# Two-phase split: ESO must be installed BEFORE the management
+# Kustomization can apply the ClusterSecretStore CR (which references
+# the ESO-provided CRD). Without this split, server-side dry-run on the
+# CR fails because the CRD doesn't exist yet.
+#
+# Phase 1 — `management-eso`:
+#   path:  ./clusters/management-eso/  (just external-secrets/flux/)
+#   wait:  true  → blocks until the ESO HelmRelease reports Ready,
+#                  i.e. the CRDs are installed.
+#
+# Phase 2 — `management`:
+#   path:        ./clusters/management/  (all stacks INCLUDING
+#                external-secrets/flux-config which has the CSS)
+#   dependsOn:   management-eso
+#   By the time we run, ESO is Ready → CSS dry-run succeeds.
+resource "kubectl_manifest" "flux_kustomization_eso" {
+  yaml_body = <<-YAML
+    apiVersion: kustomize.toolkit.fluxcd.io/v1
+    kind: Kustomization
+    metadata:
+      name: management-eso
+      namespace: flux-system
+    spec:
+      interval: 10m
+      sourceRef:
+        kind: GitRepository
+        name: management
+      path: ./clusters/management-eso
+      prune: true
+      wait: true
+      timeout: 5m
+  YAML
+
+  depends_on = [kubectl_manifest.flux_git_repo]
+}
+
 resource "kubectl_manifest" "flux_root_kustomization" {
   yaml_body = <<-YAML
     apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -232,7 +269,9 @@ resource "kubectl_manifest" "flux_root_kustomization" {
       prune: true
       wait: true
       timeout: 5m
+      dependsOn:
+        - name: management-eso
   YAML
 
-  depends_on = [kubectl_manifest.flux_git_repo]
+  depends_on = [kubectl_manifest.flux_kustomization_eso]
 }

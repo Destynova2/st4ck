@@ -1,7 +1,13 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# ESO install only — CRDs (ClusterSecretStore, ExternalSecret, …) are
+# created by `installCRDs: true` in helmrelease.yaml. The
+# ClusterSecretStore CR itself lives in ../flux-config/ and is applied
+# by the `management` Flux Kustomization which `dependsOn: management-eso`.
+# Splitting prevents the server-side dry-run failure that would happen
+# if the CR was applied in the same kustomization as the CRD-creating
+# helmrelease (CRD doesn't exist at dry-run time).
 resources:
   - namespace.yaml
   - helmrepository.yaml
   - helmrelease.yaml
-  - cluster-secret-store.yaml
