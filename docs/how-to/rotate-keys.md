@@ -183,6 +183,26 @@ make rotate-flux-ssh-key ENV=dev INSTANCE=mgmt REGION=fr-par \
 The target prints the new public key; paste it into Gitea (repo
 settings → deploy keys, replacing the old one).
 
+### Scaleway IAM API keys (per env class × role)
+
+`scaleway_iam_api_key.app["<role>-<env>"]` in `envs/scaleway/iam/main.tf`.
+Rotation invalidates one Scaleway IAM application's keys; downstream
+Tofu stages re-read the new value via `tofu output -raw …` on next
+apply, but the **OpenBao copy** at `secret/scaleway/<env>/<role>` (see
+[openbao-paths](../reference/openbao-paths.md)) is stale until you
+re-run the seed:
+
+```bash
+# 1. Rotate the IAM key (replace <role> and <env>):
+tofu -chdir=envs/scaleway/iam state rm 'scaleway_iam_api_key.app["cluster-dev"]'
+make scaleway-iam-apply
+
+# 2. Force-overwrite the OpenBao mirror:
+make scaleway-reseed-iam ENV=dev INSTANCE=alice REGION=fr-par
+```
+
+The Scaleway IAM application itself is preserved (only the key changes).
+
 ### Service tokens (auto-recovers via ESO)
 
 These are the friendliest rotations — ESO syncs the new value to the

@@ -10,6 +10,9 @@ resources:
   - helmrelease-vlogs-collector.yaml
   - helmrelease-headlamp.yaml
   - configmap-dashboard.yaml
+  # ESO-managed grafana admin credentials (sourced from OpenBao Infra at
+  # secret/monitoring/grafana, seeded by stacks/monitoring/main.tf).
+  - external-secret-grafana.yaml
 configMapGenerator:
   - name: vm-k8s-stack-values
     namespace: monitoring

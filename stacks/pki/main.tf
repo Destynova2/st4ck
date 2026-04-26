@@ -16,6 +16,15 @@ terraform {
       source  = "alekc/kubectl"
       version = "~> 2.1"
     }
+    # tls provider needed by secrets.tf for the cosign keypair. Cosign
+    # generation lives in pki (not security) so it can be seeded into
+    # OpenBao via the same terraform_data.seed_openbao_secrets bash
+    # batch — security stack downstream pulls cosign.{pub,key} via
+    # ESO, matching the SSO-for-secrets goal (Phase 1a-1).
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
 }
 

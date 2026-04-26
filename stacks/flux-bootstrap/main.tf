@@ -97,20 +97,142 @@ resource "kubernetes_namespace" "flux_system" {
   }
 }
 
-# ─── SSH identity secret for Flux ────────────────────────────────
-resource "kubernetes_secret" "flux_ssh_identity" {
+# ─── OpenBao admin password (read from secrets/openbao-admin-password) ──
+# Seeded by stacks/pki/main.tf (random_password.openbao_admin → K8s
+# Secret). Reading it here keeps flux-bootstrap decoupled from pki's
+# tofu state — no terraform_remote_state, no shared backend creds.
+# The Secret MUST exist by the time this stack runs; in the standard
+# pipeline, pki runs before flux-bootstrap, so this is satisfied.
+data "kubernetes_secret" "openbao_admin_password" {
   metadata {
-    name      = "flux-ssh-identity"
-    namespace = "flux-system"
+    name      = "openbao-admin-password"
+    namespace = "secrets"
   }
+}
 
-  data = {
-    identity       = tls_private_key.flux_ssh.private_key_openssh
-    "identity.pub" = tls_private_key.flux_ssh.public_key_openssh
-    known_hosts    = var.gitea_known_hosts
+# ─── Seed Flux SSH key into OpenBao Infra (KV v2) ─────────────────
+#
+# Why here (not in stacks/pki/secrets.tf with the other seeds)?
+#   pki has no visibility on tls_private_key.flux_ssh (lives in this
+#   stack), and we don't want a cross-stack remote_state read for one
+#   secret. So this resource mirrors the pki `seed_openbao_secrets`
+#   pattern (kubectl exec → bao login userpass → bao kv put) but lives
+#   alongside the resource that owns the key.
+#
+# What it writes:
+#   secret/flux/ssh
+#     ├── identity      = ed25519 private key (OpenSSH PEM)
+#     ├── identity.pub  = ed25519 public key (OpenSSH)
+#     └── known_hosts   = SSH host key for Gitea (rotates with CI VM)
+#
+# Idempotency:
+#   `bao kv put` overwrites — safe for re-apply. We don't gate on
+#   "already seeded" like pki does because known_hosts legitimately
+#   rotates per CI VM redeploy (the SSH KEY itself is pinned by
+#   tls_private_key's lifecycle.ignore_changes).
+#
+# Trigger (input):
+#   sha256 of public key + known_hosts. The private key is not in
+#   the trigger to avoid rewriting state on every refresh; the pubkey
+#   uniquely identifies the keypair.
+resource "terraform_data" "seed_flux_ssh_to_openbao" {
+  input = sha256(join(",", [
+    tls_private_key.flux_ssh.public_key_openssh,
+    var.gitea_known_hosts,
+  ]))
+
+  provisioner "local-exec" {
+    environment = {
+      KUBECONFIG         = var.kubeconfig_path
+      BAO_ADMIN_PASSWORD = data.kubernetes_secret.openbao_admin_password.data["password"]
+      FLUX_SSH_IDENTITY  = tls_private_key.flux_ssh.private_key_openssh
+      FLUX_SSH_PUBLIC    = tls_private_key.flux_ssh.public_key_openssh
+      FLUX_KNOWN_HOSTS   = var.gitea_known_hosts
+    }
+    command = <<-EOT
+      set -eu
+
+      # Same TLS-skip pattern as stacks/pki/secrets.tf: cert is for the
+      # cluster-internal DNS name, not 127.0.0.1 from inside the pod.
+      BAO="kubectl -n secrets exec openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true"
+
+      echo "Waiting for OpenBao Infra API..."
+      for i in $(seq 1 60); do
+        $BAO bao status >/dev/null 2>&1 && break
+        echo "  attempt $i/60..." && sleep 5
+      done
+
+      echo "Logging in..."
+      $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1 || \
+        { echo "ERROR: OpenBao login failed"; exit 1; }
+
+      # bao kv put — k=v pairs (same pattern as stacks/pki/secrets.tf).
+      # Values come from env vars on the inner pod process so they
+      # don't appear in the workstation's `ps` output; the only argv
+      # leak surface is the kubelet exec audit log (acceptable, same
+      # as pki seed). The literal key `identity.pub` is used because
+      # Flux source-controller requires that exact filename.
+      echo "Seeding secret/flux/ssh..."
+      $BAO bao kv put secret/flux/ssh \
+        identity="$FLUX_SSH_IDENTITY" \
+        identity.pub="$FLUX_SSH_PUBLIC" \
+        known_hosts="$FLUX_KNOWN_HOSTS"
+
+      echo "Flux SSH seeded into OpenBao."
+    EOT
   }
+}
 
-  depends_on = [kubernetes_namespace.flux_system]
+# ─── ExternalSecret: OpenBao secret/flux/ssh → flux-ssh-identity ──
+#
+# Replaces the previous `kubernetes_secret.flux_ssh_identity` resource
+# (now removed). ESO recreates the K8s Secret from OpenBao on every
+# refresh (1h) so:
+#   - the only TF-managed copy of the private key is in tofu state
+#     (encrypted in OpenBao KV v2 via vault-backend);
+#   - K8s Secret is reconciled — `kubectl delete` heals automatically;
+#   - the same secret can be consumed cluster-wide via OpenBao without
+#     ever passing through Git or another tofu remote_state.
+#
+# Applied via kubectl_manifest because flux-bootstrap is a tofu-mode
+# stack (no Flux Kustomization layer at apply time — Flux installs
+# itself further down). depends_on the seed so the keys exist by the
+# time ESO tries to read them; even if ESO refreshes pre-seed, it just
+# retries every refreshInterval.
+resource "kubectl_manifest" "flux_ssh_external_secret" {
+  yaml_body = <<-YAML
+    apiVersion: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    metadata:
+      name: flux-ssh-identity
+      namespace: flux-system
+    spec:
+      refreshInterval: 1h
+      secretStoreRef:
+        name: openbao-infra
+        kind: ClusterSecretStore
+      target:
+        name: flux-ssh-identity
+        creationPolicy: Owner
+      data:
+        - secretKey: identity
+          remoteRef:
+            key: flux/ssh
+            property: identity
+        - secretKey: identity.pub
+          remoteRef:
+            key: flux/ssh
+            property: identity.pub
+        - secretKey: known_hosts
+          remoteRef:
+            key: flux/ssh
+            property: known_hosts
+  YAML
+
+  depends_on = [
+    kubernetes_namespace.flux_system,
+    terraform_data.seed_flux_ssh_to_openbao,
+  ]
 }
 
 # ─── Flux v2 (Helm install) ─────────────────────────────────────
@@ -209,7 +331,10 @@ resource "kubectl_manifest" "flux_git_repo" {
 
   depends_on = [
     helm_release.flux,
-    kubernetes_secret.flux_ssh_identity,
+    # ESO populates the K8s Secret `flux-ssh-identity` from OpenBao.
+    # source-controller will block on the secretRef until ESO writes
+    # it, but ordering here keeps reconciliation snappy on first apply.
+    kubectl_manifest.flux_ssh_external_secret,
     kubernetes_service.gitea_external,
     gitea_repository_key.flux,
   ]

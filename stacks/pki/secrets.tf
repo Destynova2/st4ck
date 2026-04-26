@@ -91,11 +91,33 @@ resource "random_password" "harbor_admin_password" {
   }
 }
 
+# ─── Security secrets ──────────────────────────────────────────────────
+
+# Cosign keypair (image signing). Generation moved here from
+# stacks/security/main.tf (Phase 1a-1) so the keypair lives in OpenBao
+# alongside every other application secret. Security stack now reads
+# cosign.{pub,key} via ExternalSecret (see flux/external-secret-cosign.yaml).
+#
+# Rotation invalidates every existing image signature → Kyverno enforce
+# blocks all pods → cluster-wide outage. Lock it down with ignore_changes.
+resource "tls_private_key" "cosign" {
+  algorithm   = "ECDSA"
+  ecdsa_curve = "P256"
+
+  lifecycle {
+    ignore_changes = all
+  }
+}
+
 # ─── Seed secrets into in-cluster OpenBao Infra ───────────────────────
 
 resource "terraform_data" "seed_openbao_secrets" {
   depends_on = [helm_release.openbao_infra]
 
+  # Trigger re-execution if any source secret material changes. Cosign
+  # additions are deliberately NOT in the input hash: ignore_changes = all
+  # locks them, so they only flip on a state-loss reseed (which we want to
+  # detect via the `bao kv get` idempotency guards below, not a hash diff).
   input = sha256(join(",", [
     random_password.hydra_system_secret.result,
     random_password.garage_admin_token.result,
@@ -113,6 +135,10 @@ resource "terraform_data" "seed_openbao_secrets" {
       GARAGE_RPC_SECRET      = random_bytes.garage_rpc_secret.hex
       GARAGE_ADMIN_TOKEN     = random_password.garage_admin_token.result
       HARBOR_ADMIN_PASSWORD  = random_password.harbor_admin_password.result
+      # Cosign keypair (Phase 1a-1). PEMs go through env vars, never on
+      # the kubectl exec command line where they'd hit ps + audit logs.
+      COSIGN_PUB             = tls_private_key.cosign.public_key_pem
+      COSIGN_KEY             = tls_private_key.cosign.private_key_pem
     }
     command = <<-EOT
       set -eu
@@ -132,28 +158,45 @@ resource "terraform_data" "seed_openbao_secrets" {
       $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1 || \
         { echo "ERROR: OpenBao login failed"; exit 1; }
 
-      # Idempotent: skip if already seeded
-      if $BAO bao kv get secret/identity/hydra >/dev/null 2>&1; then
-        echo "Secrets already seeded, skipping."
-        exit 0
-      fi
+      # Per-path idempotency: each block skips if already seeded. This
+      # used to be a single guard on secret/identity/hydra but new paths
+      # added later (cosign, Phase 1a-1) would be skipped on re-runs,
+      # leaving downstream ExternalSecrets stuck waiting forever.
+      seed_if_absent() {
+        local path="$1"; shift
+        if $BAO bao kv get "$path" >/dev/null 2>&1; then
+          echo "  $path: already present, skipping"
+          return 0
+        fi
+        echo "  $path: seeding"
+        $BAO bao kv put "$path" "$@"
+      }
 
       echo "Seeding identity secrets..."
-      $BAO bao kv put secret/identity/hydra \
+      seed_if_absent secret/identity/hydra \
         system_secret="$HYDRA_SYSTEM_SECRET"
 
-      $BAO bao kv put secret/identity/pomerium \
+      seed_if_absent secret/identity/pomerium \
         shared_secret="$POMERIUM_SHARED_SECRET" \
         cookie_secret="$POMERIUM_COOKIE_SECRET" \
         client_secret="$POMERIUM_CLIENT_SECRET"
 
       echo "Seeding storage secrets..."
-      $BAO bao kv put secret/storage/garage \
+      seed_if_absent secret/storage/garage \
         rpc_secret="$GARAGE_RPC_SECRET" \
         admin_token="$GARAGE_ADMIN_TOKEN"
 
-      $BAO bao kv put secret/storage/harbor \
+      seed_if_absent secret/storage/harbor \
         admin_password="$HARBOR_ADMIN_PASSWORD"
+
+      echo "Seeding security secrets..."
+      # Cosign keypair: Kyverno verifyImages reads cosign-public-key from
+      # the security namespace — backed by ExternalSecret targeting this
+      # path. Private key kept in the same KV entry so a single ES sync
+      # populates both Secrets without two round-trips.
+      seed_if_absent secret/security/cosign \
+        cosign.pub="$COSIGN_PUB" \
+        cosign.key="$COSIGN_KEY"
 
       echo "OpenBao Infra seeded."
     EOT

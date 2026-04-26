@@ -11,6 +11,13 @@ resources:
   - helmrelease-tetragon.yaml
   - helmrelease-kyverno.yaml
   - cosign-policy.yaml
+  # Phase 1a-1: cosign keypair sourced from OpenBao secret/security/cosign
+  # (seeded by the pki stack). Two ExternalSecret docs in one file.
+  - external-secret-cosign.yaml
+  # Phase 1a-3: openclarity-pg credentials. PushSecret mirrors CNPG's
+  # openclarity-pg-app into OpenBao at secret/security/db/openclarity,
+  # then ExternalSecret renders the chart-shaped Secret OpenClarity reads.
+  - external-secrets-openclarity.yaml
 configMapGenerator:
   - name: trivy-values
     namespace: security

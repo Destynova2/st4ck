@@ -12,10 +12,9 @@ terraform {
       source  = "alekc/kubectl"
       version = "~> 2.1"
     }
-    tls = {
-      source  = "hashicorp/tls"
-      version = "~> 4.0"
-    }
+    # tls provider removed: cosign keypair generation moved to the pki
+    # stack (Phase 1a-1) — security stack now consumes the materialized
+    # K8s Secrets via ExternalSecret only.
   }
 }
 
@@ -102,28 +101,18 @@ resource "kubectl_manifest" "openclarity_pg_cluster" {
   depends_on = [kubernetes_namespace.security]
 }
 
-data "kubernetes_secret" "openclarity_pg_app" {
-  metadata {
-    name      = "openclarity-pg-app"
-    namespace = "security"
-  }
-  depends_on = [kubectl_manifest.openclarity_pg_cluster]
-}
-
-# Re-key CNPG's secret into the {username,password,database} schema that
-# OpenClarity's externalPostgresql.auth.existingSecret expects.
-resource "kubernetes_secret" "openclarity_pg_credentials" {
-  metadata {
-    name      = "openclarity-pg-credentials"
-    namespace = "security"
-  }
-  data = {
-    username = data.kubernetes_secret.openclarity_pg_app.data["username"]
-    password = data.kubernetes_secret.openclarity_pg_app.data["password"]
-    database = "openclarity"
-  }
-  type = "Opaque"
-}
+# Phase 1a-3: openclarity-pg-credentials is no longer materialized by Tofu.
+# The PushSecret + ExternalSecret pair in flux/external-secrets-openclarity.yaml
+# now owns the lifecycle:
+#   1. CNPG creates openclarity-pg-app on cluster bootstrap
+#   2. PushSecret openclarity-pg-mirror copies it into OpenBao at
+#      secret/security/db/openclarity (rotation-safe, see eso-readonly policy
+#      which grants write on secret/data/*/db/* — single source of truth)
+#   3. ExternalSecret openclarity-pg-credentials renders the
+#      {username,password,database} Secret OpenClarity reads via
+#      externalPostgresql.auth.existingSecret
+# Race-free at deploy time: helm_release.openclarity below waits on the
+# OpenBao seed Job + ESO sync via the kubectl_manifest below.
 
 resource "helm_release" "openclarity" {
   name             = "openclarity"
@@ -144,7 +133,15 @@ resource "helm_release" "openclarity" {
 
   depends_on = [
     kubernetes_namespace.security,
-    kubernetes_secret.openclarity_pg_credentials,
+    # CNPG cluster must be up so the PushSecret has source data to mirror
+    # into OpenBao before the ExternalSecret tries to materialize the
+    # openclarity-pg-credentials Secret that this HelmRelease consumes.
+    kubectl_manifest.openclarity_pg_cluster,
+    # Both the PushSecret + ExternalSecret manifests (split via
+    # kubectl_file_documents below). Tofu doesn't accept depends_on on
+    # specific for_each keys cleanly, so we depend on the umbrella
+    # resource — Tofu treats this as "wait for every instance".
+    kubectl_manifest.openclarity_eso,
   ]
 }
 
@@ -179,43 +176,67 @@ resource "helm_release" "kyverno" {
   depends_on = [kubernetes_namespace.security]
 }
 
-# ─── Cosign keypair (for image signing + verification) ─────────────
+# ─── Cosign / OpenClarity ESO manifests (Phase 1a-1, 1a-3) ─────────
+#
+# Cosign keypair (cosign.pub / cosign.key) is now generated in the pki
+# stack (stacks/pki/secrets.tf) and seeded into OpenBao at
+# secret/security/cosign. The two ExternalSecrets below materialize the
+# K8s Secrets that downstream consumers (Kyverno verifyImages, signing
+# CronJob, ad-hoc cosign sign) still expect by name:
+#
+#   cosign-public-key  → key cosign.pub (read by verify-images.yaml)
+#   cosign-private-key → key cosign.key
+#
+# OpenClarity DB credentials follow the same pattern (PushSecret mirrors
+# CNPG's openclarity-pg-app into OpenBao, then ExternalSecret renders
+# openclarity-pg-credentials with the {username,password,database} schema
+# the chart wants).
+#
+# YAML-only (kubectl_manifest) so that the future "tofu state rm + handoff
+# to Flux" step from the README is a one-liner — Flux already has these
+# files in its kustomization.yaml.
 
-resource "tls_private_key" "cosign" {
-  algorithm   = "ECDSA"
-  ecdsa_curve = "P256"
-
-  # Rotation invalidates every existing image signature → Kyverno enforce
-  # blocks all pods → cluster-wide outage. Lock it down.
-  lifecycle {
-    ignore_changes = all
-  }
+# Multi-doc YAML files split by kubectl_file_documents → one
+# kubectl_manifest per doc. Lets us keep human-readable single files
+# (one for cosign, one for openclarity) shared between Tofu day-1 and
+# Flux day-2 (kustomization.yaml below references the same files).
+data "kubectl_file_documents" "cosign_externalsecrets" {
+  content = file("${path.module}/flux/external-secret-cosign.yaml")
 }
 
-resource "kubernetes_secret" "cosign_public_key" {
-  metadata {
-    name      = "cosign-public-key"
-    namespace = "security"
-  }
+resource "kubectl_manifest" "cosign_externalsecrets" {
+  for_each = data.kubectl_file_documents.cosign_externalsecrets.manifests
 
-  data = {
-    "cosign.pub" = tls_private_key.cosign.public_key_pem
-  }
+  yaml_body = each.value
 
-  depends_on = [kubernetes_namespace.security]
+  depends_on = [
+    kubernetes_namespace.security,
+    # ESO CRDs must exist (deployed by the external-secrets stack which
+    # runs before security in the pipeline). ClusterSecretStore
+    # openbao-infra is also required — provided by the pki stack's
+    # auto-init Job.
+  ]
 }
 
-resource "kubernetes_secret" "cosign_private_key" {
-  metadata {
-    name      = "cosign-private-key"
-    namespace = "security"
-  }
+data "kubectl_file_documents" "openclarity_eso" {
+  content = file("${path.module}/flux/external-secrets-openclarity.yaml")
+}
 
-  data = {
-    "cosign.key" = tls_private_key.cosign.private_key_pem
-  }
+resource "kubectl_manifest" "openclarity_eso" {
+  for_each = data.kubectl_file_documents.openclarity_eso.manifests
 
-  depends_on = [kubernetes_namespace.security]
+  yaml_body = each.value
+
+  depends_on = [
+    kubernetes_namespace.security,
+    # PushSecret needs CNPG's openclarity-pg-app to exist on the source
+    # side. ExternalSecret needs the OpenBao path written by PushSecret.
+    # Both are inside the same multi-doc file so we depend on the cluster
+    # only — the ExternalSecret will retry on its refreshInterval until
+    # the PushSecret has populated OpenBao (~one cycle, default 1h, but
+    # the doc opts into 30s for the bootstrap window).
+    kubectl_manifest.openclarity_pg_cluster,
+  ]
 }
 
 # ─── Cosign image verification policy ──────────────────────────────
@@ -223,5 +244,11 @@ resource "kubernetes_secret" "cosign_private_key" {
 resource "kubectl_manifest" "cosign_verify_policy" {
   yaml_body = file("${path.module}/verify-images.yaml")
 
-  depends_on = [helm_release.kyverno]
+  depends_on = [
+    helm_release.kyverno,
+    # Policy references cosign-public-key Secret. ExternalSecret must
+    # have synced before Kyverno tries to validate signatures, otherwise
+    # the policy's ClusterPolicy webhook returns "secret not found".
+    kubectl_manifest.cosign_externalsecrets,
+  ]
 }

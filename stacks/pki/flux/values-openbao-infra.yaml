@@ -102,7 +102,12 @@ server:
             operation = "update"
             path      = "sys/policies/acl/eso-readonly"
             data = {
-              policy = "path \"secret/data/*\" { capabilities = [\"read\"] }\npath \"secret/metadata/*\" { capabilities = [\"read\", \"list\"] }"
+              # Read on all secret/* paths + write on secret/*/db/*
+              # (PushSecret targets: CNPG-mirrored creds are written here
+              # by ESO so downstream ExternalSecrets read them like any
+              # other tofu-seeded secret). The "*/db/*" prefix isolates
+              # the write surface — any other path stays read-only for ESO.
+              policy = "path \"secret/data/*\" { capabilities = [\"read\"] }\npath \"secret/metadata/*\" { capabilities = [\"read\", \"list\"] }\npath \"secret/data/*/db/*\" { capabilities = [\"create\", \"update\", \"read\", \"delete\", \"patch\"] }\npath \"secret/metadata/*/db/*\" { capabilities = [\"create\", \"update\", \"read\", \"delete\", \"list\", \"patch\"] }"
             }
           }
           request "admin-policy" {

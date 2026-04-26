@@ -16,6 +16,10 @@ terraform {
       source  = "alekc/kubectl"
       version = "~> 2.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -44,6 +48,25 @@ resource "kubernetes_namespace" "monitoring" {
   }
 }
 
+# ─── Grafana admin credentials (seeded into OpenBao Infra) ───────────────
+# Generated here so that ESO (day-2) becomes the authoritative source for
+# the `grafana-admin` K8s Secret. The Grafana sub-chart is configured
+# (values-vm-stack.yaml: grafana.admin.existingSecret) to consume that
+# secret instead of generating its own random password — which previously
+# rotated on every Helm re-install and invalidated all sessions.
+#
+# IDEMPOTENCY: lifecycle.ignore_changes=all keeps the password stable
+# across state-loss + re-apply (mirrors the postmortem fix applied to
+# stacks/pki/secrets.tf — see the comment block there).
+resource "random_password" "grafana_admin" {
+  length  = 24
+  special = false
+
+  lifecycle {
+    ignore_changes = all
+  }
+}
+
 # ─── victoria-metrics-k8s-stack (metrics + alerting + dashboards) ────────
 
 resource "helm_release" "vm_k8s_stack" {
@@ -57,7 +80,103 @@ resource "helm_release" "vm_k8s_stack" {
 
   values = [file("${path.module}/flux/values-vm-stack.yaml")]
 
+  # Pre-create the grafana-admin Secret so the Grafana sub-chart Pod can
+  # mount it on first apply. ESO (day-2) will later reconcile this Secret
+  # from OpenBao — same values, so the overwrite is a no-op.
+  depends_on = [
+    kubernetes_namespace.monitoring,
+    kubernetes_secret.grafana_admin,
+  ]
+}
+
+# ─── Bootstrap K8s Secret for chart consumption (pre-Flux/ESO) ───────────
+# The Grafana sub-chart requires `grafana-admin` to exist BEFORE the
+# Deployment can start (mounts envFrom). On initial tofu apply, ESO is not
+# yet reconciling, so we create the Secret here. Once Flux rolls out, the
+# ExternalSecret in flux/external-secret-grafana.yaml takes ownership and
+# refreshes the values from OpenBao every refreshInterval. Because OpenBao
+# was seeded from the same random_password.grafana_admin (see
+# terraform_data.seed_grafana_to_openbao below), the data is identical and
+# ESO's first reconciliation is a no-op — no rotation, no session loss.
+resource "kubernetes_secret" "grafana_admin" {
+  metadata {
+    name      = "grafana-admin"
+    namespace = "monitoring"
+    # Hint to ESO that it's allowed to take this Secret over even though
+    # it wasn't the original creator (ESO honours this since v0.9).
+    annotations = {
+      "external-secrets.io/force-sync" = "true"
+    }
+  }
+
+  type = "Opaque"
+
+  data = {
+    "admin-user"     = "admin"
+    "admin-password" = random_password.grafana_admin.result
+  }
+
   depends_on = [kubernetes_namespace.monitoring]
+}
+
+# ─── Seed Grafana admin credentials into in-cluster OpenBao Infra ────────
+# Mirrors the bash pattern in stacks/pki/secrets.tf. We keep this in the
+# monitoring stack (rather than extending pki/secrets.tf) because:
+#  • monitoring is deployed AFTER pki (so OpenBao Infra is already up);
+#  • cross-stack remote_state coupling stays one-directional (monitoring
+#    → pki, never pki → monitoring), avoiding circular reads.
+#
+# Reads the OpenBao admin password directly from the K8s Secret created
+# by stacks/pki (`openbao-admin-password` in `secrets` ns) — same approach
+# the seed in pki/secrets.tf uses, just without the local-only reference.
+resource "terraform_data" "seed_grafana_to_openbao" {
+  # Triggers re-run if the password changes (which, with ignore_changes=all,
+  # only happens on a deliberate `tofu state rm` rotation).
+  input = sha256(random_password.grafana_admin.result)
+
+  provisioner "local-exec" {
+    environment = {
+      KUBECONFIG             = var.kubeconfig_path
+      GRAFANA_ADMIN_PASSWORD = random_password.grafana_admin.result
+    }
+    command = <<-EOT
+      set -eu
+
+      # OpenBao listener is HTTPS (cert-manager cert via openbao-infra-tls).
+      # BAO_SKIP_VERIFY because we hit 127.0.0.1 from inside the pod —
+      # the cert is for the cluster-internal DNS name, not the loopback.
+      BAO="kubectl -n secrets exec openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true"
+
+      # Resolve the OpenBao admin password from the K8s Secret seeded by
+      # stacks/pki/main.tf:kubernetes_secret.openbao_admin_password.
+      BAO_ADMIN_PASSWORD=$(kubectl -n secrets get secret openbao-admin-password \
+        -o jsonpath='{.data.password}' | base64 -d)
+
+      echo "Waiting for OpenBao Infra API..."
+      for i in $(seq 1 60); do
+        $BAO bao status >/dev/null 2>&1 && break
+        echo "  attempt $i/60..." && sleep 5
+      done
+
+      echo "Logging in..."
+      $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1 || \
+        { echo "ERROR: OpenBao login failed"; exit 1; }
+
+      # Idempotent re-run: skip when the same key+value already present.
+      EXISTING=$($BAO bao kv get -field=admin-password secret/monitoring/grafana 2>/dev/null || true)
+      if [ "$EXISTING" = "$GRAFANA_ADMIN_PASSWORD" ]; then
+        echo "secret/monitoring/grafana already current, skipping."
+        exit 0
+      fi
+
+      echo "Seeding monitoring/grafana..."
+      $BAO bao kv put secret/monitoring/grafana \
+        admin-user="admin" \
+        admin-password="$GRAFANA_ADMIN_PASSWORD"
+
+      echo "OpenBao Infra: monitoring/grafana seeded."
+    EOT
+  }
 }
 
 # ─── VictoriaLogs (log storage, replaces Loki) ──────────────────────────

@@ -516,6 +516,76 @@ SCW_CLUSTER_SK      = $(call scw_iam_out,cluster_$(ENV)_secret_key)
 SCW_CI_AK           = $(call scw_iam_out,ci_$(ENV)_access_key)
 SCW_CI_SK           = $(call scw_iam_out,ci_$(ENV)_secret_key)
 
+# ─── Audit-grade seed: IAM keys → in-cluster OpenBao KV ─────────────────
+# Why a separate target (not embedded in iam/main.tf):
+#   The IAM stage runs FIRST in the deploy chain — before any cluster
+#   exists, before in-cluster OpenBao is up. The seed can only happen
+#   AFTER k8s-pki-apply has stood up `openbao-infra-0` in the `secrets`
+#   namespace.
+#
+# Why we keep `tofu output -raw` for downstream consumers:
+#   envs/scaleway/{main,ci,image}.tf all run BEFORE in-cluster OpenBao
+#   exists too. Switching them to read from OpenBao would break day-1.
+#   The seed is for the AUDIT trail (every consumer downstream of pki
+#   that needs scw keys hits OpenBao → audit log entry per read) and
+#   for future tools that don't have access to the IAM tofu state.
+#
+# Roles seeded: image-builder, cluster, ci, bare-metal — env classes
+# from $(SCW_ENV_CLASSES) (default: dev staging prod). Path layout:
+#   secret/scaleway/<env>/<role>  with keys access_key + secret_key
+#
+# Idempotent: each path is checked first; existing entries are NOT
+# overwritten (matches the seed-if-absent pattern in stacks/pki/secrets.tf).
+# Use `make scaleway-reseed-iam` to force-overwrite (e.g. after a key
+# rotation in the IAM stage).
+SCW_ENV_CLASSES   ?= dev staging prod
+SCW_SEED_ROLES    ?= image-builder cluster ci bare-metal
+
+.PHONY: scaleway-seed-iam scaleway-reseed-iam
+
+# Internal: shared body. $(1) = put-or-overwrite verb (put | put -force is
+# not a thing in bao; we just delete-then-put for the reseed case).
+define _scw_seed_iam_body
+	@command -v kubectl >/dev/null 2>&1 || { echo "ERROR: kubectl required"; exit 1; }
+	@test -f $(KC_FILE) || { echo "ERROR: kubeconfig $(KC_FILE) missing — run 'make scaleway-kubeconfig' first"; exit 1; }
+	@KUBECONFIG=$(KC_FILE) kubectl -n secrets get statefulset openbao-infra >/dev/null 2>&1 \
+		|| { echo "ERROR: openbao-infra not deployed — run 'make k8s-pki-apply' first"; exit 1; }
+	@echo "[seed-iam] reading admin password from in-cluster secret..."
+	@BAO_PASS=$$(KUBECONFIG=$(KC_FILE) kubectl -n secrets get secret openbao-admin-password -o jsonpath='{.data.password}' | base64 -d); \
+	 [ -n "$$BAO_PASS" ] || { echo "ERROR: openbao-admin-password secret empty"; exit 1; }; \
+	 BAO="KUBECONFIG=$(KC_FILE) kubectl -n secrets exec openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true"; \
+	 echo "[seed-iam] waiting for OpenBao API..."; \
+	 for i in $$(seq 1 30); do eval "$$BAO bao status" >/dev/null 2>&1 && break; echo "  attempt $$i/30..."; sleep 5; done; \
+	 echo "[seed-iam] logging in..."; \
+	 eval "$$BAO bao login -method=userpass username=admin password=\"$$BAO_PASS\"" >/dev/null \
+		|| { echo "ERROR: bao login failed"; exit 1; }; \
+	 OVERWRITE="$(1)"; \
+	 for env in $(SCW_ENV_CLASSES); do \
+		for role in $(SCW_SEED_ROLES); do \
+			out_role=$$(echo "$$role" | tr - _); \
+			AK=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw $${out_role}_$${env}_access_key 2>/dev/null) || true; \
+			SK=$$($(TF) -chdir=$(TF_SCW_IAM) output -raw $${out_role}_$${env}_secret_key 2>/dev/null) || true; \
+			if [ -z "$$AK" ] || [ -z "$$SK" ] || [ "$$AK" = "null" ] || [ "$$SK" = "null" ]; then \
+				echo "  scaleway/$$env/$$role: no IAM output (skipping — role likely disabled)"; continue; \
+			fi; \
+			path="secret/scaleway/$$env/$$role"; \
+			if [ "$$OVERWRITE" != "1" ] && eval "$$BAO bao kv get $$path" >/dev/null 2>&1; then \
+				echo "  $$path: already present, skipping"; continue; \
+			fi; \
+			echo "  $$path: seeding"; \
+			eval "$$BAO bao kv put $$path access_key=\"$$AK\" secret_key=\"$$SK\"" >/dev/null \
+				|| { echo "ERROR: kv put failed for $$path"; exit 1; }; \
+		done; \
+	 done; \
+	 echo "[seed-iam] done."
+endef
+
+scaleway-seed-iam: ## Seed Scaleway IAM keys into in-cluster OpenBao at secret/scaleway/<env>/<role> (idempotent — skips existing)
+	$(call _scw_seed_iam_body,0)
+
+scaleway-reseed-iam: ## Force-overwrite seeded Scaleway IAM keys (use after a key rotation in the IAM stage)
+	$(call _scw_seed_iam_body,1)
+
 # ═══════════════════════════════════════════════════════════════════════
 # Scaleway — stage 1: Image (per region, semver + schematic sha7)
 # Two-phase apply (builder VM → wait S3 → snapshot+image).
@@ -810,7 +880,7 @@ scaleway-teardown-vm: ## Safely destroy the CI VM (migrates state to local first
 
 .PHONY: scaleway-up scaleway-down scaleway-teardown scaleway-nuke scaleway-wait scaleway-kubeconfig
 
-scaleway-up: scaleway-apply scaleway-wait scaleway-kubeconfig k8s-up ## Create cluster + all k8s stacks for the current context
+scaleway-up: scaleway-apply scaleway-wait scaleway-kubeconfig k8s-up scaleway-seed-iam ## Create cluster + all k8s stacks for the current context (+ seed IAM keys into OpenBao for audit trail)
 
 scaleway-wait: ## Wait for K8s API server of the current context to be reachable
 	@echo "Waiting for API server ($(CTX_ID))..."

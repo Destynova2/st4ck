@@ -71,6 +71,16 @@ grafana:
   fullnameOverride: "grafana"
   persistence:
     enabled: false
+  # Use a pre-existing K8s Secret for the admin credentials instead of
+  # the chart's auto-generated `grafana` Secret. Sourced from OpenBao
+  # via ExternalSecret (see flux/external-secret-grafana.yaml) and
+  # bootstrapped on first apply by stacks/monitoring/main.tf
+  # (kubernetes_secret.grafana_admin). Stops password rotation on chart
+  # re-installs — sessions survive helm upgrades.
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
   resources:
     requests:
       cpu: 100m
