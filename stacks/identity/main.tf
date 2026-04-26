@@ -170,9 +170,20 @@ resource "helm_release" "kratos" {
   namespace        = "identity"
   create_namespace = false
 
-  values = [templatefile("${path.module}/flux/values-kratos.yaml", {
-    dsn = local.pg_dsn_kratos
-  })]
+  # Two-source values: the static file (no ${dsn} placeholder anymore —
+  # Flux uses ESO templating to inject DSN) + an inline yamlencode that
+  # adds the DSN computed by tofu. Both modes (tofu day-1, Flux day-2)
+  # converge on the same chart values.
+  values = [
+    file("${path.module}/flux/values-kratos.yaml"),
+    yamlencode({
+      kratos = {
+        config = {
+          dsn = local.pg_dsn_kratos
+        }
+      }
+    }),
+  ]
 
   depends_on = [kubernetes_namespace.identity, kubectl_manifest.identity_pg_cluster]
 }
@@ -212,10 +223,23 @@ resource "helm_release" "hydra" {
   namespace        = "identity"
   create_namespace = false
 
-  values = [templatefile("${path.module}/flux/values-hydra.yaml", {
-    system_secret = local.secrets["hydra_system_secret"]
-    dsn           = local.pg_dsn_hydra
-  })]
+  # Two-source values: static file (no ${dsn} or ${system_secret}
+  # placeholders anymore — Flux uses ESO templating; tofu adds them via
+  # the inline yamlencode below). Both modes converge on the same chart
+  # values without duplication.
+  values = [
+    file("${path.module}/flux/values-hydra.yaml"),
+    yamlencode({
+      hydra = {
+        config = {
+          dsn = local.pg_dsn_hydra
+          secrets = {
+            system = [local.secrets["hydra_system_secret"]]
+          }
+        }
+      }
+    }),
+  ]
 
   depends_on = [kubernetes_namespace.identity, kubectl_manifest.hydra_tls_cert, kubectl_manifest.identity_pg_cluster]
 }

@@ -20,3 +20,10 @@ spec:
       name: kratos-values
       valuesKey: values.yaml
       optional: false
+    # DSN injected separately — values-kratos.yaml has no ${dsn}
+    # placeholder anymore (Flux can't templatefile). The Secret is
+    # composed by ExternalSecret kratos-secrets from CNPG identity-pg-app.
+    - kind: Secret
+      name: kratos-secrets
+      valuesKey: values.yaml
+      optional: false

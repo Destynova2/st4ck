@@ -5,7 +5,11 @@ hydra:
   dev: false
 
   config:
-    dsn: "${dsn}"
+    # NOTE: dsn is injected by ExternalSecret hydra-secrets via the
+    # HelmRelease's valuesFrom Secret merge — see
+    # external-secrets-kratos.yaml (PushSecret mirrors CNPG identity-pg-app
+    # into OpenBao at secret/identity/db/postgres) and external-secrets.yaml
+    # (hydra-secrets ES composes the DSN with search_path=hydra).
 
     serve:
       public:

@@ -10,6 +10,7 @@ resources:
   - helmrelease-pomerium.yaml
   - hydra-certificate.yaml
   - external-secrets.yaml
+  - external-secrets-kratos.yaml
 configMapGenerator:
   - name: kratos-values
     namespace: identity

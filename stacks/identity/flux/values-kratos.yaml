@@ -5,7 +5,11 @@ kratos:
   development: false
 
   config:
-    dsn: "${dsn}"
+    # NOTE: dsn is injected by the ExternalSecret kratos-secrets via the
+    # HelmRelease's valuesFrom Secret merge — leaving it unset here means
+    # the ConfigMap-loaded values don't carry "${dsn}" anymore (Flux
+    # can't templatefile() the way tofu did). See
+    # external-secrets-kratos.yaml for the composition.
 
     serve:
       public:
