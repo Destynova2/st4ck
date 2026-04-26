@@ -25,8 +25,8 @@ _out/
 kms-output/
 
 # Fetched Helm charts (upstream dependencies)
-stacks/storage/chart/
-stacks/storage/chart-local-path/
+# stacks/storage/chart/  # vendored — needed by Flux GitRepository chart ref
+# stacks/storage/chart-local-path/  # vendored — same reason
 
 # Arbor staging tree (pre-pulled images + charts)
 arbor/
