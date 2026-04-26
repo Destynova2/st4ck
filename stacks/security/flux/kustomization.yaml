@@ -1,5 +1,9 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# See stacks/cni/flux/kustomization.yaml for the configMapGenerator pattern
+# rationale (single source of truth for tofu + Flux).
+# Note: OpenClarity is deployed by tofu only (no Flux manifest yet) — its
+# values-openclarity.yaml has no ConfigMap entry here.
 resources:
   - namespace.yaml
   - helmrepository.yaml
@@ -7,3 +11,18 @@ resources:
   - helmrelease-tetragon.yaml
   - helmrelease-kyverno.yaml
   - cosign-policy.yaml
+configMapGenerator:
+  - name: trivy-values
+    namespace: security
+    files:
+      - values.yaml=values-trivy.yaml
+  - name: tetragon-values
+    namespace: security
+    files:
+      - values.yaml=values-tetragon.yaml
+  - name: kyverno-values
+    namespace: security
+    files:
+      - values.yaml=values-kyverno.yaml
+generatorOptions:
+  disableNameSuffixHash: true

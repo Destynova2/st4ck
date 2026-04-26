@@ -61,7 +61,7 @@ resource "helm_release" "local_path_provisioner" {
   namespace        = "storage"
   create_namespace = false
 
-  values = [file("${path.module}/values-local-path.yaml")]
+  values = [file("${path.module}/flux/values-local-path.yaml")]
 
   depends_on = [kubernetes_namespace.storage]
 }
@@ -75,7 +75,7 @@ resource "helm_release" "garage" {
   create_namespace = true
   wait             = false # Garage returns 503 until layout is configured
 
-  values = [templatefile("${path.module}/values-garage.yaml", {
+  values = [templatefile("${path.module}/flux/values-garage.yaml", {
     garage_rpc_secret  = local.secrets["garage_rpc_secret"]
     garage_admin_token = local.secrets["garage_admin_token"]
   })]
@@ -223,7 +223,7 @@ resource "helm_release" "velero" {
   create_namespace = false
   timeout          = 600
 
-  values = [templatefile("${path.module}/values-velero.yaml", {
+  values = [templatefile("${path.module}/flux/values-velero.yaml", {
     velero_bucket = var.velero_bucket
     s3_url        = var.s3_url
   })]
@@ -252,7 +252,7 @@ resource "helm_release" "harbor" {
   timeout          = 600
 
   values = [
-    file("${path.module}/values-harbor.yaml"),
+    file("${path.module}/flux/values-harbor.yaml"),
     sensitive(yamlencode({
       harborAdminPassword = local.secrets["harbor_admin_password"]
       persistence = {

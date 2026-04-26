@@ -1,5 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# See stacks/cni/flux/kustomization.yaml for the configMapGenerator pattern
+# rationale (single source of truth for tofu + Flux).
 resources:
   - namespace.yaml
   - helmrepository.yaml
@@ -7,3 +9,18 @@ resources:
   - helmrelease-openbao-app.yaml
   - helmrelease-cert-manager.yaml
   - cluster-issuer.yaml
+configMapGenerator:
+  - name: openbao-infra-values
+    namespace: secrets
+    files:
+      - values.yaml=values-openbao-infra.yaml
+  - name: openbao-app-values
+    namespace: secrets
+    files:
+      - values.yaml=values-openbao-app.yaml
+  - name: cert-manager-values
+    namespace: cert-manager
+    files:
+      - values.yaml=values-cert-manager.yaml
+generatorOptions:
+  disableNameSuffixHash: true

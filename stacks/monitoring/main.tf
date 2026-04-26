@@ -55,7 +55,7 @@ resource "helm_release" "vm_k8s_stack" {
   create_namespace = false
   timeout          = 600
 
-  values = [file("${path.module}/values-vm-stack.yaml")]
+  values = [file("${path.module}/flux/values-vm-stack.yaml")]
 
   depends_on = [kubernetes_namespace.monitoring]
 }
@@ -70,7 +70,7 @@ resource "helm_release" "victoria_logs" {
   namespace        = "monitoring"
   create_namespace = false
 
-  values = [file("${path.module}/values-vlogs-single.yaml")]
+  values = [file("${path.module}/flux/values-vlogs-single.yaml")]
 
   depends_on = [kubernetes_namespace.monitoring]
 }
@@ -85,7 +85,7 @@ resource "helm_release" "victoria_logs_collector" {
   namespace        = "monitoring"
   create_namespace = false
 
-  values = [file("${path.module}/values-vlogs-collector.yaml")]
+  values = [file("${path.module}/flux/values-vlogs-collector.yaml")]
 
   depends_on = [helm_release.victoria_logs]
 }
@@ -118,7 +118,7 @@ resource "helm_release" "headlamp" {
   namespace        = "monitoring"
   create_namespace = false
 
-  values = [file("${path.module}/values-headlamp.yaml")]
+  values = [file("${path.module}/flux/values-headlamp.yaml")]
 
   depends_on = [kubernetes_namespace.monitoring]
 }

@@ -60,7 +60,7 @@ resource "helm_release" "trivy_operator" {
   namespace        = "security"
   create_namespace = false
 
-  values = [file("${path.module}/values-trivy.yaml")]
+  values = [file("${path.module}/flux/values-trivy.yaml")]
 
   depends_on = [kubernetes_namespace.security]
 }
@@ -133,7 +133,7 @@ resource "helm_release" "openclarity" {
   namespace        = "security"
   create_namespace = false
 
-  values = [file("${path.module}/values-openclarity.yaml")]
+  values = [file("${path.module}/flux/values-openclarity.yaml")]
 
   # OpenClarity has 11+ pods (apiserver, orchestrator, ui, gateway, swagger-ui,
   # uibackend, trivy-server, grype-server, exploit-db, freshclam, yara-rule).
@@ -159,7 +159,7 @@ resource "helm_release" "tetragon" {
   namespace        = "security"
   create_namespace = false
 
-  values = [file("${path.module}/values-tetragon.yaml")]
+  values = [file("${path.module}/flux/values-tetragon.yaml")]
 
   depends_on = [kubernetes_namespace.security]
 }
@@ -174,7 +174,7 @@ resource "helm_release" "kyverno" {
   namespace        = "security"
   create_namespace = false
 
-  values = [file("${path.module}/values-kyverno.yaml")]
+  values = [file("${path.module}/flux/values-kyverno.yaml")]
 
   depends_on = [kubernetes_namespace.security]
 }

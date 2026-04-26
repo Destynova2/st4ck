@@ -1,5 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# See stacks/cni/flux/kustomization.yaml for the configMapGenerator pattern
+# rationale (single source of truth for tofu + Flux).
 resources:
   - namespace.yaml
   - helmrepository.yaml
@@ -8,3 +10,22 @@ resources:
   - helmrelease-velero.yaml
   - helmrelease-harbor.yaml
   - external-secrets.yaml
+configMapGenerator:
+  - name: local-path-provisioner-values
+    namespace: storage
+    files:
+      - values.yaml=values-local-path.yaml
+  - name: garage-values
+    namespace: garage
+    files:
+      - values.yaml=values-garage.yaml
+  - name: velero-values
+    namespace: storage
+    files:
+      - values.yaml=values-velero.yaml
+  - name: harbor-values
+    namespace: storage
+    files:
+      - values.yaml=values-harbor.yaml
+generatorOptions:
+  disableNameSuffixHash: true

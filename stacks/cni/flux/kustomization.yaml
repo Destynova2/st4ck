@@ -1,5 +1,18 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# Single source of truth for chart values: stacks/cni/values.yaml is read
+# both by tofu (helm_release.values = file("values.yaml")) AND by Flux
+# (configMapGenerator below produces the ConfigMap that helmrelease.yaml
+# references via valuesFrom). When values change, run `flux reconcile hr
+# cilium -n kube-system` (or wait for the next interval) — auto-rollout
+# is disabled because we kept the literal ConfigMap name.
 resources:
   - helmrepository.yaml
   - helmrelease.yaml
+configMapGenerator:
+  - name: cilium-values
+    namespace: kube-system
+    files:
+      - values.yaml=values.yaml
+generatorOptions:
+  disableNameSuffixHash: true

@@ -24,5 +24,5 @@ resource "helm_release" "cilium" {
   version    = var.cilium_version
   namespace  = "kube-system"
 
-  values = [file("${path.module}/values.yaml")]
+  values = [file("${path.module}/flux/values.yaml")]
 }

@@ -174,7 +174,7 @@ resource "helm_release" "openbao_infra" {
   namespace        = "secrets"
   create_namespace = false
 
-  values = [file("${path.module}/values-openbao-infra.yaml")]
+  values = [file("${path.module}/flux/values-openbao-infra.yaml")]
 
   depends_on = [
     kubernetes_namespace.secrets,
@@ -194,7 +194,7 @@ resource "helm_release" "openbao_app" {
   namespace        = "secrets"
   create_namespace = false
 
-  values = [file("${path.module}/values-openbao-app.yaml")]
+  values = [file("${path.module}/flux/values-openbao-app.yaml")]
 
   depends_on = [
     kubernetes_namespace.secrets,
@@ -219,7 +219,7 @@ resource "helm_release" "cert_manager" {
   namespace        = "cert-manager"
   create_namespace = false
 
-  values = [file("${path.module}/values-cert-manager.yaml")]
+  values = [file("${path.module}/flux/values-cert-manager.yaml")]
 
   depends_on = [kubernetes_namespace.cert_manager]
 }

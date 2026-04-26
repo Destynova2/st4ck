@@ -1,5 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# See stacks/cni/flux/kustomization.yaml for the configMapGenerator pattern
+# rationale (single source of truth for tofu + Flux).
 resources:
   - namespace.yaml
   - helmrepository.yaml
@@ -8,3 +10,22 @@ resources:
   - helmrelease-vlogs-collector.yaml
   - helmrelease-headlamp.yaml
   - configmap-dashboard.yaml
+configMapGenerator:
+  - name: vm-k8s-stack-values
+    namespace: monitoring
+    files:
+      - values.yaml=values-vm-stack.yaml
+  - name: vlogs-single-values
+    namespace: monitoring
+    files:
+      - values.yaml=values-vlogs-single.yaml
+  - name: vlogs-collector-values
+    namespace: monitoring
+    files:
+      - values.yaml=values-vlogs-collector.yaml
+  - name: headlamp-values
+    namespace: monitoring
+    files:
+      - values.yaml=values-headlamp.yaml
+generatorOptions:
+  disableNameSuffixHash: true

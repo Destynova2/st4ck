@@ -170,7 +170,7 @@ resource "helm_release" "kratos" {
   namespace        = "identity"
   create_namespace = false
 
-  values = [templatefile("${path.module}/values-kratos.yaml", {
+  values = [templatefile("${path.module}/flux/values-kratos.yaml", {
     dsn = local.pg_dsn_kratos
   })]
 
@@ -212,7 +212,7 @@ resource "helm_release" "hydra" {
   namespace        = "identity"
   create_namespace = false
 
-  values = [templatefile("${path.module}/values-hydra.yaml", {
+  values = [templatefile("${path.module}/flux/values-hydra.yaml", {
     system_secret = local.secrets["hydra_system_secret"]
     dsn           = local.pg_dsn_hydra
   })]
@@ -295,7 +295,7 @@ resource "helm_release" "pomerium" {
   namespace        = "identity"
   create_namespace = false
 
-  values = [templatefile("${path.module}/values-pomerium.yaml", {
+  values = [templatefile("${path.module}/flux/values-pomerium.yaml", {
     client_secret = local.secrets["pomerium_client_secret"]
     shared_secret = local.secrets["pomerium_shared_secret"]
     cookie_secret = local.secrets["pomerium_cookie_secret"]
