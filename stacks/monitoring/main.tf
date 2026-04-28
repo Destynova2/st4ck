@@ -67,27 +67,15 @@ resource "random_password" "grafana_admin" {
   }
 }
 
-# ─── victoria-metrics-k8s-stack (metrics + alerting + dashboards) ────────
-
-resource "helm_release" "vm_k8s_stack" {
-  name             = "vm-k8s-stack"
-  repository       = "https://victoriametrics.github.io/helm-charts"
-  chart            = "victoria-metrics-k8s-stack"
-  version          = var.vm_k8s_stack_version
-  namespace        = "monitoring"
-  create_namespace = false
-  timeout          = 600
-
-  values = [file("${path.module}/flux/values-vm-stack.yaml")]
-
-  # Pre-create the grafana-admin Secret so the Grafana sub-chart Pod can
-  # mount it on first apply. ESO (day-2) will later reconcile this Secret
-  # from OpenBao — same values, so the overwrite is a no-op.
-  depends_on = [
-    kubernetes_namespace.monitoring,
-    kubernetes_secret.grafana_admin,
-  ]
-}
+# NOTE: Helm releases for monitoring (vm-k8s-stack, victoria-logs,
+# victoria-logs-collector, headlamp) are owned by Flux — see
+# stacks/monitoring/flux/helmrelease-*.yaml. Tofu only manages the
+# bootstrap pieces below (namespace, grafana-admin Secret pre-seeded
+# so the chart can mount it on first apply, OpenBao seed, dashboard
+# ConfigMap, VMRule for Flux alerts).
+#
+# ADR-028 — Flux is owner par défaut for app-level helm releases;
+# tofu only manages what must exist BEFORE Flux can reconcile.
 
 # ─── Bootstrap K8s Secret for chart consumption (pre-Flux/ESO) ───────────
 # The Grafana sub-chart requires `grafana-admin` to exist BEFORE the
@@ -179,35 +167,7 @@ resource "terraform_data" "seed_grafana_to_openbao" {
   }
 }
 
-# ─── VictoriaLogs (log storage, replaces Loki) ──────────────────────────
-
-resource "helm_release" "victoria_logs" {
-  name             = "victoria-logs"
-  repository       = "https://victoriametrics.github.io/helm-charts"
-  chart            = "victoria-logs-single"
-  version          = var.victoria_logs_version
-  namespace        = "monitoring"
-  create_namespace = false
-
-  values = [file("${path.module}/flux/values-vlogs-single.yaml")]
-
-  depends_on = [kubernetes_namespace.monitoring]
-}
-
-# ─── VictoriaLogs Collector (log DaemonSet) ──────────────────────────────
-
-resource "helm_release" "victoria_logs_collector" {
-  name             = "victoria-logs-collector"
-  repository       = "https://victoriametrics.github.io/helm-charts"
-  chart            = "victoria-logs-collector"
-  version          = var.victoria_logs_collector_version
-  namespace        = "monitoring"
-  create_namespace = false
-
-  values = [file("${path.module}/flux/values-vlogs-collector.yaml")]
-
-  depends_on = [helm_release.victoria_logs]
-}
+# victoria-logs + victoria-logs-collector → Flux owner (see header note)
 
 # ─── Platform Overview Dashboard (ConfigMap auto-loaded by Grafana sidecar) ─
 
@@ -227,20 +187,7 @@ resource "kubernetes_config_map" "platform_dashboard" {
   depends_on = [kubernetes_namespace.monitoring]
 }
 
-# ─── Headlamp (Kubernetes UI) ───────────────────────────────────────────
-
-resource "helm_release" "headlamp" {
-  name             = "headlamp"
-  repository       = "https://kubernetes-sigs.github.io/headlamp/"
-  chart            = "headlamp"
-  version          = var.headlamp_version
-  namespace        = "monitoring"
-  create_namespace = false
-
-  values = [file("${path.module}/flux/values-headlamp.yaml")]
-
-  depends_on = [kubernetes_namespace.monitoring]
-}
+# headlamp → Flux owner (see header note)
 
 # ─── Flux alerting rules (VMRule for VictoriaMetrics) ──────────────────
 # kubectl_manifest (alekc) instead of kubernetes_manifest because the latter
@@ -301,5 +248,9 @@ resource "kubectl_manifest" "flux_alerts" {
     }
   })
 
-  depends_on = [helm_release.vm_k8s_stack]
+  # vm-k8s-stack now owned by Flux — depends on namespace only.
+  # The VMRule CRD is installed by Flux's vm-k8s-stack HelmRelease at
+  # bootstrap; on first-ever apply this manifest may transiently fail
+  # until Flux finishes reconciling. Retry-on-error is acceptable here.
+  depends_on = [kubernetes_namespace.monitoring]
 }
