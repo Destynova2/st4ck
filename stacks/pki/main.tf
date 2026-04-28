@@ -449,7 +449,9 @@ resource "kubectl_manifest" "cluster_issuer_vault" {
             mountPath: /v1/auth/kubernetes
             serviceAccountRef:
               name: cert-manager
-              namespace: cert-manager
+              # namespace field removed: not in cert-manager 1.19 schema
+              # for vault.auth.kubernetes.serviceAccountRef. SA defaults
+              # to cert-manager's own namespace, which is what we want.
   YAML
 
   depends_on = [

@@ -49,4 +49,7 @@ spec:
         mountPath: /v1/auth/kubernetes
         serviceAccountRef:
           name: cert-manager
-          namespace: cert-manager
+          # namespace: cert-manager  ← removed: not in cert-manager 1.19
+          # CRD schema for vault.auth.kubernetes.serviceAccountRef.
+          # Default behavior is to look up SA in the same namespace as
+          # cert-manager itself, which is what we want anyway.
