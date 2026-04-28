@@ -12,11 +12,17 @@ configuration:
   backupStorageLocation:
     - name: default
       provider: aws
-      bucket: "${velero_bucket}"
+      # ${velero_bucket} + ${s3_url} are substituted by:
+      #   - tofu helm_release: via templatefile() in stacks/storage/main.tf
+      #   - Flux Kustomization: via spec.postBuild.substitute in
+      #     stacks/flux-bootstrap/main.tf (Kustomization "management")
+      # Both substitution paths produce identical output, so the file
+      # works correctly whether deployed by tofu (day-1) or Flux (day-2).
+      bucket: ${velero_bucket}
       config:
         region: garage
         s3ForcePathStyle: "true"
-        s3Url: "${s3_url}"
+        s3Url: ${s3_url}
 
   volumeSnapshotLocation: []
 

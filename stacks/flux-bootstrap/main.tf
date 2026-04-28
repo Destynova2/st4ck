@@ -379,6 +379,18 @@ resource "kubectl_manifest" "flux_root_kustomization" {
       prune: true
       wait: true
       timeout: 5m
+      # Reconcile-time variable substitution (idiomatic Flux postBuild).
+      # Mirrors the values that tofu's templatefile() injects when it
+      # deploys the same charts at day-1, so values-*.yaml files work
+      # identically for tofu (day-1) AND Flux (day-2) without hardcoding.
+      # Add new vars here when introducing new $${var} placeholders in
+      # any values-*.yaml under clusters/management/.
+      postBuild:
+        substitute:
+          s3_url: "http://garage.garage.svc.cluster.local:3900"
+          velero_bucket: "velero-backups"
+          harbor_bucket: "harbor-registry"
+          cnpg_bucket: "cnpg-backups"
   YAML
 
   depends_on = [kubectl_manifest.flux_git_repo]
