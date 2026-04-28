@@ -2,14 +2,14 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 # See stacks/cni/flux/kustomization.yaml for the configMapGenerator pattern
 # rationale (single source of truth for tofu + Flux).
-# Note: OpenClarity is deployed by tofu only (no Flux manifest yet) — its
-# values-openclarity.yaml has no ConfigMap entry here.
 resources:
   - namespace.yaml
   - helmrepository.yaml
   - helmrelease-trivy.yaml
   - helmrelease-tetragon.yaml
   - helmrelease-kyverno.yaml
+  # ADR-028 wave 2: OpenClarity now Flux-owned via OCIRepository.
+  - helmrelease-openclarity.yaml
   - cosign-policy.yaml
   # Phase 1a-1: cosign keypair sourced from OpenBao secret/security/cosign
   # (seeded by the pki stack). Two ExternalSecret docs in one file.
@@ -38,5 +38,9 @@ configMapGenerator:
     namespace: security
     files:
       - values.yaml=values-kyverno.yaml
+  - name: openclarity-values
+    namespace: security
+    files:
+      - values.yaml=values-openclarity.yaml
 generatorOptions:
   disableNameSuffixHash: true

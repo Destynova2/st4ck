@@ -59,22 +59,24 @@ resource "kubernetes_namespace" "storage" {
 
 # ─── Garage (S3-compatible object store) ──────────────────────────────
 
-resource "helm_release" "garage" {
-  name             = "garage"
-  chart            = "${path.module}/chart"
-  namespace        = "garage"
-  create_namespace = true
-  wait             = false # Garage returns 503 until layout is configured
-
-  values = [templatefile("${path.module}/flux/values-garage.yaml", {
-    garage_rpc_secret  = local.secrets["garage_rpc_secret"]
-    garage_admin_token = local.secrets["garage_admin_token"]
-  })]
-
-  # local-path Flux-owned (ADR-028); garage chart provisions its PVCs
-  # which need the StorageClass — Flux deploys both, so eventually OK.
-  # Tofu dep on namespace only.
-  depends_on = [kubernetes_namespace.storage]
+# Garage → Flux owner (ADR-028 wave 2). garage-secrets ExternalSecret
+# in stacks/storage/flux/external-secrets.yaml renders the
+# rpcSecret + admin.token values.yaml fragment from OpenBao
+# secret/storage/garage. Flux HelmRelease consumes ConfigMap +
+# Secret via valuesFrom (Secret wins on overlap).
+#
+# garage_layout + garage_buckets_keys terraform_data below previously
+# used `triggers_replace = [sha256(file("${path.module}/flux/values-garage.yaml"))]`
+# to re-run on chart upgrade. After the Flux handoff, that field is
+# unreachable; we trigger on the values file hash instead, which
+# changes on any chart-relevant config change.
+resource "kubernetes_namespace" "garage" {
+  metadata {
+    name = "garage"
+    labels = {
+      "pod-security.kubernetes.io/enforce" = "baseline"
+    }
+  }
 }
 
 # ─── Garage setup (split into 3 steps for reliability) ───────────────
@@ -85,7 +87,7 @@ resource "helm_release" "garage" {
 # in step 2; so polling K8s readinessProbe is a deadlock. We poll the Garage
 # RPC instead: `garage status` lists all nodes that have joined the cluster).
 resource "terraform_data" "garage_wait" {
-  depends_on = [helm_release.garage]
+  depends_on = [kubernetes_namespace.garage]
 
   provisioner "local-exec" {
     environment = { KUBECONFIG = var.kubeconfig_path }
@@ -113,7 +115,7 @@ resource "terraform_data" "garage_layout" {
   depends_on = [terraform_data.garage_wait]
 
   # Re-run if Garage helm release changes
-  triggers_replace = [helm_release.garage.metadata[0].revision]
+  triggers_replace = [sha256(file("${path.module}/flux/values-garage.yaml"))]
 
   provisioner "local-exec" {
     environment = { KUBECONFIG = var.kubeconfig_path }
@@ -150,7 +152,7 @@ resource "terraform_data" "garage_buckets_keys" {
   depends_on = [terraform_data.garage_layout, kubernetes_namespace.storage]
 
   # Re-run on helm revision change; scripts are idempotent (check before create)
-  triggers_replace = [helm_release.garage.metadata[0].revision]
+  triggers_replace = [sha256(file("${path.module}/flux/values-garage.yaml"))]
 
   provisioner "local-exec" {
     environment = { KUBECONFIG = var.kubeconfig_path }

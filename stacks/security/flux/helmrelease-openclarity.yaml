@@ -1,0 +1,46 @@
+---
+# OpenClarity is published as an OCI Helm chart. Flux uses OCIRepository
+# (not HelmRepository) to pull from registries that don't expose an
+# index.yaml. Tag is pinned to match var.openclarity_version in tofu.
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: OCIRepository
+metadata:
+  name: openclarity
+  namespace: flux-system
+spec:
+  interval: 30m
+  url: oci://ghcr.io/openclarity/charts/openclarity
+  ref:
+    # Pin matches stacks/security/variables.tf var.openclarity_version
+    # default — keep them in sync.
+    tag: "1.1.3"
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: openclarity
+  namespace: security
+spec:
+  interval: 30m
+  chartRef:
+    kind: OCIRepository
+    name: openclarity
+    namespace: flux-system
+  install:
+    createNamespace: false
+    # Match tofu's wait=false. OpenClarity has 11+ pods and helm wait
+    # used to time out at 5min; we let Flux observe pod readiness instead.
+    disableWait: true
+    timeout: 15m
+  upgrade:
+    timeout: 15m
+    disableWait: true
+  valuesFrom:
+    - kind: ConfigMap
+      name: openclarity-values
+      valuesKey: values.yaml
+      optional: false
+  # Wait for the openclarity-pg-credentials Secret (rendered by ESO from
+  # the PushSecret-mirrored CNPG creds) before installing — chart's
+  # externalPostgresql.auth.existingSecret references this Secret.
+  dependsOn: []

@@ -138,36 +138,11 @@ resource "kubectl_manifest" "openclarity_pg_cluster" {
 # Race-free at deploy time: helm_release.openclarity below waits on the
 # OpenBao seed Job + ESO sync via the kubectl_manifest below.
 
-resource "helm_release" "openclarity" {
-  name             = "openclarity"
-  # OpenClarity is published as an OCI artifact (no traditional Helm repo).
-  chart            = "oci://ghcr.io/openclarity/charts/openclarity"
-  version          = var.openclarity_version
-  namespace        = "security"
-  create_namespace = false
-
-  values = [file("${path.module}/flux/values-openclarity.yaml")]
-
-  # OpenClarity has 11+ pods (apiserver, orchestrator, ui, gateway, swagger-ui,
-  # uibackend, trivy-server, grype-server, exploit-db, freshclam, yara-rule).
-  # Helm wait=true with default 5min times out on slow clusters; switch to
-  # async mode and let the operator inspect pods himself.
-  wait    = false
-  timeout = 900
-
-  depends_on = [
-    kubernetes_namespace.security,
-    # CNPG cluster must be up so the PushSecret has source data to mirror
-    # into OpenBao before the ExternalSecret tries to materialize the
-    # openclarity-pg-credentials Secret that this HelmRelease consumes.
-    kubectl_manifest.openclarity_pg_cluster,
-    # Both the PushSecret + ExternalSecret manifests (split via
-    # kubectl_file_documents below). Tofu doesn't accept depends_on on
-    # specific for_each keys cleanly, so we depend on the umbrella
-    # resource — Tofu treats this as "wait for every instance".
-    kubectl_manifest.openclarity_eso,
-  ]
-}
+# OpenClarity → Flux owner (ADR-028 wave 2).
+# stacks/security/flux/helmrelease-openclarity.yaml uses OCIRepository
+# (ghcr.io/openclarity/charts/openclarity is OCI-only, no index.yaml).
+# Tofu still creates the CNPG cluster + ESO secrets that OpenClarity
+# consumes at startup.
 
 # ─── Tetragon (eBPF runtime security observability) ──────────────────
 # Talos Linux v1.12+: extraHostPathMounts for /sys/kernel/tracing in values.yaml

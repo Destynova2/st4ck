@@ -299,24 +299,7 @@ resource "kubernetes_job_v1" "hydra_oidc_client" {
   depends_on = [kubernetes_namespace.identity]
 }
 
-# ─── Pomerium (zero-trust access proxy) ───────────────────────────
-
-resource "helm_release" "pomerium" {
-  name             = "pomerium"
-  repository       = "https://helm.pomerium.io"
-  chart            = "pomerium"
-  version          = var.pomerium_version
-  namespace        = "identity"
-  create_namespace = false
-
-  values = [templatefile("${path.module}/flux/values-pomerium.yaml", {
-    client_secret = local.secrets["pomerium_client_secret"]
-    shared_secret = local.secrets["pomerium_shared_secret"]
-    cookie_secret = local.secrets["pomerium_cookie_secret"]
-  })]
-
-  # Hydra Flux-owned (ADR-028); pomerium chart waits for hydra at runtime
-  # (auth provider connection retried if not ready). Tofu dep on namespace
-  # only.
-  depends_on = [kubernetes_namespace.identity]
-}
+# Pomerium → Flux owner (ADR-028 wave 2). The 3 secrets (client/shared/
+# cookie) come from the pomerium-secrets ExternalSecret which renders a
+# values.yaml fragment that overrides the ${...} placeholders left in
+# the ConfigMap-loaded values-pomerium.yaml. ESO is the single source.
