@@ -1,6 +1,9 @@
-# Garage S3-compatible object store — Helm values for chart v0.9.2 (Garage v2.2.0)
+# Garage S3-compatible object store — Helm values for chart v0.9.2 (Garage v2.3.0)
 # Chart fetched via: make garage-chart
 # Source: https://git.deuxfleurs.fr/Deuxfleurs/garage (branch main-v2)
+# v2.3.0 release notes: no breaking changes from v2.2.0, includes XML
+# parsing fixes (DeleteObjects, website config) and CORS handling fixes
+# that may improve compatibility with strict S3 SDK clients (boto3, etc.).
 
 garage:
   rpcSecret: "${garage_rpc_secret}"
@@ -16,9 +19,13 @@ deployment:
   replicaCount: 3
   podManagementPolicy: Parallel
   fullnameOverride: "garage"
-  image:
-    repository: dxflrs/garage
-    tag: "v2.2.0"
+
+# image override at TOP LEVEL — chart reads .Values.image.*, not
+# .Values.deployment.image.* (the latter was a values typo that meant
+# Garage stayed on chart-default v2.2.0 forever despite tag bumps).
+image:
+  repository: dxflrs/amd64_garage
+  tag: "v2.3.0"
 
 persistence:
   meta:

@@ -55,16 +55,7 @@ resource "kubernetes_namespace" "storage" {
 
 # ─── local-path-provisioner (default StorageClass) ───────────────────
 
-resource "helm_release" "local_path_provisioner" {
-  name             = "local-path-provisioner"
-  chart            = "${path.module}/chart-local-path"
-  namespace        = "storage"
-  create_namespace = false
-
-  values = [file("${path.module}/flux/values-local-path.yaml")]
-
-  depends_on = [kubernetes_namespace.storage]
-}
+# local-path-provisioner → Flux owner (helmrelease-local-path.yaml). ADR-028.
 
 # ─── Garage (S3-compatible object store) ──────────────────────────────
 
@@ -80,7 +71,10 @@ resource "helm_release" "garage" {
     garage_admin_token = local.secrets["garage_admin_token"]
   })]
 
-  depends_on = [helm_release.local_path_provisioner]
+  # local-path Flux-owned (ADR-028); garage chart provisions its PVCs
+  # which need the StorageClass — Flux deploys both, so eventually OK.
+  # Tofu dep on namespace only.
+  depends_on = [kubernetes_namespace.storage]
 }
 
 # ─── Garage setup (split into 3 steps for reliability) ───────────────
@@ -214,22 +208,9 @@ resource "terraform_data" "garage_buckets_keys" {
 
 # ─── Velero (backup & DR → Garage S3) ────────────────────────────────
 
-resource "helm_release" "velero" {
-  name             = "velero"
-  repository       = "https://vmware-tanzu.github.io/helm-charts"
-  chart            = "velero"
-  version          = var.velero_version
-  namespace        = "storage"
-  create_namespace = false
-  timeout          = 600
-
-  values = [templatefile("${path.module}/flux/values-velero.yaml", {
-    velero_bucket = var.velero_bucket
-    s3_url        = var.s3_url
-  })]
-
-  depends_on = [kubernetes_namespace.storage, terraform_data.garage_buckets_keys]
-}
+# velero → Flux owner (helmrelease-velero.yaml + values-velero.yaml with
+# ${s3_url} + ${velero_bucket} substituted via Flux postBuild — defined
+# in stacks/flux-bootstrap/main.tf Kustomization "management"). ADR-028.
 
 # ─── Harbor (container registry with Garage S3 backend) ──────────────
 
