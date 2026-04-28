@@ -57,7 +57,7 @@ variable "cnpg_backup_bucket" {
 variable "cnpg_s3_url" {
   description = "S3 endpoint URL for CNPG backups (Garage)"
   type        = string
-  default     = "http://garage-s3.garage.svc.cluster.local:3900"
+  default     = "http://garage.garage.svc.cluster.local:3900"
 }
 
 # ─── Pomerium ────────────────────────────────────────────────────────

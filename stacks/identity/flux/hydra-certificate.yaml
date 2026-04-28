@@ -8,8 +8,15 @@ spec:
   issuerRef:
     name: internal-ca
     kind: ClusterIssuer
+  # PKI role pki_int/cluster-issuer requires CN (require_cn defaults to true).
+  commonName: hydra-public.identity.svc.cluster.local
   dnsNames:
     - hydra-public
     - hydra-public.identity
     - hydra-public.identity.svc
     - hydra-public.identity.svc.cluster.local
+  # ECDSA matches the OpenBao pki_int/roles/cluster-issuer key_type=ec
+  # constraint (default RSA-2048 would be rejected).
+  privateKey:
+    algorithm: ECDSA
+    size: 256

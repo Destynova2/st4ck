@@ -134,7 +134,7 @@ resource "kubectl_manifest" "identity_pg_cluster" {
       backup:
         barmanObjectStore:
           destinationPath: "s3://cnpg-backups/identity-pg"
-          endpointURL: "http://garage-s3.garage.svc.cluster.local:3900"
+          endpointURL: "http://garage.garage.svc.cluster.local:3900"
           s3Credentials:
             accessKeyId:
               name: cnpg-s3-credentials
@@ -236,11 +236,19 @@ resource "kubectl_manifest" "hydra_tls_cert" {
       issuerRef:
         name: internal-ca
         kind: ClusterIssuer
+      # PKI role pki_int/cluster-issuer requires CN (require_cn defaults true).
+      commonName: hydra-public.identity.svc.cluster.local
       dnsNames:
         - hydra-public
         - hydra-public.identity
         - hydra-public.identity.svc
         - hydra-public.identity.svc.cluster.local
+      # ECDSA matches the OpenBao pki_int/roles/cluster-issuer key_type=ec
+      # constraint (see stacks/pki/secrets.tf). Default cert-manager
+      # algorithm is RSA-2048 → role rejects with "requires keys of type ec".
+      privateKey:
+        algorithm: ECDSA
+        size: 256
   YAML
 
   depends_on = [kubernetes_namespace.identity]
