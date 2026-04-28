@@ -47,10 +47,12 @@ metadata:
 spec:
   limits:
     - type: Container
-      # default = limit applied when only request specified or missing
+      # default = limit applied when only request specified or missing.
+      # Bumped to 1Gi: ClamAV (freshclam-mirror) needs ~700MB to load
+      # the full virus DB into memory, OOM-killed at 512Mi.
       default:
-        cpu: "500m"
-        memory: "512Mi"
+        cpu: "1"
+        memory: "1Gi"
       # defaultRequest = request applied when no request specified
       defaultRequest:
         cpu: "100m"
