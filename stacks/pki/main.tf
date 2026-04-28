@@ -183,7 +183,27 @@ resource "helm_release" "openbao_infra" {
   namespace        = "secrets"
   create_namespace = false
 
-  values = [file("${path.module}/flux/values-openbao-infra.yaml")]
+  # Bootstrap with 1 replica, then scale to 3 via terraform_data below.
+  # OpenBao 2.x has a known race (issue #2274): when 3 pods come up
+  # simultaneously, each tries retry_join, the headless service hasn't
+  # registered the others yet (DNS NXDOMAIN), so each pod self-inits
+  # its own 1-node cluster (split-brain). The chart's initialize {}
+  # blocks fire per-pod with no per-ordinal gating — there's no chart
+  # parameter to fix this. The canonical workaround per OpenBao docs
+  # + 2026 OpenShift guide: deploy with replicas=1, let pod-0 form a
+  # quorum-of-1 cluster, then scale to 3 — pods 1+2 retry_join an
+  # already-established leader and become followers cleanly.
+  # Postmortem 2026-04-27 — 3 hours of debug to find this.
+  values = [
+    file("${path.module}/flux/values-openbao-infra.yaml"),
+    yamlencode({
+      server = {
+        ha = {
+          replicas = 1
+        }
+      }
+    }),
+  ]
 
   depends_on = [
     kubernetes_namespace.secrets,
@@ -191,6 +211,52 @@ resource "helm_release" "openbao_infra" {
     kubernetes_secret.openbao_admin_password,
     kubectl_manifest.openbao_infra_cert,
   ]
+}
+
+# Scale openbao-infra to 3 once pod-0 is established + initialized.
+# Triggers on every apply but is idempotent — kubectl scale is no-op
+# if already at desired replicas.
+resource "terraform_data" "openbao_infra_scale_to_ha" {
+  triggers_replace = {
+    helm_id = helm_release.openbao_infra.id
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      set -e
+      KC="${var.kubeconfig_path}"
+      echo "Waiting for openbao-infra-0 to be Ready, active leader, AND initialize blocks done…"
+      # CRITICAL: must wait until ALL initialize {} blocks have materialized.
+      # `bao status` returning 0 only means the API is up — it doesn't mean
+      # initialize blocks have run. We check for the LAST initialize block's
+      # output: the kubernetes auth method. Once that exists, all earlier
+      # initialize blocks (kv, transit, ssh-ca, policies, approle) are done
+      # too (initialize blocks run sequentially per OpenBao docs).
+      # Without this check, pods 1+2 race with pod-0's init → split-brain.
+      # Postmortem 2026-04-27 (#80).
+      for i in $(seq 1 90); do
+        READY=$(kubectl --kubeconfig=$KC -n secrets get pod openbao-infra-0 -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || true)
+        if [ "$READY" = "true" ]; then
+          K8S_AUTH=$(kubectl --kubeconfig=$KC -n secrets exec -i openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true sh -c "
+            bao auth list 2>/dev/null | grep -c '^kubernetes/'
+          " 2>/dev/null || echo 0)
+          if [ "$K8S_AUTH" = "1" ]; then
+            echo "  pod-0 ready + initialize blocks done (attempt $i)"
+            break
+          fi
+        fi
+        sleep 5
+      done
+      # Extra safety margin so pod-0 is fully settled as quorum-of-1 leader
+      sleep 10
+      echo "Scaling openbao-infra to 3 replicas…"
+      kubectl --kubeconfig=$KC -n secrets scale statefulset openbao-infra --replicas=3
+      echo "Waiting for pods 1+2 to retry_join + become Ready…"
+      kubectl --kubeconfig=$KC -n secrets wait pod openbao-infra-1 openbao-infra-2 --for=condition=Ready --timeout=240s || true
+    EOT
+  }
+
+  depends_on = [helm_release.openbao_infra]
 }
 
 # ─── OpenBao App — application secrets ─────────────────────────────
@@ -231,6 +297,52 @@ resource "helm_release" "cert_manager" {
   values = [file("${path.module}/flux/values-cert-manager.yaml")]
 
   depends_on = [kubernetes_namespace.cert_manager]
+}
+
+# ─── External Secrets Operator (CRDs + controllers) ─────────────────
+# Installed in pki stack (not Flux) because security/storage/identity/
+# monitoring all apply ExternalSecret/PushSecret CRs via tofu BEFORE
+# flux-bootstrap runs. Without ESO CRDs at apply time those stacks
+# fail with "resource isn't valid for cluster, check the APIVersion".
+# ClusterSecretStore wiring still happens via Flux.
+resource "kubernetes_namespace" "external_secrets" {
+  metadata {
+    name = "external-secrets"
+  }
+}
+
+resource "helm_release" "external_secrets" {
+  name             = "external-secrets"
+  repository       = "https://charts.external-secrets.io"
+  chart            = "external-secrets"
+  version          = var.external_secrets_version
+  namespace        = "external-secrets"
+  create_namespace = false
+
+  set {
+    name  = "installCRDs"
+    value = "true"
+  }
+
+  depends_on = [kubernetes_namespace.external_secrets]
+}
+
+# ─── ClusterSecretStore (openbao-infra) ──────────────────────────────
+# Applied here (NOT via Flux) to break the catch-22:
+#   Flux GitRepository pull → needs flux-ssh-identity Secret
+#     → comes from ExternalSecret
+#       → needs ClusterSecretStore openbao-infra
+#         → if managed by Flux, can never deploy because Flux can't
+#           pull the repo. Loop.
+# Putting CSS in tofu (alongside the ESO install) breaks the cycle so
+# Flux can pull on first reconcile.
+resource "kubectl_manifest" "cluster_secret_store" {
+  yaml_body = file("${path.module}/../external-secrets/flux-config/cluster-secret-store.yaml")
+
+  depends_on = [
+    helm_release.external_secrets,
+    terraform_data.bootstrap_openbao_pki,
+  ]
 }
 
 # Infra sub-CA keypair in cert-manager namespace (for ClusterIssuer)

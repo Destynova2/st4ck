@@ -300,7 +300,11 @@ resource "terraform_data" "bootstrap_openbao_pki" {
       # ─── 5. cert-manager role on pki_int ─────────────────────────
       # allow_any_name=true: cert-manager Issuer requests carry CN/SAN
       # validated by the cert-manager Certificate CR itself, not the role.
-      # max_ttl=720h (30d) — leaf-cert lifetime upper bound.
+      # max_ttl=35040h (4y) — covers CNPG + identity-pg CA Certificates
+      # which spec duration=87600h (10y). PKI truncates to max_ttl, but
+      # cert-manager computes renewalTime from ACTUAL notAfter, so as long
+      # as max_ttl >> renewBefore (here 720h), no renewal storm. Headroom
+      # is bounded by pki_int issuer validity (5y from bootstrap).
       echo "Writing pki_int/roles/cluster-issuer..."
       # key_type=ec + key_bits=0: only ECDSA keys (any curve P-256/P-384).
       # All Certificate CRs in this repo use ECDSA (matches root + intermediate
@@ -310,7 +314,7 @@ resource "terraform_data" "bootstrap_openbao_pki" {
       $BAO bao write pki_int/roles/cluster-issuer \
         allow_any_name=true \
         enforce_hostnames=false \
-        max_ttl=720h \
+        max_ttl=35040h \
         key_type=ec \
         key_bits=0 \
         allowed_uri_sans="spiffe://st4ck/*" >/dev/null

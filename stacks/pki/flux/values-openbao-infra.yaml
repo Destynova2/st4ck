@@ -16,6 +16,7 @@ server:
     replicas: 3
     raft:
       enabled: true
+      setNodeId: true
       config: |
         ui = true
 
@@ -28,6 +29,29 @@ server:
 
         storage "raft" {
           path = "/openbao/data"
+
+          # retry_join: pods 1+2 wait until pod-0 is the active leader,
+          # then auto-join its Raft cluster. Without this each pod
+          # initializes its own 1-node Raft cluster (= no HA, service
+          # round-robin sends requests to empty followers). Discovered
+          # postmortem 2026-04-26 — pods 1+2 had empty KV + missing
+          # auth/kubernetes role, breaking cert-manager + ESO randomly.
+          # leader_tls_servername MUST match a SAN on openbao-infra-tls.
+          retry_join {
+            leader_api_addr       = "https://openbao-infra-0.openbao-infra-internal:8200"
+            leader_tls_servername = "openbao-infra"
+            leader_ca_cert_file   = "/openbao/userconfig/openbao-infra-tls/ca.crt"
+          }
+          retry_join {
+            leader_api_addr       = "https://openbao-infra-1.openbao-infra-internal:8200"
+            leader_tls_servername = "openbao-infra"
+            leader_ca_cert_file   = "/openbao/userconfig/openbao-infra-tls/ca.crt"
+          }
+          retry_join {
+            leader_api_addr       = "https://openbao-infra-2.openbao-infra-internal:8200"
+            leader_tls_servername = "openbao-infra"
+            leader_ca_cert_file   = "/openbao/userconfig/openbao-infra-tls/ca.crt"
+          }
         }
 
         service_registration "kubernetes" {}
@@ -102,12 +126,25 @@ server:
             operation = "update"
             path      = "sys/policies/acl/eso-readonly"
             data = {
-              # Read on all secret/* paths + write on secret/*/db/*
-              # (PushSecret targets: CNPG-mirrored creds are written here
-              # by ESO so downstream ExternalSecrets read them like any
-              # other tofu-seeded secret). The "*/db/*" prefix isolates
-              # the write surface — any other path stays read-only for ESO.
-              policy = "path \"secret/data/*\" { capabilities = [\"read\"] }\npath \"secret/metadata/*\" { capabilities = [\"read\", \"list\"] }\npath \"secret/data/*/db/*\" { capabilities = [\"create\", \"update\", \"read\", \"delete\", \"patch\"] }\npath \"secret/metadata/*/db/*\" { capabilities = [\"create\", \"update\", \"read\", \"delete\", \"list\", \"patch\"] }"
+              # ESO permissions: read everywhere + write ONLY on the
+              # explicit allowlist of CNPG-mirrored DSN paths. No
+              # wildcards in middle segments — Vault syntax `*` only
+              # works as the LAST segment, and `+` for single-segment
+              # wildcards. Explicit absolute paths are safer (allowlist)
+              # and avoid the "*/db/*" literal-path bug from the 2026-04-27
+              # postmortem.
+              # Adding a new PushSecret target = add the matching path
+              # pair (data + metadata) here.
+              policy = <<-EOP
+                path "secret/data/*"     { capabilities = ["read"] }
+                path "secret/metadata/*" { capabilities = ["read", "list"] }
+
+                # CNPG → OpenBao mirrors (PushSecret writes here)
+                path "secret/data/identity/db/postgres"     { capabilities = ["create", "update", "read", "delete", "patch"] }
+                path "secret/metadata/identity/db/postgres" { capabilities = ["create", "update", "read", "delete", "list", "patch"] }
+                path "secret/data/security/db/openclarity"     { capabilities = ["create", "update", "read", "delete", "patch"] }
+                path "secret/metadata/security/db/openclarity" { capabilities = ["create", "update", "read", "delete", "list", "patch"] }
+                EOP
             }
           }
           request "admin-policy" {

@@ -26,3 +26,11 @@ variable "cert_manager_version" {
   type        = string
   default     = "v1.19.4"
 }
+
+# ─── external-secrets-operator ───────────────────────────────────────
+
+variable "external_secrets_version" {
+  description = "external-secrets-operator Helm chart version"
+  type        = string
+  default     = "0.20.4"
+}
