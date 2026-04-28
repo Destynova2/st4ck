@@ -51,24 +51,7 @@ resource "kubernetes_namespace" "security" {
 # uses Trivy under the hood — they don't conflict, just produce two
 # overlapping data sources. Migration plan: see ADR-027.
 
-resource "helm_release" "trivy_operator" {
-  name             = "trivy-operator"
-  repository       = "https://aquasecurity.github.io/helm-charts"
-  chart            = "trivy-operator"
-  version          = var.trivy_operator_version
-  namespace        = "security"
-  create_namespace = false
-
-  values = [file("${path.module}/flux/values-trivy.yaml")]
-
-  # Default helm timeout is 5min — too short when in-flight scan Jobs are
-  # mid-image-pull during the upgrade (helm waits for the whole release
-  # to settle). 10min covers worst-case (~5 large images concurrent).
-  # Postmortem 2026-04-27.
-  timeout = 600
-
-  depends_on = [kubernetes_namespace.security]
-}
+# trivy-operator → Flux owner (helmrelease-trivy.yaml). ADR-028.
 
 # ─── OpenClarity (multi-scanner: Trivy + Grype + Syft) ───────────────
 # Linux Foundation / OpenSSF project (formerly KubeClarity by Anchore).
@@ -113,6 +96,16 @@ resource "kubectl_manifest" "openclarity_pg_cluster" {
       instances: 2
       storage:
         size: 5Gi
+      # WAL archive against Garage S3 — see stacks/identity/main.tf for
+      # the postmortem 2026-04-28 explaining why both AWS_REGION AND
+      # AWS_DEFAULT_REGION must be set (boto3 falls back to us-east-1
+      # without the latter, breaking sigv4 against Garage's "garage"
+      # signing region).
+      env:
+        - name: AWS_REGION
+          value: "garage"
+        - name: AWS_DEFAULT_REGION
+          value: "garage"
       # Phase 1b-3: external certs from cert-manager (OpenBao PKI).
       certificates:
         serverCASecret: openclarity-pg-server-ca-tls
@@ -179,33 +172,7 @@ resource "helm_release" "openclarity" {
 # ─── Tetragon (eBPF runtime security observability) ──────────────────
 # Talos Linux v1.12+: extraHostPathMounts for /sys/kernel/tracing in values.yaml
 
-resource "helm_release" "tetragon" {
-  name             = "tetragon"
-  repository       = "https://helm.cilium.io"
-  chart            = "tetragon"
-  version          = var.tetragon_version
-  namespace        = "security"
-  create_namespace = false
-
-  values = [file("${path.module}/flux/values-tetragon.yaml")]
-
-  depends_on = [kubernetes_namespace.security]
-}
-
-# ─── Kyverno (policy engine) ─────────────────────────────────────────
-
-resource "helm_release" "kyverno" {
-  name             = "kyverno"
-  repository       = "https://kyverno.github.io/kyverno"
-  chart            = "kyverno"
-  version          = var.kyverno_version
-  namespace        = "security"
-  create_namespace = false
-
-  values = [file("${path.module}/flux/values-kyverno.yaml")]
-
-  depends_on = [kubernetes_namespace.security]
-}
+# tetragon + kyverno → Flux owner (helmrelease-tetragon.yaml + helmrelease-kyverno.yaml). ADR-028.
 
 # ─── Cosign / OpenClarity ESO manifests (Phase 1a-1, 1a-3) ─────────
 #
@@ -276,7 +243,9 @@ resource "kubectl_manifest" "cosign_verify_policy" {
   yaml_body = file("${path.module}/verify-images.yaml")
 
   depends_on = [
-    helm_release.kyverno,
+    # Kyverno Flux-owned (ADR-028) — admission webhook may not be ready
+    # at apply time; kubectl_manifest retries until the CRD exists.
+    kubernetes_namespace.security,
     # Policy references cosign-public-key Secret. ExternalSecret must
     # have synced before Kyverno tries to validate signatures, otherwise
     # the policy's ClusterPolicy webhook returns "secret not found".

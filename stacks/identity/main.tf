@@ -109,6 +109,18 @@ resource "kubectl_manifest" "identity_pg_cluster" {
       instances: 3
       storage:
         size: 2Gi
+      # WAL archive against Garage S3 — barman-cloud uses boto3 which
+      # defaults region_name to "us-east-1" when only AWS_REGION is set
+      # (it reads AWS_DEFAULT_REGION first). Garage signs requests with
+      # the bucket's actual region ("garage") and rejects sigv4 with
+      # 400 Bad Request on HeadBucket if regions don't match. Setting
+      # both env vars forces boto3 to use "garage" everywhere.
+      # Postmortem 2026-04-28.
+      env:
+        - name: AWS_REGION
+          value: "garage"
+        - name: AWS_DEFAULT_REGION
+          value: "garage"
       # Phase 1b-3: external certs from cert-manager (OpenBao PKI).
       # Replaces CNPG's self-managed PKI so every cert is auditable in
       # the OpenBao audit log. Replication CN MUST be streaming_replica
@@ -174,52 +186,14 @@ resource "kubectl_manifest" "identity_pg_scheduled_backup" {
   depends_on = [kubectl_manifest.identity_pg_cluster]
 }
 
-data "kubernetes_secret" "pg_app" {
-  metadata {
-    name      = "identity-pg-app"
-    namespace = "identity"
-  }
-  depends_on = [kubectl_manifest.identity_pg_cluster]
-}
+# DSN composition formerly happened here (data.kubernetes_secret.pg_app +
+# locals { pg_dsn_kratos / pg_dsn_hydra }). Now lives in ESO ExternalSecret
+# templates (stacks/identity/flux/external-secrets.yaml) — single source of
+# truth, rotates with the CNPG password without re-applying tofu.
 
-locals {
-  # CNPG uses postgresql:// but Ory expects postgres://, and needs sslmode=disable for in-cluster.
-  # Schema-per-app: each Helm release gets its own search_path so Kratos lives
-  # in `kratos.*`, Hydra in `hydra.*`. A failed Kratos migration can be cleaned
-  # by `DROP SCHEMA kratos CASCADE` without affecting Hydra (and vice-versa).
-  # Schemas are pre-created by CNPG postInitApplicationSQL above.
-  pg_dsn_base = "${replace(data.kubernetes_secret.pg_app.data["uri"], "postgresql://", "postgres://")}?sslmode=disable"
-  pg_dsn_kratos = "${local.pg_dsn_base}&search_path=kratos"
-  pg_dsn_hydra  = "${local.pg_dsn_base}&search_path=hydra"
-}
-
-# ─── Ory Kratos (identity management) ─────────────────────────────
-
-resource "helm_release" "kratos" {
-  name             = "kratos"
-  repository       = "https://k8s.ory.sh/helm/charts"
-  chart            = "kratos"
-  version          = var.kratos_version
-  namespace        = "identity"
-  create_namespace = false
-
-  # Two-source values: the static file (no ${dsn} placeholder anymore —
-  # Flux uses ESO templating to inject DSN) + an inline yamlencode that
-  # adds the DSN computed by tofu. Both modes (tofu day-1, Flux day-2)
-  # converge on the same chart values.
-  values = [
-    file("${path.module}/flux/values-kratos.yaml"),
-    yamlencode({
-      kratos = {
-        config = {
-          dsn = local.pg_dsn_kratos
-        }
-      }
-    }),
-  ]
-
-  depends_on = [kubernetes_namespace.identity, kubectl_manifest.identity_pg_cluster]
-}
+# Kratos → Flux owner (helmrelease-kratos.yaml + values-kratos.yaml ConfigMap +
+# kratos-secrets ExternalSecret which provides the DSN via ESO templating).
+# ADR-028 — no double-apply.
 
 # ─── Hydra TLS certificate (for apiServer OIDC) ───────────────────
 # Requires: ClusterIssuer "internal-ca" from k8s-pki stack
@@ -254,36 +228,9 @@ resource "kubectl_manifest" "hydra_tls_cert" {
   depends_on = [kubernetes_namespace.identity]
 }
 
-# ─── Ory Hydra (OAuth2 / OIDC) ────────────────────────────────────
-
-resource "helm_release" "hydra" {
-  name             = "hydra"
-  repository       = "https://k8s.ory.sh/helm/charts"
-  chart            = "hydra"
-  version          = var.hydra_version
-  namespace        = "identity"
-  create_namespace = false
-
-  # Two-source values: static file (no ${dsn} or ${system_secret}
-  # placeholders anymore — Flux uses ESO templating; tofu adds them via
-  # the inline yamlencode below). Both modes converge on the same chart
-  # values without duplication.
-  values = [
-    file("${path.module}/flux/values-hydra.yaml"),
-    yamlencode({
-      hydra = {
-        config = {
-          dsn = local.pg_dsn_hydra
-          secrets = {
-            system = [local.secrets["hydra_system_secret"]]
-          }
-        }
-      }
-    }),
-  ]
-
-  depends_on = [kubernetes_namespace.identity, kubectl_manifest.hydra_tls_cert, kubectl_manifest.identity_pg_cluster]
-}
+# Hydra → Flux owner (helmrelease-hydra.yaml + values-hydra.yaml ConfigMap +
+# hydra-secrets ExternalSecret providing DSN and system_secret via ESO).
+# ADR-028 — no double-apply.
 
 # ─── OIDC client registration (kubernetes → Hydra) ────────────────
 
@@ -347,7 +294,9 @@ resource "kubernetes_job_v1" "hydra_oidc_client" {
     create = "10m"
   }
 
-  depends_on = [helm_release.hydra]
+  # Hydra now Flux-owned; this Job waits for the admin endpoint via curl
+  # retry loop, so depends_on becomes namespace-only.
+  depends_on = [kubernetes_namespace.identity]
 }
 
 # ─── Pomerium (zero-trust access proxy) ───────────────────────────
@@ -366,5 +315,8 @@ resource "helm_release" "pomerium" {
     cookie_secret = local.secrets["pomerium_cookie_secret"]
   })]
 
-  depends_on = [kubernetes_namespace.identity, helm_release.hydra]
+  # Hydra Flux-owned (ADR-028); pomerium chart waits for hydra at runtime
+  # (auth provider connection retried if not ready). Tofu dep on namespace
+  # only.
+  depends_on = [kubernetes_namespace.identity]
 }
