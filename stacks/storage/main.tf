@@ -214,40 +214,14 @@ resource "terraform_data" "garage_buckets_keys" {
 # ${s3_url} + ${velero_bucket} substituted via Flux postBuild — defined
 # in stacks/flux-bootstrap/main.tf Kustomization "management"). ADR-028.
 
-# ─── Harbor (container registry with Garage S3 backend) ──────────────
-
-data "kubernetes_secret" "harbor_s3" {
-  depends_on = [terraform_data.garage_buckets_keys]
-
-  metadata {
-    name      = "harbor-s3-credentials"
-    namespace = "storage"
-  }
-}
-
-resource "helm_release" "harbor" {
-  name             = "harbor"
-  repository       = "https://helm.goharbor.io"
-  chart            = "harbor"
-  version          = var.harbor_version
-  namespace        = "storage"
-  create_namespace = false
-  timeout          = 600
-
-  values = [
-    file("${path.module}/flux/values-harbor.yaml"),
-    sensitive(yamlencode({
-      harborAdminPassword = local.secrets["harbor_admin_password"]
-      persistence = {
-        imageChartStorage = {
-          s3 = {
-            accesskey = data.kubernetes_secret.harbor_s3.data["access_key"]
-            secretkey = data.kubernetes_secret.harbor_s3.data["secret_key"]
-          }
-        }
-      }
-    })),
-  ]
-
-  depends_on = [kubernetes_namespace.storage, terraform_data.garage_buckets_keys]
-}
+# Harbor → Flux owner (ADR-028 wave 3).
+# Three secrets enter Harbor at runtime, all via the harbor-secrets
+# ExternalSecret which renders a values.yaml fragment from OpenBao:
+#   - harborAdminPassword     ← seeded by tofu pki at secret/storage/harbor
+#   - persistence.imageChartStorage.s3.accesskey
+#   - persistence.imageChartStorage.s3.secretkey
+#       ↑ both mirrored from harbor-s3-credentials K8s Secret to OpenBao
+#       at secret/storage/harbor-s3 by the harbor-s3-mirror PushSecret
+#       (see stacks/storage/flux/external-secrets.yaml).
+# garage_buckets_keys terraform_data still creates harbor-s3-credentials
+# (Garage CLI generates the API key); the PushSecret mirrors it.

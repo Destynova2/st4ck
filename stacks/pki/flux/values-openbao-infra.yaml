@@ -144,6 +144,12 @@ server:
                 path "secret/metadata/identity/db/postgres" { capabilities = ["create", "update", "read", "delete", "list", "patch"] }
                 path "secret/data/security/db/openclarity"     { capabilities = ["create", "update", "read", "delete", "patch"] }
                 path "secret/metadata/security/db/openclarity" { capabilities = ["create", "update", "read", "delete", "list", "patch"] }
+
+                # Harbor → OpenBao mirror (PushSecret writes Garage S3
+                # access/secret keys here so the harbor-secrets ES can
+                # template them into the helm values fragment).
+                path "secret/data/storage/harbor-s3"     { capabilities = ["create", "update", "read", "delete", "patch"] }
+                path "secret/metadata/storage/harbor-s3" { capabilities = ["create", "update", "read", "delete", "list", "patch"] }
                 EOP
             }
           }
