@@ -355,28 +355,13 @@ resource "kubectl_manifest" "flux_git_repo" {
 # Phase 2 — `management`:
 #   path:        ./clusters/management/  (all stacks INCLUDING
 #                external-secrets/flux-config which has the CSS)
-#   dependsOn:   management-eso
-#   By the time we run, ESO is Ready → CSS dry-run succeeds.
-resource "kubectl_manifest" "flux_kustomization_eso" {
-  yaml_body = <<-YAML
-    apiVersion: kustomize.toolkit.fluxcd.io/v1
-    kind: Kustomization
-    metadata:
-      name: management-eso
-      namespace: flux-system
-    spec:
-      interval: 10m
-      sourceRef:
-        kind: GitRepository
-        name: management
-      path: ./clusters/management-eso
-      prune: true
-      wait: true
-      timeout: 5m
-  YAML
-
-  depends_on = [kubectl_manifest.flux_git_repo]
-}
+# NOTE: management-eso Kustomization removed in postmortem 2026-04-27.
+# ESO is now tofu-managed (in stacks/pki/main.tf alongside cert-manager
+# + ClusterSecretStore — required to break the Flux/CSS catch-22).
+# Two controllers managing the same Helm release conflicts on every
+# upgrade ("CRD storedVersions invalid" errors). Flux only deploys
+# downstream apps that depend on ESO at runtime — it doesn't need to
+# install ESO itself.
 
 resource "kubectl_manifest" "flux_root_kustomization" {
   yaml_body = <<-YAML
@@ -394,9 +379,7 @@ resource "kubectl_manifest" "flux_root_kustomization" {
       prune: true
       wait: true
       timeout: 5m
-      dependsOn:
-        - name: management-eso
   YAML
 
-  depends_on = [kubectl_manifest.flux_kustomization_eso]
+  depends_on = [kubectl_manifest.flux_git_repo]
 }
