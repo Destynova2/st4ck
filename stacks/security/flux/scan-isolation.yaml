@@ -1,0 +1,54 @@
+---
+# ═══════════════════════════════════════════════════════════════════════
+# Scan workload isolation (Phase 1b-5, postmortem 2026-04-27)
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Trivy/OpenClarity scan Jobs spin up dozens of short-lived pods that
+# decompress large container images into /tmp (emptyDir tmpfs). Without
+# isolation:
+#   - aggregate scan memory can starve application workloads on the same
+#     node (e.g. a Trivy scan of grafana 12.x extracts ~1.5Gi, jenkins ~2Gi)
+#   - a Trivy bug → CrashLoopBackOff with no node eviction → blocks rescans
+#   - per-namespace scan jobs accumulate without backpressure
+#
+# This file adds two cluster-wide guardrails:
+#   1. PriorityClass `scan-jobs-low` — kubelet evicts these pods FIRST
+#      under node pressure (preserve API server, CNI, application pods)
+#   2. ResourceQuota on `security` ns — hard cap on aggregate scan
+#      footprint (CPU + memory + pod count). Prevents runaway scan loops.
+
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: scan-jobs-low
+  labels:
+    app.kubernetes.io/component: scan-isolation
+value: -100  # negative = lower than default (0); evicted first
+globalDefault: false
+preemptionPolicy: Never  # never preempt other pods
+description: >-
+  For Trivy/OpenClarity scan Jobs. Negative priority so kubelet evicts
+  these pods FIRST under node pressure (CPU/memory/disk). Set on Trivy
+  scan Jobs via operator.scanJobPriorityClassName in values-trivy.yaml.
+
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: security-scan-quota
+  namespace: security
+  labels:
+    app.kubernetes.io/component: scan-isolation
+spec:
+  hard:
+    # Aggregate cap across ALL pods in security ns (operators + scan Jobs +
+    # OpenClarity + Kyverno + Tetragon). Sized for ~6-worker dev cluster.
+    # Tune up for larger clusters by changing context vars later.
+    requests.cpu: "8"
+    requests.memory: "16Gi"
+    limits.cpu: "16"
+    limits.memory: "32Gi"
+    # Cap concurrent pods so a runaway scan loop can't fork-bomb the ns.
+    pods: "100"
+    # Cap PVCs (Trivy server PVC + openclarity-pg + maybe future scanners).
+    persistentvolumeclaims: "20"

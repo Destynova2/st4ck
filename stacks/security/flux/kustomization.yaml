@@ -20,6 +20,11 @@ resources:
   - external-secrets-openclarity.yaml
   # Phase 1b-3: CNPG external certs (4 per cluster, OpenBao PKI signed)
   - openclarity-pg-certs.yaml
+  # Phase 1b-5: scan workload isolation (PriorityClass + ResourceQuota).
+  # Postmortem 2026-04-27 — Trivy OOM on grafana scan + lack of cap on
+  # aggregate scan footprint. Belt-and-suspenders alongside per-job
+  # memory limits in values-trivy.yaml.
+  - scan-isolation.yaml
 configMapGenerator:
   - name: trivy-values
     namespace: security

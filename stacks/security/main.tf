@@ -61,6 +61,12 @@ resource "helm_release" "trivy_operator" {
 
   values = [file("${path.module}/flux/values-trivy.yaml")]
 
+  # Default helm timeout is 5min — too short when in-flight scan Jobs are
+  # mid-image-pull during the upgrade (helm waits for the whole release
+  # to settle). 10min covers worst-case (~5 large images concurrent).
+  # Postmortem 2026-04-27.
+  timeout = 600
+
   depends_on = [kubernetes_namespace.security]
 }
 

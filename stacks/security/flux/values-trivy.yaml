@@ -13,12 +13,22 @@ operator:
   # be in use by another process" loop). The chart auto-sets
   # trivy.mode=ClientServer + serverURL when this is true. See ADR-027.
   builtInTrivyServer: true
-  # Server mode shares a single DB across scans → no per-scan lock
-  # → can run the chart default in parallel.
-  concurrentScanJobsLimit: 10
-  scanJobTimeout: 10m
+  # Serialize scans to limit aggregate /tmp + memory pressure.
+  # Postmortem 2026-04-27: parallelism=10 + 512Mi limit caused OOM-like
+  # eviction on large images (grafana, jenkins, harbor) — emptyDir tmpfs
+  # for /tmp counts toward the memory limit, and decompressed grafana
+  # layers ~1.5Gi don't fit in 2Gi let alone 512Mi.
+  concurrentScanJobsLimit: 2
+  scanJobTimeout: 15m
   # Auto-cleanup completed scan jobs after 5 minutes
   scanJobTTL: 300s
+  # Schedule scan Jobs on the low-priority class so kubelet evicts them
+  # FIRST under node pressure (preserve application workloads).
+  scanJobPodTemplateLabels: ""
+  scanJobAffinity: ""
+  # Lower priority for scan Jobs so they get evicted before app workloads
+  # under node pressure. PriorityClass defined in priorityclass-scan.yaml.
+  scanJobPriorityClassName: scan-jobs-low
 
 compliance:
   specs: []
@@ -29,13 +39,24 @@ nodeCollector:
 
 trivy:
   ignoreUnfixed: true
-  # Scan job container resources (no DB download in client mode = lighter)
+  # Verbose logging — needed to diagnose the cilium image scan failure
+  # (Trivy returns "no such file or directory" without explanation in
+  # default log mode). Toggle to false once root cause identified.
+  debug: true
+  # Scan job container resources.
+  # CRITICAL: /tmp is an emptyDir (tmpfs) where Trivy decompresses image
+  # layers BEFORE shipping the report to trivy-server. Memory limit must
+  # exceed the largest decompressed layer + Trivy's own analyzer-composite
+  # working set. Cilium images blow past 2Gi (multi-arch + zstd layers).
+  # 4Gi gives headroom for the worst case observed in this cluster.
+  # limits.cpu REQUIRED by security-scan-quota ResourceQuota.
   resources:
     requests:
       cpu: 100m
-      memory: 128Mi
-    limits:
       memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 4Gi
   # Built-in trivy-server StatefulSet sizing. The chart's templates/trivy-server/
   # statefulset.yaml is gated by operator.builtInTrivyServer above and pulls
   # storage + replicas from these keys.
@@ -46,9 +67,11 @@ trivy:
     replicas: 1
 
 # Operator pod resources
+# limits.cpu REQUIRED by security-scan-quota ResourceQuota.
 resources:
   requests:
     cpu: 100m
     memory: 128Mi
   limits:
+    cpu: 500m
     memory: 512Mi
