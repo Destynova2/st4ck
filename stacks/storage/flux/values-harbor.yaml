@@ -29,7 +29,7 @@ persistence:
     s3:
       region: garage
       bucket: harbor-registry
-      regionendpoint: http://garage-s3.garage.svc.cluster.local:3900
+      regionendpoint: http://garage.garage.svc.cluster.local:3900
       secure: false
       # accesskey/secretkey injected via set_sensitive from K8s secret
 

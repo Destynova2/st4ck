@@ -37,7 +37,7 @@ variable "velero_bucket" {
 variable "s3_url" {
   description = "S3 endpoint URL for Velero (Garage)"
   type        = string
-  default     = "http://garage-s3.garage.svc.cluster.local:3900"
+  default     = "http://garage.garage.svc.cluster.local:3900"
 }
 
 variable "harbor_version" {
