@@ -201,7 +201,7 @@ resource "terraform_data" "seed_flux_ssh_to_openbao" {
 # retries every refreshInterval.
 resource "kubectl_manifest" "flux_ssh_external_secret" {
   yaml_body = <<-YAML
-    apiVersion: external-secrets.io/v1beta1
+    apiVersion: external-secrets.io/v1
     kind: ExternalSecret
     metadata:
       name: flux-ssh-identity
