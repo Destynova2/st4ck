@@ -104,7 +104,7 @@ grafana:
     - name: VictoriaLogs
       type: victoriametrics-logs-datasource
       uid: vlogs
-      url: http://vlogs-server.monitoring.svc:9428
+      url: http://vlogs.monitoring.svc:9428
       access: proxy
   # Dashboards from grafana.com
   dashboardProviders:

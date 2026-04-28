@@ -14,4 +14,4 @@ tolerations:
 
 # Forward to VictoriaLogs (list format required)
 remoteWrite:
-  - url: http://vlogs-server.monitoring.svc:9428
+  - url: http://vlogs.monitoring.svc:9428
