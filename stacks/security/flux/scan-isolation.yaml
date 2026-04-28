@@ -32,6 +32,30 @@ description: >-
   scan Jobs via operator.scanJobPriorityClassName in values-trivy.yaml.
 
 ---
+# LimitRange auto-fills resource limits/requests for any pod in this ns
+# that doesn't specify them. WITHOUT this, a ResourceQuota with
+# limits.cpu/memory hard caps would REJECT every pod missing those
+# fields (CNPG postgres + OpenClarity sub-charts + many helm charts
+# don't set defaults). Postmortem 2026-04-28.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: security-defaults
+  namespace: security
+  labels:
+    app.kubernetes.io/component: scan-isolation
+spec:
+  limits:
+    - type: Container
+      # default = limit applied when only request specified or missing
+      default:
+        cpu: "500m"
+        memory: "512Mi"
+      # defaultRequest = request applied when no request specified
+      defaultRequest:
+        cpu: "100m"
+        memory: "128Mi"
+---
 apiVersion: v1
 kind: ResourceQuota
 metadata:
@@ -44,11 +68,11 @@ spec:
     # Aggregate cap across ALL pods in security ns (operators + scan Jobs +
     # OpenClarity + Kyverno + Tetragon). Sized for ~6-worker dev cluster.
     # Tune up for larger clusters by changing context vars later.
-    requests.cpu: "8"
-    requests.memory: "16Gi"
-    limits.cpu: "16"
-    limits.memory: "32Gi"
+    requests.cpu: "16"
+    requests.memory: "32Gi"
+    limits.cpu: "32"
+    limits.memory: "64Gi"
     # Cap concurrent pods so a runaway scan loop can't fork-bomb the ns.
-    pods: "100"
+    pods: "150"
     # Cap PVCs (Trivy server PVC + openclarity-pg + maybe future scanners).
     persistentvolumeclaims: "20"
