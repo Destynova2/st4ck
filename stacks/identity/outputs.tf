@@ -1,11 +1,13 @@
+# kratos + hydra Flux-owned (ADR-028); output the pinned var values
+# instead of the helm_release attribute (which no longer exists in tofu).
 output "kratos_version" {
-  description = "Deployed Ory Kratos version"
-  value       = helm_release.kratos.version
+  description = "Pinned Kratos chart version (applied by Flux)"
+  value       = var.kratos_version
 }
 
 output "hydra_version" {
-  description = "Deployed Ory Hydra version"
-  value       = helm_release.hydra.version
+  description = "Pinned Hydra chart version (applied by Flux)"
+  value       = var.hydra_version
 }
 
 output "pomerium_version" {
