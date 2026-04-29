@@ -328,8 +328,13 @@ resource "terraform_data" "bootstrap_openbao_pki" {
       # exception to Cilium and keeps every other Certificate strict EC.
       # Used by the cilium-issuer ClusterIssuer (stacks/pki/main.tf).
       echo "Writing pki_int/roles/cilium-hubble..."
+      # Two CN suffixes used by Cilium hubble.tls.auto:
+      #   *.hubble-grpc.cilium.io   ← hubble-server-certs (peer.svc gRPC)
+      #   *.hubble-relay.cilium.io  ← hubble-relay-client-certs
+      # CN allowlist scoped to these — strict enough that this role
+      # can't be misused for arbitrary cluster TLS.
       $BAO bao write pki_int/roles/cilium-hubble \
-        allowed_domains="hubble-grpc.cilium.io" \
+        allowed_domains="hubble-grpc.cilium.io,hubble-relay.cilium.io" \
         allow_subdomains=true \
         allow_glob_domains=true \
         enforce_hostnames=false \
@@ -360,6 +365,16 @@ path "pki_int/sign/cluster-issuer" {
   capabilities = ["update"]
 }
 path "pki_int/issue/cluster-issuer" {
+  capabilities = ["update"]
+}
+# ADR-028 wave 4 — Cilium hubble certs use a separate PKI role
+# (cilium-hubble) because the Cilium chart hardcodes RSA-2048 (no
+# privateKey override exposed) and our main cluster-issuer enforces
+# key_type=ec. Same policy because cert-manager is the same client.
+path "pki_int/sign/cilium-hubble" {
+  capabilities = ["update"]
+}
+path "pki_int/issue/cilium-hubble" {
   capabilities = ["update"]
 }
 EOF
