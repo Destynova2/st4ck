@@ -62,16 +62,17 @@ hubble:
       enabled: true
       method: certmanager
       certValidityDuration: 1095  # 3 years (well below pki_int 5y)
-      # cilium-issuer (NOT internal-ca) — Cilium hubble.tls.auto creates
-      # Certificate CRs with RSA-2048 keys (no override exposed in chart).
-      # The main internal-ca issuer enforces ECDSA via Vault PKI role
-      # constraint key_type=ec → would reject RSA with 400. cilium-issuer
-      # points at a separate PKI role (cilium-hubble) with key_type=any
-      # and CN allowlist scoped to *.hubble-grpc.cilium.io.
+      # internal-ca = strict ECDSA via Vault PKI role key_type=ec.
+      # Cilium chart hardcodes RSA-2048 (no privateKey override exposed),
+      # but the Kyverno ClusterPolicy enforce-ecdsa-default-certs (in
+      # stacks/security/flux/enforce-ecdsa-policy.yaml) mutates Certificate
+      # CRs missing privateKey to add {algorithm: ECDSA, size: 256} at
+      # admission time. So Cilium's RSA default never reaches the API
+      # server — single PKI role, single algorithm, audit log unified.
       certManagerIssuerRef:
         group: cert-manager.io
         kind: ClusterIssuer
-        name: cilium-issuer
+        name: internal-ca
   metrics:
     enabled:
       - dns

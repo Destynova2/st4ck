@@ -11,6 +11,9 @@ resources:
   # ADR-028 wave 2: OpenClarity now Flux-owned via OCIRepository.
   - helmrelease-openclarity.yaml
   - cosign-policy.yaml
+  # ADR-028 wave 4 — auto-fill privateKey=ECDSA on Certificate CRs
+  # missing it (Cilium hubble + future operators that hardcode RSA).
+  - enforce-ecdsa-policy.yaml
   # Phase 1a-1: cosign keypair sourced from OpenBao secret/security/cosign
   # (seeded by the pki stack). Two ExternalSecret docs in one file.
   - external-secret-cosign.yaml
