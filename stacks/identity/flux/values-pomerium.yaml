@@ -1,7 +1,23 @@
 # Pomerium — Zero-trust access proxy
-# Minimal config for POC
+# Minimal config for POC — replace authenticate.url with a real public
+# hostname (with a Let's Encrypt cert) when exposing externally.
+
+# Override the chart's default placeholder authenticate URL
+# (corp.beyondperimeter.com) which spams logs about missing OCSP for
+# certs Pomerium can never validate. Internal cluster service URL has
+# matching SANs in the cert and stops the OCSP stapling warning.
+config:
+  sharedSecret: "${shared_secret}"
+  cookieSecret: "${cookie_secret}"
+  rootDomain: identity.svc.cluster.local
 
 authenticate:
+  existingTLSSecret: ""
+  # Internal cluster URL — placeholder corp.beyondperimeter.com from the
+  # chart default replaced by the cluster-internal service name. Pomerium
+  # internal cert (signed by cilium-issuer / internal-ca) lists this
+  # hostname in its SANs → no OCSP stapling warning.
+  redirectUrl: "https://pomerium-authenticate.identity.svc.cluster.local/oauth2/callback"
   idp:
     provider: oidc
     providerUrl: https://hydra-public.identity.svc:4444/
@@ -13,10 +29,6 @@ proxy:
 
 authorize:
   replicaCount: 1
-
-config:
-  sharedSecret: "${shared_secret}"
-  cookieSecret: "${cookie_secret}"
 
 ingress:
   enabled: false
