@@ -615,8 +615,13 @@ scaleway-image-build: scaleway-image-init ## Phase 1: start builder VM
 		$(SCW_IMAGE_VARS)
 
 scaleway-image-wait: ## Gate: wait for S3 upload (~15 min)
-	@BUCKET=$$($(TF) -chdir=$(TF_SCW_IMAGE) output -raw -state=terraform.tfstate 2>/dev/null scaleway_object_bucket.talos_image.name 2>/dev/null || echo "") && \
-		[ -n "$$BUCKET" ] || BUCKET=$$($(TF) -chdir=$(TF_SCW_IMAGE) state show scaleway_object_bucket.talos_image 2>/dev/null | grep '^\s*name\s' | sed 's/.*=\s*"\(.*\)"/\1/') && \
+	@# `tofu state show` emits ANSI color codes that break the sed extract
+	# (the URL ends up containing `    name                = "<bucket>"`
+	# literal). Force -no-color and tighten the regex. Postmortem 2026-04-29.
+	@BUCKET=$$($(TF) -chdir=$(TF_SCW_IMAGE) state show -no-color scaleway_object_bucket.talos_image 2>/dev/null \
+		| grep -E '^[[:space:]]+name[[:space:]]+=' \
+		| head -1 | sed -E 's/^[[:space:]]+name[[:space:]]+=[[:space:]]+"([^"]+)"$$/\1/') && \
+		[ -n "$$BUCKET" ] || { echo "ERROR: bucket name not found in tofu state"; exit 1; } && \
 		ENDPOINT="https://$$BUCKET.s3.$(REGION).scw.cloud/.upload-complete" && \
 		echo "Waiting for image upload (polling $$ENDPOINT)..." && \
 		for i in $$(seq 1 60); do \
