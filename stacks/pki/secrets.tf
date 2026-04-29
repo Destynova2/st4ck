@@ -319,6 +319,24 @@ resource "terraform_data" "bootstrap_openbao_pki" {
         key_bits=0 \
         allowed_uri_sans="spiffe://st4ck/*" >/dev/null
 
+      # ─── 5b. Cilium-specific PKI role (RSA tolerated) ────────────
+      # Cilium's hubble.tls.auto helm chart hardcodes RSA-2048 private
+      # keys for the auto-generated Certificate CRs (no override
+      # exposed). The strict cluster-issuer role above rejects RSA, so
+      # we add a SECOND role that accepts any key type, scoped narrowly
+      # to *.hubble-grpc.cilium.io CNs only — this isolates the RSA
+      # exception to Cilium and keeps every other Certificate strict EC.
+      # Used by the cilium-issuer ClusterIssuer (stacks/pki/main.tf).
+      echo "Writing pki_int/roles/cilium-hubble..."
+      $BAO bao write pki_int/roles/cilium-hubble \
+        allowed_domains="hubble-grpc.cilium.io" \
+        allow_subdomains=true \
+        allow_glob_domains=true \
+        enforce_hostnames=false \
+        max_ttl=26280h \
+        key_type=any \
+        key_bits=0 >/dev/null
+
       # ─── 6. cert-manager Kubernetes auth role + policy ───────────
       # Kubernetes auth method may already be enabled by another
       # bootstrap step (ESO uses it too) — silence "already in use".

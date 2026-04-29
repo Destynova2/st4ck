@@ -461,6 +461,40 @@ resource "kubectl_manifest" "cluster_issuer_vault" {
   ]
 }
 
+# ─── Cilium-only ClusterIssuer (RSA tolerated) ──────────────────────
+# Cilium's hubble.tls.auto.method=certmanager auto-creates Certificate
+# CRs without a way to override privateKey.algorithm — they default to
+# RSA-2048. The strict `internal-ca` issuer above rejects RSA, so we
+# add a 2nd issuer pointing at the cilium-hubble PKI role (key_type=any,
+# CN allowlist scoped to *.hubble-grpc.cilium.io). Audit log unchanged.
+resource "kubectl_manifest" "cluster_issuer_cilium" {
+  yaml_body = <<-YAML
+    apiVersion: cert-manager.io/v1
+    kind: ClusterIssuer
+    metadata:
+      name: cilium-issuer
+    spec:
+      vault:
+        server: https://openbao-infra.secrets.svc:8200
+        path: pki_int/sign/cilium-hubble
+        caBundleSecretRef:
+          name: openbao-pki-ca-bundle
+          key: ca.crt
+        auth:
+          kubernetes:
+            role: cert-manager
+            mountPath: /v1/auth/kubernetes
+            serviceAccountRef:
+              name: cert-manager
+  YAML
+
+  depends_on = [
+    helm_release.cert_manager,
+    kubernetes_secret.openbao_pki_ca_bundle,
+    terraform_data.bootstrap_openbao_pki,
+  ]
+}
+
 
 # ─── TLS certificates for in-cluster OpenBao ──────────────────────────
 #
