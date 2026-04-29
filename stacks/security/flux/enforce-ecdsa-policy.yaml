@@ -41,12 +41,16 @@ spec:
               kinds:
                 - cert-manager.io/v1/Certificate
       mutate:
-        # Strategic merge with conditional anchor `+(field)` —
+        # Strategic merge with conditional anchors `+(field)` —
         # adds the field only when ABSENT in the source manifest.
-        # Won't overwrite manually-set algorithms (RSA on legacy charts
-        # that someone explicitly wants).
+        # NB: target nested fields (algorithm, size), not the parent
+        # `privateKey` block. Cilium chart sets `privateKey: {rotationPolicy:
+        # Always}` (present but incomplete), so an anchor on `+(privateKey)`
+        # would skip the whole block. Anchoring on the leaves merges
+        # algorithm/size INTO the existing block without touching
+        # rotationPolicy or any explicit algorithm someone set on purpose.
         patchStrategicMerge:
           spec:
-            +(privateKey):
-              algorithm: ECDSA
-              size: 256
+            privateKey:
+              +(algorithm): ECDSA
+              +(size): 256

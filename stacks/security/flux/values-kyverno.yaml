@@ -3,6 +3,15 @@
 
 replicaCount: 1
 
+# Default Kyverno excludes kube-system entirely — but ADR-028 wave 4
+# requires the enforce-ecdsa-default-certs policy to mutate Cilium
+# Certificate CRs that live in kube-system. Pull Certificate out of
+# the system-namespace exclusion (resource filters use OR — adding
+# this back to "include" REMOVES it from the auto-exclusion).
+config:
+  resourceFiltersInclude:
+    - "[Certificate,kube-system,*]"
+
 # Fail-closed: if Kyverno is down, block admission to prevent policy bypass
 admissionController:
   replicas: 1
