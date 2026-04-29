@@ -62,17 +62,26 @@ hubble:
       enabled: true
       method: certmanager
       certValidityDuration: 1095  # 3 years (well below pki_int 5y)
-      # internal-ca = strict ECDSA via Vault PKI role key_type=ec.
-      # Cilium chart hardcodes RSA-2048 (no privateKey override exposed),
-      # but the Kyverno ClusterPolicy enforce-ecdsa-default-certs (in
-      # stacks/security/flux/enforce-ecdsa-policy.yaml) mutates Certificate
-      # CRs missing privateKey to add {algorithm: ECDSA, size: 256} at
-      # admission time. So Cilium's RSA default never reaches the API
-      # server — single PKI role, single algorithm, audit log unified.
+      # cilium-issuer (NOT internal-ca) — Cilium chart hardcodes RSA-2048
+      # for hubble TLS Certificate CRs (no privateKey override exposed).
+      # Our main `internal-ca` ClusterIssuer enforces strict ECDSA via
+      # Vault PKI role constraint key_type=ec → would reject RSA with 400.
+      #
+      # Workaround: dedicated `cilium-issuer` ClusterIssuer pointing at a
+      # SECOND PKI role `cilium-hubble` (key_type=any, CN allowlist
+      # scoped to *.hubble-{grpc,relay}.cilium.io). Same OpenBao audit
+      # log, isolated RSA exception. See stacks/pki/secrets.tf +
+      # stacks/pki/main.tf for the role + issuer definition.
+      #
+      # Pure ECDSA cluster-wide via a Kyverno mutate ClusterPolicy was
+      # attempted (commit reverted) but Kyverno's default kube-system
+      # exclusion + Cilium's `privateKey: {rotationPolicy: Always}` (no
+      # algorithm) made the +(algorithm) anchor a non-trivial fix —
+      # not worth the friction for an internal observability layer.
       certManagerIssuerRef:
         group: cert-manager.io
         kind: ClusterIssuer
-        name: internal-ca
+        name: cilium-issuer
   metrics:
     enabled:
       - dns
