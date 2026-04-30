@@ -156,11 +156,27 @@ resource "terraform_data" "seed_flux_ssh_to_openbao" {
       # cluster-internal DNS name, not 127.0.0.1 from inside the pod.
       BAO="kubectl -n secrets exec openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true"
 
+      # ─── Wait for OpenBao Infra API (Pattern 1: 1s polling) ──────────
+      # Phase F-bis: 60×sleep 5 (max 5min) → 300×sleep 1 (max 5min) with
+      # ~typical detect 2-3s vs old 5-10s. `kubectl exec` roundtrip is
+      # the dominant cost (~150-300ms) so dropping sleep to 1s gives a
+      # ~3-5× speedup on warm cluster. Explicit timeout exit added —
+      # falling through to `bao login` would emit a confusing
+      # "connection refused" error instead of "timed out waiting".
       echo "Waiting for OpenBao Infra API..."
-      for i in $(seq 1 60); do
-        $BAO bao status >/dev/null 2>&1 && break
-        echo "  attempt $i/60..." && sleep 5
+      ready=0
+      for i in $(seq 1 300); do
+        if $BAO bao status >/dev/null 2>&1; then
+          echo "  OpenBao ready after $${i}s"
+          ready=1
+          break
+        fi
+        sleep 1
       done
+      if [ "$ready" -ne 1 ]; then
+        echo "ERROR: OpenBao Infra API not reachable after 300s" >&2
+        exit 1
+      fi
 
       echo "Logging in..."
       $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1 || \
@@ -284,7 +300,7 @@ resource "kubernetes_service" "gitea_external" {
 
 resource "kubernetes_endpoints" "gitea_external" {
   metadata {
-    name      = "gitea"  # Doit matcher le Service (pour wiring auto)
+    name      = "gitea" # Doit matcher le Service (pour wiring auto)
     namespace = "flux-system"
   }
   subset {

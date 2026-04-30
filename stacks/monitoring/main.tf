@@ -140,11 +140,28 @@ resource "terraform_data" "seed_grafana_to_openbao" {
       BAO_ADMIN_PASSWORD=$(kubectl -n secrets get secret openbao-admin-password \
         -o jsonpath='{.data.password}' | base64 -d)
 
+      # Pattern 1 (Phase F-bis): sleep 1 vs 5, max 300 iterations (5min).
+      # By the time monitoring stack runs, OpenBao Infra should already be
+      # up (deployed by pki stack — runs before). Most calls succeed on the
+      # first iteration; polling 1s vs 5s catches the rare cold-cache case
+      # ~5x faster. Add explicit timeout exit (was implicit fall-through to
+      # `bao login` which surfaced as confusing auth error before).
       echo "Waiting for OpenBao Infra API..."
-      for i in $(seq 1 60); do
-        $BAO bao status >/dev/null 2>&1 && break
-        echo "  attempt $i/60..." && sleep 5
+      READY=0
+      for i in $(seq 1 300); do
+        if $BAO bao status >/dev/null 2>&1; then
+          READY=1
+          break
+        fi
+        if [ $((i % 10)) -eq 0 ]; then
+          echo "  attempt $i/300..."
+        fi
+        sleep 1
       done
+      if [ "$READY" -ne 1 ]; then
+        echo "ERROR: OpenBao Infra API not ready after 5 min"
+        exit 1
+      fi
 
       echo "Logging in..."
       $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1 || \
