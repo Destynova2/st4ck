@@ -126,21 +126,35 @@ resource "terraform_data" "garage_wait" {
 
   provisioner "local-exec" {
     environment = { KUBECONFIG = var.kubeconfig_path }
+    # Pattern 2 (Phase F-bis): fuse the 2 sequential waits (pods Running →
+    # nodes registered RPC) into 1 parallel loop. Both conditions are
+    # observable independently and typically converge within 30-60s. Polling
+    # at 1s intervals (vs 5s) catches the transition ~5x faster.
+    #
+    # Pattern 1 (Phase F-bis): drop `|| echo 0` — Bug #18 in the postmortem
+    # notes that `grep -c` always exits 1 when no match, AND emits "0\n0"
+    # via the `||` fallback (count line + fallback line), giving wrong
+    # arithmetic. Use `${VAR:-0}` at use site, with explicit timeout exit.
     command = <<-EOT
       set -eu
-      echo "Waiting for all Garage pods to be in Running phase..."
-      for i in $(seq 1 60); do
-        RUNNING=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{.items[*].status.phase}' 2>/dev/null | tr ' ' '\n' | grep -c Running || echo 0)
-        [ "$RUNNING" -ge 3 ] && break
-        echo "  $RUNNING/3 running (attempt $i/60)..." && sleep 5
+      echo "Waiting for 3 Garage pods Running AND 3 nodes registered (RPC)..."
+      for i in $(seq 1 300); do
+        RUNNING=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{.items[*].status.phase}' 2>/dev/null | tr ' ' '\n' | grep -c Running)
+        # garage status only callable once garage-0 is Running; tolerate the
+        # exec failure during the first ~10s by suppressing stderr.
+        NODES=$(kubectl -n garage exec garage-0 -c garage -- ./garage status 2>/dev/null | grep -cE '^[a-f0-9]{16}')
+        if [ "$${RUNNING:-0}" -ge 3 ] && [ "$${NODES:-0}" -ge 3 ]; then
+          echo "All 3 Garage pods Running and 3 nodes registered."
+          exit 0
+        fi
+        # Reduce log noise: print a heartbeat every 10s instead of every iteration
+        if [ $((i % 10)) -eq 0 ]; then
+          echo "  pods=$${RUNNING:-0}/3 nodes=$${NODES:-0}/3 (attempt $i/300)..."
+        fi
+        sleep 1
       done
-      echo "Waiting for all 3 Garage nodes to register in the cluster (RPC)..."
-      for i in $(seq 1 60); do
-        NODES=$(kubectl -n garage exec garage-0 -c garage -- ./garage status 2>/dev/null | grep -cE '^[a-f0-9]{16}' || echo 0)
-        [ "$NODES" -ge 3 ] && echo "All 3 Garage nodes registered." && exit 0
-        echo "  $NODES/3 nodes registered (attempt $i/60)..." && sleep 5
-      done
-      echo "ERROR: Garage nodes not registered after 5 min" && exit 1
+      echo "ERROR: Garage not ready after 5 min (pods=$${RUNNING:-0}/3 nodes=$${NODES:-0}/3)"
+      exit 1
     EOT
   }
 }
@@ -154,17 +168,24 @@ resource "terraform_data" "garage_layout" {
 
   provisioner "local-exec" {
     environment = { KUBECONFIG = var.kubeconfig_path }
-    command = <<-EOT
+    command     = <<-EOT
       set -eu
       GARAGE="kubectl -n garage exec garage-0 -c garage --"
 
-      # Wait for nodes to discover each other via RPC
+      # Wait for nodes to discover each other via RPC.
+      # Pattern 1 (Phase F-bis): sleep 1 vs 5, drop `|| echo 0`, explicit
+      # timeout. After garage_wait succeeded, this loop usually converges
+      # within ~5s; polling 1s catches it almost immediately.
       echo "Waiting for node discovery..."
-      for i in $(seq 1 30); do
-        COUNT=$($GARAGE ./garage status 2>/dev/null | grep -c "HEALTHY\|NO ROLE" || echo 0)
-        [ "$COUNT" -ge 3 ] && break
-        echo "  $COUNT/3 nodes (attempt $i/30)..." && sleep 5
+      for i in $(seq 1 150); do
+        COUNT=$($GARAGE ./garage status 2>/dev/null | grep -c "HEALTHY\|NO ROLE")
+        [ "$${COUNT:-0}" -ge 3 ] && break
+        if [ $((i % 10)) -eq 0 ]; then
+          echo "  $${COUNT:-0}/3 nodes (attempt $i/150)..."
+        fi
+        sleep 1
       done
+      [ "$${COUNT:-0}" -ge 3 ] || { echo "ERROR: node discovery timeout (got $${COUNT:-0}/3 after 150s)"; exit 1; }
 
       NODES=$($GARAGE ./garage status 2>/dev/null | grep "NO ROLE" | awk '{print $1}')
       if [ -n "$NODES" ]; then
@@ -204,16 +225,25 @@ resource "terraform_data" "garage_buckets_keys" {
 
   provisioner "local-exec" {
     environment = { KUBECONFIG = var.kubeconfig_path }
-    command = <<-EOT
+    command     = <<-EOT
       set -eu
       GARAGE="kubectl -n garage exec garage-0 -c garage --"
 
+      # Pattern 1 (Phase F-bis): sleep 1 vs 5, drop `|| echo 0`, explicit
+      # timeout. After garage_layout, readinessProbe flips to ready in <10s.
       echo "Waiting for Garage ready (post-layout)..."
-      for i in $(seq 1 60); do
-        READY=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{range .items[*]}{.status.containerStatuses[0].ready}{"\n"}{end}' 2>/dev/null | grep -c true || echo 0)
-        [ "$READY" -ge 3 ] && echo "All 3 Garage pods ready." && break
-        echo "  $READY/3 ready (attempt $i/60)..." && sleep 5
+      for i in $(seq 1 300); do
+        READY=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{range .items[*]}{.status.containerStatuses[0].ready}{"\n"}{end}' 2>/dev/null | grep -c true)
+        if [ "$${READY:-0}" -ge 3 ]; then
+          echo "All 3 Garage pods ready."
+          break
+        fi
+        if [ $((i % 10)) -eq 0 ]; then
+          echo "  $${READY:-0}/3 ready (attempt $i/300)..."
+        fi
+        sleep 1
       done
+      [ "$${READY:-0}" -ge 3 ] || { echo "ERROR: Garage pods not ready after 5 min (got $${READY:-0}/3)"; exit 1; }
 
       echo "Creating buckets..."
       for BUCKET in velero-backups harbor-registry cnpg-backups; do
