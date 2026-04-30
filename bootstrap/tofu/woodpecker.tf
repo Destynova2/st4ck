@@ -25,11 +25,26 @@ resource "terraform_data" "wp_setup" {
       CLIENT_ID=$(cat /shared/gitea-client)
       REDIRECT_URI="$WP_EXT/authorize"
 
+      # ─── Wait for Woodpecker /healthz (Pattern 1: 1s polling) ─────────
+      # Phase F-bis: 60×sleep 2 (max 120s) → 300×sleep 1 (max 300s) with
+      # ~typical detect 2s vs old 4s. /healthz is a static endpoint so
+      # cheap to poll every second. Explicit timeout exit instead of
+      # silent fall-through (the OAuth dance below produces opaque
+      # failures if WP isn't actually up yet).
       echo "Waiting for Woodpecker..."
-      for i in $(seq 1 60); do
-        wget -qO /dev/null "$WP/healthz" 2>/dev/null && break
-        sleep 2
+      ready=0
+      for i in $(seq 1 300); do
+        if wget -qO /dev/null "$WP/healthz" 2>/dev/null; then
+          echo "  Woodpecker ready after $${i}s"
+          ready=1
+          break
+        fi
+        sleep 1
       done
+      if [ "$ready" -ne 1 ]; then
+        echo "ERROR: Woodpecker /healthz not reachable after 300s at $WP" >&2
+        exit 1
+      fi
 
       # ── Gitea web login (session cookie for OAuth authorize) ──
       wget -qO /tmp/login.html --save-cookies /tmp/gc "$GITEA/user/login" 2>/dev/null
