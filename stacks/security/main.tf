@@ -219,7 +219,22 @@ resource "kubectl_manifest" "openclarity_eso" {
 
 # ─── Cosign image verification policy ──────────────────────────────
 
+# Postmortem 2026-04-29 (#26, Phase C resume): Kyverno moved to Flux
+# (ADR-028) so the ClusterPolicy CRD only appears AFTER flux-bootstrap +
+# Flux's first reconcile. Same chicken/egg as VMRule (Bug #25):
+#   "resource [kyverno.io/v1/ClusterPolicy] isn't valid for cluster"
+# blocks k8s-security-apply on a fresh tree. Gate on the CRD; first apply
+# leaves count=0, Flux installs Kyverno, re-running k8s-security-apply
+# (or the next k8s-up) creates the policy.
+data "kubernetes_resources" "kyverno_clusterpolicy_crd" {
+  api_version    = "apiextensions.k8s.io/v1"
+  kind           = "CustomResourceDefinition"
+  field_selector = "metadata.name=clusterpolicies.kyverno.io"
+}
+
 resource "kubectl_manifest" "cosign_verify_policy" {
+  count = length(data.kubernetes_resources.kyverno_clusterpolicy_crd.objects) > 0 ? 1 : 0
+
   yaml_body = file("${path.module}/verify-images.yaml")
 
   depends_on = [
