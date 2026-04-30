@@ -952,6 +952,45 @@ scaleway-down: k8s-down scaleway-destroy ## Destroy k8s stacks + cluster for the
 
 scaleway-teardown: scaleway-down scaleway-ci-destroy ## Destroy cluster + CI for the current context (keeps IAM + image)
 
+# ─── demo orchestrator (tmux + healthmap + auto-open UIs) ────────────────
+# Spins up a 4-pane tmux session that runs `make scaleway-up` while live-
+# streaming pod state, a refreshing healthmap, and auto-opening UIs as soon
+# as their Services become ready. Used for live demos / iterative work in
+# the disposable st4ck-demo Scaleway project.
+#
+# Defaults target the disposable demo project:
+#   NAMESPACE=st4ck-demo   ENV=dev   INSTANCE=demo   REGION=fr-par
+# Override on the CLI if needed:
+#   make demo-up NAMESPACE=st4ck ENV=dev INSTANCE=alice REGION=fr-par
+DEMO_NAMESPACE ?= st4ck-demo
+DEMO_ENV       ?= dev
+DEMO_INSTANCE  ?= demo
+DEMO_REGION    ?= fr-par
+
+.PHONY: demo-up demo-down demo-attach
+demo-up: ## Demo orchestrator — tmux 4-pane + scaleway-up + healthmap + auto-open UIs
+	@command -v tmux >/dev/null 2>&1 || { echo "ERROR: tmux not installed (brew install tmux)"; exit 1; }
+	@command -v jq   >/dev/null 2>&1 || { echo "ERROR: jq not installed (brew install jq)";   exit 1; }
+	@command -v scw  >/dev/null 2>&1 || { echo "ERROR: scw CLI not installed";                  exit 1; }
+	@chmod +x scripts/healthmap.sh scripts/auto-open-uis.sh scripts/tmux-demo-layout.sh scripts/tmux-demo-attach.sh
+	@ENV=$(DEMO_ENV) INSTANCE=$(DEMO_INSTANCE) REGION=$(DEMO_REGION) NAMESPACE=$(DEMO_NAMESPACE) \
+	  REPO_DIR=$(CURDIR) bash scripts/tmux-demo-layout.sh
+	@echo ""
+	@echo "═══════════ st4ck demo-up launched ═══════════"
+	@echo "Context:                 $(DEMO_NAMESPACE)-$(DEMO_ENV)-$(DEMO_INSTANCE)-$(DEMO_REGION)"
+	@echo "Attach to tmux session:  tmux attach -t st4ck-demo"
+	@echo "Detach with:             Ctrl-B then D"
+	@echo "Kill all panes:          tmux kill-session -t st4ck-demo"
+
+demo-attach: ## Attach to the running demo tmux session
+	@tmux attach -t st4ck-demo
+
+demo-down: ## Tear down demo cluster + close tmux session
+	@SCW_IMAGE_NAME=$$(scw instance image list zone=$(DEMO_REGION)-1 -o json 2>/dev/null \
+	  | jq -r '.[] | select(.name | startswith("$(DEMO_NAMESPACE)-talos")) | .name' | head -1) \
+	  $(MAKE) scaleway-down ENV=$(DEMO_ENV) INSTANCE=$(DEMO_INSTANCE) REGION=$(DEMO_REGION) NAMESPACE=$(DEMO_NAMESPACE)
+	@tmux kill-session -t st4ck-demo 2>/dev/null || true
+
 scaleway-nuke: ## DANGEROUS: destroy EVERYTHING — all clusters, CIs, images, IAM
 	@echo "================================================================"
 	@echo "DANGER: scaleway-nuke will destroy ALL Scaleway resources"

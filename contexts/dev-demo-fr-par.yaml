@@ -1,0 +1,14 @@
+# Demo cluster — disposable Talos cluster on Scaleway fr-par.
+# Lives in the separate `st4ck-demo` Scaleway project, isolated from
+# the prod st4ck mgmt cluster. Iterate destroy/rebuild freely.
+#
+# Used by `make demo-up` (orchestrated tmux + healthmap + auto-open UIs).
+
+env: dev
+instance: demo
+region: fr-par
+
+owner: ludwig
+
+management_cidrs:
+  - "91.161.223.144/32"
