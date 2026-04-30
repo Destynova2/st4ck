@@ -103,6 +103,14 @@ resource "helm_release" "garage" {
     }),
   ]
 
+  # Postmortem 2026-04-29 (#23, Phase C resume): Helm wait=true (default)
+  # blocks for 5min waiting for pod Ready, but Garage pods stay NotReady
+  # until layout is applied — which happens in terraform_data.garage_wait
+  # below. Chicken/egg deadlock → helm release timeout. Garage_wait does
+  # the proper readiness check via the Garage RPC port (`garage status`
+  # lists all nodes that have joined the cluster, no auth required).
+  wait = false
+
   depends_on = [kubernetes_namespace.garage]
 }
 
