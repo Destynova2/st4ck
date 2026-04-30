@@ -15,20 +15,20 @@ kind: Kustomization
 # runs AFTER flux-bootstrap. tofu owns the chart now; Flux still owns
 # the garage-secrets ExternalSecret + harbor-s3-mirror PushSecret +
 # Velero + Harbor (those don't have the same chicken/egg).
+#
+# NOTE: Harbor HelmRelease + ESO pipeline split into ../flux-harbor-eso/
+# and ../flux-harbor/ (postmortem 2026-04-29 #15 — mirror of #7). Wired
+# from clusters/management/storage-harbor.yaml so the HR depends on the
+# ExternalSecret pipeline reaching Ready before installation.
 resources:
   - namespace.yaml
   - helmrepository.yaml
   - helmrelease-velero.yaml
-  - helmrelease-harbor.yaml
   - external-secrets.yaml
 configMapGenerator:
   - name: velero-values
     namespace: storage
     files:
       - values.yaml=values-velero.yaml
-  - name: harbor-values
-    namespace: storage
-    files:
-      - values.yaml=values-harbor.yaml
 generatorOptions:
   disableNameSuffixHash: true

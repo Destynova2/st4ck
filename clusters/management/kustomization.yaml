@@ -18,3 +18,6 @@ resources:
   # their own sub-folder under stacks/security/ (flux-openclarity-eso/ and
   # flux-openclarity/) — they are NOT sub-resources of this kustomization.
   - security-openclarity.yaml
+  # Same two-phase split for Harbor (postmortem 2026-04-29 #15).
+  # storage-harbor-eso → storage-harbor — see file header for rationale.
+  - storage-harbor.yaml

@@ -1,0 +1,67 @@
+---
+# Harbor install pipeline (postmortem 2026-04-29 #15) split into two
+# Flux Kustomizations so the HelmRelease is gated on the ExternalSecret
+# pipeline reaching Ready.
+#
+# Why split (not a single Kustomization with `wait: true`):
+#   The harbor chart references harbor-secrets as `valuesFrom optional:
+#   false`, with two ingredients composed inside it:
+#     - harborAdminPassword (seeded by tofu pki at secret/storage/harbor)
+#     - persistence.imageChartStorage.s3.{accesskey,secretkey} mirrored
+#       from the K8s Secret harbor-s3-credentials (created by the
+#       garage_buckets_keys terraform_data in stacks/storage/main.tf)
+#       into OpenBao at secret/storage/harbor-s3 by the harbor-s3-mirror
+#       PushSecret.
+#   If we put the HelmRelease in the same Kustomization as the ESO
+#   objects, Flux applies them in parallel and the chart install fails
+#   with "harbor-secrets not found" (chart template render fails before
+#   even reaching apply, since admin password is templated into multiple
+#   resources). HelmRelease.spec.dependsOn only accepts other
+#   HelmReleases (no Kind discriminator), so we cannot gate on the
+#   ExternalSecret directly inside the HR.
+#
+# Solution: two Flux Kustomizations with Kustomization-level dependsOn.
+# Mirror of clusters/management/security-openclarity.yaml (Fix #7).
+# Phase 1 — storage-harbor-eso applies the PushSecret + ExternalSecret
+#   with `wait: true`, blocking until harbor-secrets exists.
+# Phase 2 — storage-harbor applies the HelmRelease, gated on phase 1.
+#
+# Both Kustomizations live in the same management GitRepository as the
+# rest of the stack — sharing the postBuild substitution context
+# inherited from the root `management` Flux Kustomization.
+
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: storage-harbor-eso
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: management
+    namespace: flux-system
+  path: ./stacks/storage/flux-harbor-eso
+  prune: true
+  # wait: true blocks Ready until the ExternalSecret reports Ready.
+  # Down-stream Kustomization storage-harbor won't apply until then.
+  wait: true
+  timeout: 5m
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: storage-harbor
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: management
+    namespace: flux-system
+  path: ./stacks/storage/flux-harbor
+  prune: true
+  wait: true
+  timeout: 15m  # matches HR install timeout (chart spawns 10+ pods)
+  dependsOn:
+    - name: storage-harbor-eso

@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Harbor ESO pipeline (split out of ../flux/kustomization.yaml so the
+# Harbor HelmRelease can `dependsOn` this Kustomization via a Flux
+# Kustomization wrapper — see clusters/management/storage-harbor.yaml).
+#
+# Mirror of stacks/security/flux-openclarity-eso/ (Fix #7) for the same
+# class of bug: HelmRelease references a Secret rendered by an
+# ExternalSecret pipeline, but HelmRelease.spec.dependsOn cannot
+# discriminate on Kind (only HelmReleases). Wrap the prerequisite ESO
+# objects in their own Flux Kustomization layer so the HR Kustomization
+# can wait on them.
+resources:
+  - external-secrets-harbor.yaml
