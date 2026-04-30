@@ -121,7 +121,7 @@ spec:
           # via `kubectl exec` into openbao-infra-0 (which has bao in $PATH).
           # Pin to a digest in a future hardening pass — for now match the
           # version family used elsewhere in the stack.
-          image: bitnami/kubectl:latest
+          image: alpine/k8s:1.35.4
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
