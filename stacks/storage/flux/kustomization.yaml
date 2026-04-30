@@ -7,18 +7,21 @@ kind: Kustomization
 # postmortem 2026-04-29. Flux runs after pki via flux-bootstrap, but pki
 # needs PVCs (StorageClass) on first deploy → chicken/egg. local-path is
 # now installed by the cni tofu stack which runs first.
+#
+# NOTE: Garage moved to tofu (stacks/storage/main.tf helm_release.garage)
+# on 2026-04-29 — same chicken/egg as local-path. The garage_wait,
+# garage_layout, and garage_buckets_keys terraform_data resources need
+# Garage pods reachable during the storage stack apply, but Flux only
+# runs AFTER flux-bootstrap. tofu owns the chart now; Flux still owns
+# the garage-secrets ExternalSecret + harbor-s3-mirror PushSecret +
+# Velero + Harbor (those don't have the same chicken/egg).
 resources:
   - namespace.yaml
   - helmrepository.yaml
-  - helmrelease-garage.yaml
   - helmrelease-velero.yaml
   - helmrelease-harbor.yaml
   - external-secrets.yaml
 configMapGenerator:
-  - name: garage-values
-    namespace: garage
-    files:
-      - values.yaml=values-garage.yaml
   - name: velero-values
     namespace: storage
     files:

@@ -60,23 +60,23 @@ resource "kubernetes_namespace" "storage" {
 
 # ─── Garage (S3-compatible object store) ──────────────────────────────
 
-# Garage → Flux owner (ADR-028 wave 2). garage-secrets ExternalSecret
-# in stacks/storage/flux/external-secrets.yaml renders the
-# rpcSecret + admin.token values.yaml fragment from OpenBao
-# secret/storage/garage. Flux HelmRelease consumes ConfigMap +
-# Secret via valuesFrom (Secret wins on overlap).
+# Garage → tofu owner (postmortem 2026-04-29 #12). Reverted from the
+# ADR-028 wave 2 Flux ownership: garage_wait + garage_layout +
+# garage_buckets_keys terraform_data resources below depend on Garage
+# pods existing, but Flux only runs AFTER flux-bootstrap (which is
+# AFTER the storage stack). Same chicken/egg as local-path-provisioner
+# (#4) and Cilium — provisioning steps that other stacks consume must
+# happen during the same `tofu apply` that creates the dependency.
 #
-# garage_layout + garage_buckets_keys terraform_data below previously
-# used `triggers_replace = [sha256(file("${path.module}/flux/values-garage.yaml"))]`
-# to re-run on chart upgrade. After the Flux handoff, that field is
-# unreachable; we trigger on the values file hash instead, which
-# changes on any chart-relevant config change.
+# Same pattern as helm_release.local_path_provisioner in stacks/cni/main.tf:
+# install via tofu, mirror values from the same flux/values-garage.yaml
+# (kept as the single source of truth via templatefile), let Flux take
+# over for day-2 chart updates only if explicitly migrated later.
 resource "kubernetes_namespace" "garage" {
   metadata {
     name = "garage"
     # PSA labels MUST mirror what stacks/storage/flux/namespace.yaml
-    # declares (Flux re-applies the namespace at reconcile, which would
-    # otherwise strip any label not present on both sides). Postmortem
+    # declares (if it still applies the namespace on day-2). Postmortem
     # 2026-04-29 — drift caused garage pods to lose enforce: baseline
     # silently between Flux reconciles.
     labels = {
@@ -84,6 +84,26 @@ resource "kubernetes_namespace" "garage" {
       "pod-security.kubernetes.io/warn"    = "baseline"
     }
   }
+}
+
+resource "helm_release" "garage" {
+  name             = "garage"
+  chart            = "${path.module}/chart"
+  namespace        = kubernetes_namespace.garage.metadata[0].name
+  create_namespace = false
+
+  # Same values-garage.yaml file Flux used to consume via configMapGenerator,
+  # rendered with the same secrets the garage-secrets ExternalSecret was
+  # composing from OpenBao. Both substitutions land in the chart values
+  # under garage.rpcSecret and the GARAGE_ADMIN_TOKEN env var.
+  values = [
+    templatefile("${path.module}/flux/values-garage.yaml", {
+      garage_rpc_secret  = local.secrets["garage_rpc_secret"]
+      garage_admin_token = local.secrets["garage_admin_token"]
+    }),
+  ]
+
+  depends_on = [kubernetes_namespace.garage]
 }
 
 # ─── Garage setup (split into 3 steps for reliability) ───────────────
@@ -94,7 +114,7 @@ resource "kubernetes_namespace" "garage" {
 # in step 2; so polling K8s readinessProbe is a deadlock. We poll the Garage
 # RPC instead: `garage status` lists all nodes that have joined the cluster).
 resource "terraform_data" "garage_wait" {
-  depends_on = [kubernetes_namespace.garage]
+  depends_on = [helm_release.garage]
 
   provisioner "local-exec" {
     environment = { KUBECONFIG = var.kubeconfig_path }
@@ -145,6 +165,19 @@ resource "terraform_data" "garage_layout" {
           $GARAGE ./garage layout assign -z dc1 -c 5G "$NODE_ID" 2>&1 | tail -1
         done
         CURRENT_VER=$($GARAGE ./garage layout show 2>/dev/null | grep "layout version" | awk '{print $NF}' || echo 0)
+        # Postmortem 2026-04-29 (#18): the `|| echo 0` fallback only fires
+        # when the WHOLE pipeline fails (grep+awk). awk happily emits an
+        # empty string when grep matches no line (output format change
+        # between Garage versions or parse failure), giving CURRENT_VER=""
+        # → NEXT_VER=$((+1))=1. On a cluster already at version > 1
+        # Garage rejects layout apply --version 1, the script aborts
+        # mid-provisioner, and the cluster is left in an inconsistent
+        # state. Surface the parse failure explicitly.
+        if [ -z "$CURRENT_VER" ]; then
+          echo "ERROR: could not parse 'layout version' from garage layout show output"
+          echo "       check Garage version compatibility — output format may have changed"
+          exit 1
+        fi
         NEXT_VER=$((CURRENT_VER + 1))
         $GARAGE ./garage layout apply --version $NEXT_VER 2>&1 | tail -2
       else

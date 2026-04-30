@@ -201,7 +201,7 @@ Note: pipeline was initially parallel (make -j2) but race conditions
 | pki | OpenBao x2, cert-manager, ClusterIssuer, CA secrets | ClusterIssuer "internal-ca", secrets namespace |
 | identity | Kratos, Hydra, Pomerium, OIDC registration | identity namespace |
 | security | Trivy, Tetragon, Kyverno, Cosign policy | security namespace |
-| storage | Garage, Velero, Harbor | storage namespace |
+| storage | Garage (tofu — chart owner since 2026-04-29 #12), Velero, Harbor | storage + garage namespaces |
 | flux-bootstrap | Flux v2, GitRepository, root Kustomization | flux-system namespace |
 | external-secrets | ESO, ClusterSecretStore | external-secrets namespace |
 
