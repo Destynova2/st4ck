@@ -216,6 +216,14 @@ resource "helm_release" "openbao_infra" {
 # Scale openbao-infra to 3 once pod-0 is established + initialized.
 # Triggers on every apply but is idempotent — kubectl scale is no-op
 # if already at desired replicas.
+#
+# Postmortem 2026-04-29 (Fix #5): added split-brain detection + recovery.
+# Even with the kubernetes-auth gate above, we have observed pods 1+2
+# self-electing as separate leaders before discovering pod-0 (race in the
+# join handshake under load). Detection: `bao operator raft list-peers`
+# count vs spec.replicas. Recovery: scale to 1, wipe pods 1+2 PVCs,
+# scale back to 3, wait for clean rejoin. Idempotent — no-op when raft
+# is healthy with 3 peers.
 resource "terraform_data" "openbao_infra_scale_to_ha" {
   triggers_replace = {
     helm_id = helm_release.openbao_infra.id
@@ -253,6 +261,48 @@ resource "terraform_data" "openbao_infra_scale_to_ha" {
       kubectl --kubeconfig=$KC -n secrets scale statefulset openbao-infra --replicas=3
       echo "Waiting for pods 1+2 to retry_join + become Ready…"
       kubectl --kubeconfig=$KC -n secrets wait pod openbao-infra-1 openbao-infra-2 --for=condition=Ready --timeout=240s || true
+
+      # ─── Fix #5: detect + recover split-brain raft state ───────────
+      # Postmortem 2026-04-29: even after the kubernetes-auth gate,
+      # observed pods 1+2 self-electing as their own raft leaders
+      # (separate single-peer rafts) instead of joining pod-0's quorum.
+      # Manual recovery was: scale 3→1, delete PVCs of pods 1+2, scale
+      # back. Now automated. The expected count is 3 peers; anything
+      # less means split-brain on pod-0's perspective.
+      check_peers() {
+        kubectl --kubeconfig=$KC -n secrets exec -i openbao-infra-0 -c openbao -- \
+          env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true sh -c \
+          "bao operator raft list-peers 2>/dev/null | grep -c '^node-' || echo 0" \
+          2>/dev/null || echo 0
+      }
+      sleep 10
+      PEERS=$(check_peers)
+      echo "Initial raft peer count from pod-0 perspective: $PEERS"
+      if [ "$PEERS" != "3" ]; then
+        echo "RECOVERY: split-brain detected (peers=$PEERS, want=3). Wiping pods 1+2 PVCs."
+        kubectl --kubeconfig=$KC -n secrets scale statefulset openbao-infra --replicas=1
+        # Wait for pods 1+2 to terminate before deleting PVCs
+        for i in $(seq 1 30); do
+          REM=$(kubectl --kubeconfig=$KC -n secrets get pods -l app.kubernetes.io/instance=openbao-infra --no-headers 2>/dev/null | grep -c -E 'openbao-infra-(1|2)' || echo 0)
+          [ "$REM" = "0" ] && break
+          sleep 5
+        done
+        # Delete PVCs (StatefulSet creates them as data-openbao-infra-<idx>)
+        kubectl --kubeconfig=$KC -n secrets delete pvc data-openbao-infra-1 data-openbao-infra-2 --ignore-not-found --wait=true --timeout=60s || true
+        sleep 5
+        echo "  Re-scaling to 3 with fresh raft state for pods 1+2"
+        kubectl --kubeconfig=$KC -n secrets scale statefulset openbao-infra --replicas=3
+        kubectl --kubeconfig=$KC -n secrets wait pod openbao-infra-1 openbao-infra-2 --for=condition=Ready --timeout=240s || true
+        sleep 15
+        PEERS=$(check_peers)
+        echo "Post-recovery raft peer count: $PEERS"
+        if [ "$PEERS" != "3" ]; then
+          echo "ERROR: raft still split-brain after recovery (peers=$PEERS). Manual intervention required."
+          echo "  Inspect: kubectl --kubeconfig=$KC -n secrets exec openbao-infra-0 -- bao operator raft list-peers"
+          exit 1
+        fi
+      fi
+      echo "OpenBao raft healthy: 3 peers."
     EOT
   }
 
