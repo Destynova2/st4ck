@@ -249,16 +249,32 @@ resource "kubernetes_job_v1" "hydra_oidc_client" {
       }
       spec {
         container {
-          name  = "register"
-          image = "curlimages/curl:8.12.1"
+          name    = "register"
+          image   = "curlimages/curl:8.12.1"
           command = ["/bin/sh", "-c"]
           args = [<<-EOT
+            # Pattern 1 (Phase F-bis): sleep 1 vs 5, max 300 iterations
+            # (5min). Hydra admin endpoint typically becomes ready within
+            # 10-20s after the pod starts; polling 1s vs 5s catches the
+            # transition ~5x faster. Add explicit timeout exit (was
+            # implicit fall-through before, with the next curl POST then
+            # failing on connection refused with a confusing error).
             echo "Waiting for Hydra admin..."
-            for i in $(seq 1 60); do
-              curl -sf http://hydra-admin.identity.svc:4445/health/ready && break
-              echo "  attempt $i/60..."
-              sleep 5
+            READY=0
+            for i in $(seq 1 300); do
+              if curl -sf http://hydra-admin.identity.svc:4445/health/ready >/dev/null 2>&1; then
+                READY=1
+                break
+              fi
+              if [ $((i % 10)) -eq 0 ]; then
+                echo "  attempt $i/300..."
+              fi
+              sleep 1
             done
+            if [ "$READY" -ne 1 ]; then
+              echo "ERROR: Hydra admin not ready after 5 min"
+              exit 1
+            fi
             echo "Registering kubernetes OIDC client..."
             # Postmortem 2026-04-29 (#19): curl -sf || true swallowed
             # every 4xx/5xx, not just 409-Conflict (idempotent re-run).
