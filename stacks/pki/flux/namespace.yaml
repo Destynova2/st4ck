@@ -9,3 +9,11 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: cert-manager
+  # PSA labels MUST mirror what stacks/pki/main.tf sets on its
+  # kubernetes_namespace.cert_manager resource (postmortem 2026-04-29
+  # #14 — without an enforce label, future Talos PSA tightening would
+  # break cert-manager silently). baseline is correct: cert-manager
+  # webhook + cainjector + controller don't need privileged caps.
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: baseline

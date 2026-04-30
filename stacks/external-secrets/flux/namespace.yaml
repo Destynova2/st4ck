@@ -2,3 +2,11 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: external-secrets
+  # PSA labels MUST mirror what stacks/pki/main.tf sets on its
+  # kubernetes_namespace.external_secrets resource (postmortem 2026-04-29
+  # #14 — without an enforce label, future Talos PSA tightening would
+  # break ESO silently). baseline is correct: ESO controllers don't
+  # need privileged caps.
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: baseline

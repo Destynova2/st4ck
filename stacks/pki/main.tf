@@ -450,6 +450,15 @@ resource "terraform_data" "openbao_app_scale_to_ha" {
 resource "kubernetes_namespace" "cert_manager" {
   metadata {
     name = "cert-manager"
+    # PSA labels MUST mirror stacks/pki/flux/namespace.yaml — without
+    # both sources declaring the same labels, server-side-apply between
+    # tofu + Flux would strip whichever label is present on only one
+    # side (silent PSA drift). Same fix pattern as the garage namespace
+    # (#10). Postmortem 2026-04-29 (#14).
+    labels = {
+      "pod-security.kubernetes.io/enforce" = "baseline"
+      "pod-security.kubernetes.io/warn"    = "baseline"
+    }
   }
 }
 
@@ -475,6 +484,14 @@ resource "helm_release" "cert_manager" {
 resource "kubernetes_namespace" "external_secrets" {
   metadata {
     name = "external-secrets"
+    # PSA labels MUST mirror stacks/external-secrets/flux/namespace.yaml.
+    # Same SSA idempotency reasoning as cert_manager above — both
+    # sources must declare baseline to prevent silent label stripping
+    # on Flux reconcile. Postmortem 2026-04-29 (#14).
+    labels = {
+      "pod-security.kubernetes.io/enforce" = "baseline"
+      "pod-security.kubernetes.io/warn"    = "baseline"
+    }
   }
 }
 
