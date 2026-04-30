@@ -5,9 +5,9 @@ metadata:
   namespace: garage
 spec:
   interval: 30m
-  dependsOn:
-    - name: local-path-provisioner
-      namespace: storage
+  # Note: local-path-provisioner dep removed — that HelmRelease moved to
+  # the cni tofu stack (postmortem 2026-04-29). Flux ordering is no longer
+  # needed because the StorageClass exists before Flux even starts.
   chart:
     spec:
       # Vendored chart at this path inside the management GitRepository

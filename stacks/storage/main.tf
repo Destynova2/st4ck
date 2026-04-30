@@ -54,8 +54,9 @@ resource "kubernetes_namespace" "storage" {
 }
 
 # ─── local-path-provisioner (default StorageClass) ───────────────────
-
-# local-path-provisioner → Flux owner (helmrelease-local-path.yaml). ADR-028.
+#
+# Moved to stacks/cni/ (tofu-owned) on 2026-04-29 — chicken/egg with pki
+# (Flux runs after pki, but pki needs StorageClass). See cni/main.tf.
 
 # ─── Garage (S3-compatible object store) ──────────────────────────────
 
