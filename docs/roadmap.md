@@ -523,12 +523,25 @@ besoins.
 ### Sequencement recommande
 
 ```
-Phase D (now)  → debloque rebuild 100/100 valide (ne change pas archi)
-Phase E (next) → reduit rebuild 30min → 10min, air-gap ready
-Phase F (after) → -1 VM, simplification ops
-Phase G (R&D) → multi-tier scheduling VM/BM/GPU cost-optimised (decision matrix)
+Phase D (now)     → debloque rebuild 100/100 valide (ne change pas archi)
+Phase E (gate 3) → mirror registry pour AIR-GAP (perf gain marginal ~30s — corrige hypothese)
+Phase F (after)  → -1 VM, simplification ops
+Phase F-bis (NEW) → refactor scripts terraform_data (VRAI gain perf, ~-7min PKI)
+Phase G (R&D)    → multi-tier scheduling VM/BM/GPU cost-optimised (decision matrix)
 Phase H (apres D) → rebase + merge feat/kamaji-karpenter, deploy KaaS layer
 ```
+
+**Correction post-mesure 2026-04-30** : Phase E (mirror registry) initialement sold
+comme "5-10x rebuild speedup" est en realite **gain marginal** car Talos OVA
+pre-cache deja toutes les images. Mesures runtime PKI :
+- "quay.io/openbao/openbao:2.5.1" → 0s pull (already present)
+- "busybox:latest" → 0s pull (already present)
+- Pod scheduled → Ready : 7-18s par pod
+- TOTAL pulls PKI : ~30-60s
+
+Le bottleneck reel des 10min PKI = **scripts terraform_data avec `sleep 5` × 90
+iterations** + scale 1→3 sequentiel + Bug #32 recovery loops. Phase F-bis cible
+ca directement.
 
 ### Phase G — Multi-tier scheduling VM/BM/GPU (decision matrix, ~3 mois)
 
@@ -587,6 +600,58 @@ G.3 (decision) — Option A vs B vs C selon retours POC + maturite vCluster
 ```
 
 **ADR-031** a creer : "Multi-tier autoscaling — Kamaji+Karpenter glue vs vCluster Auto Nodes vs hybride".
+
+### Phase F-bis — Refactor scripts terraform_data bootstrap (~3h, gain ~-7min rebuild)
+
+**Probleme** : les `terraform_data` provisioners de bootstrap utilisent un
+pattern "polling slow with safety margin" qui domine le temps de rebuild :
+
+```hcl
+for i in $(seq 1 90); do
+  CHECK=$(...)
+  [ "$CHECK" = "expected" ] && break
+  sleep 5
+done
+```
+
+Cumule sur stacks/{pki,storage,identity}/main.tf, ces loops representent
+~7-10 min de sleep accumule par rebuild. Mesure runtime PKI 2026-04-30 :
+script openbao_infra_scale_to_ha tourne 4-5min de loop, openbao_app idem,
+seed_openbao_secrets ajoute 1-2min.
+
+**Solution** : 3 patterns de fix en cascade :
+
+1. **Polling rapide + early exit** : `sleep 1` au lieu de `sleep 5`,
+   verification toutes les 1s, break des qu'OK. Gain ~70% sur loops.
+
+2. **Scale 1→3 supprime, replicas: 3 + retry_join natif Helm** :
+   au lieu de scale orchestre par script, deployer Helm avec
+   `ha.replicas: 3` + `setNodeId: true` + `retry_join` blocks d'emblee.
+   Le chart OpenBao supporte ca nativement. Supprime les
+   `terraform_data.openbao_*_scale_to_ha` (Fix #5 + #11) et leurs
+   recovery loops fragiles (Fix #32).
+
+3. **Parallelisation des waits** : storage stack a 3 etapes
+   sequentielles (garage_wait, garage_layout, garage_buckets_keys)
+   chacune avec son propre polling. Fusionner en 1 script qui poll
+   plusieurs conditions en parallele.
+
+**Impact estime** :
+- PKI : 10min → 2-3min (cible CLAUDE.md atteinte)
+- Storage : 5min → 2min
+- Identity : 2-3min → 1min
+- TOTAL gain : ~-7-10min sur rebuild end-to-end
+
+**Effort** : ~3h
+- Refactor stacks/pki/main.tf provisioners (1h, depend Bug #32 fixe d'abord)
+- Refactor stacks/storage/main.tf provisioners (1h)
+- Refactor stacks/identity/main.tf provisioners (1h)
+
+**ADR-032** a creer : "Polling pattern + helm-native HA pour terraform_data
+provisioners — abandon scale orchestre".
+
+**Sequencement** : Phase F-bis APRES Phase D (besoin Bug #32 fixe + cluster
+sain pour valider que les nouveaux scripts marchent).
 
 ### Phase H — Rebase + merge feat/kamaji-karpenter + deploy KaaS layer (~1h30-2h, apres Phase D)
 
