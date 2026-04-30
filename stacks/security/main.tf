@@ -179,7 +179,7 @@ resource "kubectl_manifest" "openclarity_pg_cluster" {
 # (one for cosign, one for openclarity) shared between Tofu day-1 and
 # Flux day-2 (kustomization.yaml below references the same files).
 data "kubectl_file_documents" "cosign_externalsecrets" {
-  content = file("${path.module}/flux/external-secret-cosign.yaml")
+  content = file("${path.module}/flux-kyverno-policies/external-secret-cosign.yaml")
 }
 
 resource "kubectl_manifest" "cosign_externalsecrets" {
