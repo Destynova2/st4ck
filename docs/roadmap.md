@@ -526,7 +526,66 @@ besoins.
 Phase D (now)  → debloque rebuild 100/100 valide (ne change pas archi)
 Phase E (next) → reduit rebuild 30min → 10min, air-gap ready
 Phase F (after) → -1 VM, simplification ops
+Phase G (R&D) → multi-tier scheduling VM/BM/GPU cost-optimised (decision matrix)
 ```
+
+### Phase G — Multi-tier scheduling VM/BM/GPU (decision matrix, ~3 mois)
+
+**Probleme** : workloads heterogenes (HTTP burst, training sustained, GPU AI)
+mappent mal sur un seul type de node. Sur Scaleway :
+- VM Pro2-S (8 vCPU partages, 32GB) : ~€0.10/h facture seconde
+- **Elastic Metal EM-A610R** (6C/12T DEDIES, 32GB) : **€0.11/h facture heure**
+- VM 64GB : ~€0.50/h
+- **Elastic Metal EM-B220E** (8C/16T DEDIES, 64GB) : **€0.333/h** (-33%)
+
+→ Le bare metal Scaleway est **HOURLY-billed sans engagement**, pas
+mensuel. Break-even bare metal vs VM est ~2-4 cores DES LA 1ere heure
+(pas le seuil "1h30 runtime" initial). Le vrai trigger est **taille du
+workload**, pas duree.
+
+**Solution productisee** : **vCluster Auto Nodes** (sortie sept 2025) fait
+exactement ce pattern :
+- Karpenter par tenant cluster
+- Multi-provider NodePool (KubeVirt + Terraform + custom Scaleway)
+- Cross-provider workload migration runtime (cost-aware)
+- Auto-reclaim idle nodes
+- KubeVirt wrapper pour stateful (live-migration)
+
+**Probleme** : ta branche `feat/kamaji-karpenter` reimplemente ce pattern
+manuellement avec Kamaji + custom Karpenter glue. Kamaji ne supporte PAS
+Karpenter natif (que Cluster Autoscaler via CAPI). vCluster Auto Nodes
+a productise la solution avant qu'on ait fini.
+
+#### Decision matrix (ADR-031 a creer)
+
+| Option | Effort | Vendor lock | Maturite | Pour qui |
+|---|---|---|---|---|
+| **A — Continuer Kamaji + Karpenter glue** | 2-3 mois R&D | Aucun (OSS) | Construit | Sovereign 100%, accepter R&D |
+| **B — Pivot vCluster Auto Nodes** | 2 sem refactor | Loft Labs (vCluster Pro commercial pour full features) | Production-ready | Time-to-market |
+| **C — Hybride : Kamaji + pattern Auto Nodes (Karpenter-per-tenant + multi-provider)** | 1-2 mois | Aucun | Mid | Stack-coherent, modulaire |
+
+#### Bare metal layer pour Option A/C
+
+| Option | OS support | CAPI | Pour qui |
+|---|---|---|---|
+| **Sidero Metal** | Talos natif | CAPS officiel | st4ck (Talos-aligned, declaratif K8s) |
+| Tinkerbell | Tous | CAPT community | Multi-OS, workflows complexes |
+| Matchbox | Talos via PXE | Aucun | Lab minimaliste 6 noeuds |
+
+→ Reco st4ck : **Sidero Metal** pour BM layer (Talos-native, GitOps-friendly).
+Phase G integre Sidero comme NodeProvider dans Karpenter.
+
+#### Sequencement Phase G
+
+```
+G.1 (1 mois) — POC : 2 NodePool Karpenter (Pro2-S VM + EM-A610R BM)
+              labels workload-class={short,sustained}, mesure cost
+G.2 (1 mois) — Sidero Metal integre comme NodeProvider Karpenter
+              tenant clusters Kamaji peuvent burster sur BM
+G.3 (decision) — Option A vs B vs C selon retours POC + maturite vCluster
+```
+
+**ADR-031** a creer : "Multi-tier autoscaling — Kamaji+Karpenter glue vs vCluster Auto Nodes vs hybride".
 
 ---
 
