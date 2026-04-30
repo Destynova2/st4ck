@@ -84,10 +84,11 @@ locals {
   ]
 
   # ─── Patches ──────────────────────────────────────────────────────────
-  cilium_patch            = file("${path.module}/../../patches/cilium-cni.yaml")
-  registry_mirror_patch   = file("${path.module}/../../patches/registry-mirror.yaml")
-  kubelet_nodeip_patch    = file("${path.module}/../../patches/kubelet-nodeip-vpc.yaml")
-  etcd_vpc_patch          = file("${path.module}/../../patches/etcd-vpc-cp-only.yaml")
+  cilium_patch              = file("${path.module}/../../patches/cilium-cni.yaml")
+  registry_mirror_scr_patch = file("${path.module}/../../patches/registry-mirror-scr.yaml")
+  registry_mirror_patch     = file("${path.module}/../../patches/registry-mirror.yaml")
+  kubelet_nodeip_patch      = file("${path.module}/../../patches/kubelet-nodeip-vpc.yaml")
+  etcd_vpc_patch            = file("${path.module}/../../patches/etcd-vpc-cp-only.yaml")
   volume_config_patch     = file("${path.module}/volume-config-patch.yaml")
   # OIDC CA is produced by bootstrap (kms-output/) — absent during validate/plan pre-bootstrap.
   oidc_ca_pem           = try(file("${path.module}/../../kms-output/root-ca.pem"), "")
@@ -127,6 +128,9 @@ module "talos" {
 
   common_config_patches = [
     local.cilium_patch,
+    # SCR mirror patch FIRST — Talos tries endpoints in declared order.
+    # Falls back to mirror.gcr.io / registry-1.docker.io if SCR unreachable.
+    local.registry_mirror_scr_patch,
     local.registry_mirror_patch,
     local.kubelet_nodeip_patch,
     local.volume_config_patch,
