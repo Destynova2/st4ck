@@ -474,6 +474,62 @@ Phase 1.2 CI/CD & Registry (Gitea + Woodpecker + Harbor)          [DONE]
 
 ---
 
+## Phase D/E/F — Hardening architectural (Postmortem 2026-04-30)
+
+Issues remontees pendant le test rebuild 0→100 (~22 fixes architecturaux deja
+landed dans `git log 02f2ad7..HEAD`). 3 ameliorations structurelles a
+prioriser pour des rebuilds rapides + resilients.
+
+### Phase D — VPC Private Network partage (en cours, ~1h)
+
+**Probleme** : CI VM et cluster crees dans des PNs Scaleway differents
+(L2-isoles), traffic inter-PN timeout. CI stack lookup conditionnel du PN
+cluster vide a la creation (chicken/egg de l'ordre bootstrap).
+
+**Solution** : CI stack OWN le PN partage, cluster stack le reference via
+data source. Nouvel ordre : `scaleway-ci-apply → scaleway-up`.
+
+→ Bug #31 — Agent #6 en cours. ADR-029 a creer.
+
+### Phase E — Mirror registry sur CI VM (~1 jour, gain 5-10x rebuild)
+
+**Probleme** : chaque rebuild pull ~25 images container + ~15 charts Helm
+depuis registries publics (docker.io, ghcr.io, quay.io, artifacthub).
+Rebuild = 80% network, 20% compute (~30-45min). Sujet aux rate limits
+et outages public.
+
+**Solution** : deplacer Harbor + Garage du cluster (`stacks/storage/`) vers
+la CI VM (bootstrap layer) :
+- Harbor mirror : registries publics → CI VM (intra-VPC)
+- Garage S3 : Helm charts + binaries Talos pre-buildes
+- Talos `registry-mirror` patch redirige sur CI VM Harbor
+- Cron Arbor (`make arbor`) sync upstream periodique
+
+→ Rebuild ~5-10min au lieu de 30-45min. Air-gap ready. ADR-029bis a creer.
+
+### Phase F — Consolidation image VM dans CI VM (~4h)
+
+**Probleme** : 2 VMs Scaleway distinctes pour platform (CI VM persistante)
+et builder Talos image (image VM ephemere ~15min). Duplication infra,
+maintenance, cout.
+
+**Solution** : merger build Talos image dans CI VM (a la demande, via cron
+ou make target). CI VM type plus gros (DEV1-XL ou GP1-S) couvre les 2
+besoins.
+
+→ -1 VM permanente, simplification Makefile (`scaleway-image-*` devient
+`make ci-build-image`). ADR-030 a creer.
+
+### Sequencement recommande
+
+```
+Phase D (now)  → debloque rebuild 100/100 valide (ne change pas archi)
+Phase E (next) → reduit rebuild 30min → 10min, air-gap ready
+Phase F (after) → -1 VM, simplification ops
+```
+
+---
+
 ## Decisions architecturales
 
 | Composant | Choix initial | Choix final | Raison |
