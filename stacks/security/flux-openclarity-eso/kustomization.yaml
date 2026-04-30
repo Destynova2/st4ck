@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# OpenClarity ESO + cert pipeline (Phase 1a/1b-3) — split out of
+# ../flux/kustomization.yaml so the openclarity HelmRelease can `dependsOn`
+# this Flux Kustomization (HelmRelease.spec.dependsOn cannot reference
+# arbitrary CRDs — only other HelmReleases — so we wrap the prerequisite
+# objects in their own Flux Kustomization layer).
+#
+# Pipeline gated by this kustomization:
+#   1. CNPG creates openclarity-pg-app Secret
+#   2. PushSecret openclarity-pg-mirror copies it into OpenBao at
+#      secret/security/db/openclarity
+#   3. ExternalSecret openclarity-pg-credentials renders the chart-shaped
+#      Secret OpenClarity reads as externalPostgresql.auth.existingSecret
+#   4. cert-manager Certificates render the 4 CNPG external certs
+#
+# Wired by clusters/management/security-openclarity.yaml (Flux Kustomization
+# CRs: security-openclarity-eso → security-openclarity).
+resources:
+  - external-secrets-openclarity.yaml
+  - openclarity-pg-certs.yaml

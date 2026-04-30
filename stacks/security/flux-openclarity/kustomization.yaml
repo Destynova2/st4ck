@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# OpenClarity HelmRelease (split out of ../flux/kustomization.yaml so a
+# Flux Kustomization wrapper can gate it on the security-openclarity-eso
+# Kustomization — see clusters/management/security-openclarity.yaml).
+#
+# Why split: HelmRelease.spec.dependsOn only accepts other HelmReleases
+# (no Kind discriminator). The chart references
+# externalPostgresql.auth.existingSecret: openclarity-pg-credentials which
+# is rendered by an ExternalSecret in the EOS pipeline. Without this
+# split, Flux installs the chart immediately and the install fails until
+# ESO catches up — wastes ~5min per bootstrap on retries.
+resources:
+  - helmrelease-openclarity.yaml
+configMapGenerator:
+  - name: openclarity-values
+    namespace: security
+    files:
+      - values.yaml=values-openclarity.yaml
+generatorOptions:
+  disableNameSuffixHash: true

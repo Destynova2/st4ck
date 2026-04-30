@@ -12,3 +12,9 @@ resources:
   - ../../stacks/identity/flux
   - ../../stacks/security/flux
   - ../../stacks/storage/flux
+  # OpenClarity install is a two-phase Flux Kustomization (eso → HR) that
+  # gates the chart on the ExternalSecret pipeline reaching Ready. The two
+  # Kustomization CRs declared in security-openclarity.yaml each point at
+  # their own sub-folder under stacks/security/ (flux-openclarity-eso/ and
+  # flux-openclarity/) — they are NOT sub-resources of this kustomization.
+  - security-openclarity.yaml

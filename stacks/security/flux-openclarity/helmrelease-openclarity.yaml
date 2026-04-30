@@ -43,4 +43,12 @@ spec:
   # Wait for the openclarity-pg-credentials Secret (rendered by ESO from
   # the PushSecret-mirrored CNPG creds) before installing — chart's
   # externalPostgresql.auth.existingSecret references this Secret.
+  #
+  # The dependency is enforced at the Flux Kustomization layer (NOT here)
+  # because HelmRelease.spec.dependsOn cannot reference Kustomizations or
+  # ExternalSecrets — only other HelmReleases. The wrapping Kustomization
+  # `security-openclarity` (clusters/management/security-openclarity.yaml)
+  # dependsOn `security-openclarity-eso`, which only reaches Ready once
+  # the ExternalSecret has materialised the openclarity-pg-credentials
+  # Secret. This HR is therefore only applied after the Secret exists.
   dependsOn: []

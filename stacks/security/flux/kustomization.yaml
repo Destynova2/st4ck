@@ -8,21 +8,23 @@ resources:
   - helmrelease-trivy.yaml
   - helmrelease-tetragon.yaml
   - helmrelease-kyverno.yaml
-  # ADR-028 wave 2: OpenClarity now Flux-owned via OCIRepository.
-  - helmrelease-openclarity.yaml
   - cosign-policy.yaml
   - external-secret-cosign.yaml
-  # Phase 1a-3: openclarity-pg credentials. PushSecret mirrors CNPG's
-  # openclarity-pg-app into OpenBao at secret/security/db/openclarity,
-  # then ExternalSecret renders the chart-shaped Secret OpenClarity reads.
-  - external-secrets-openclarity.yaml
-  # Phase 1b-3: CNPG external certs (4 per cluster, OpenBao PKI signed)
-  - openclarity-pg-certs.yaml
   # Phase 1b-5: scan workload isolation (PriorityClass + ResourceQuota).
   # Postmortem 2026-04-27 — Trivy OOM on grafana scan + lack of cap on
   # aggregate scan footprint. Belt-and-suspenders alongside per-job
   # memory limits in values-trivy.yaml.
   - scan-isolation.yaml
+  #
+  # NOTE: OpenClarity HelmRelease + its ESO/cert pipeline split into
+  #   ../flux-openclarity-eso/   (PushSecret + ExternalSecret + 4 CNPG certs)
+  #   ../flux-openclarity/       (HelmRelease + values configmap)
+  # wired by clusters/management/security-openclarity.yaml as two Flux
+  # Kustomizations (security-openclarity dependsOn security-openclarity-eso).
+  # Why split: HelmRelease.spec.dependsOn only accepts other HelmReleases
+  # (no Kind discriminator). The chart needs the openclarity-pg-credentials
+  # Secret (rendered by ESO) at install time, so we gate the install on
+  # the ESO pipeline reaching Ready via Kustomization-level dependsOn.
 configMapGenerator:
   - name: trivy-values
     namespace: security
@@ -36,9 +38,5 @@ configMapGenerator:
     namespace: security
     files:
       - values.yaml=values-kyverno.yaml
-  - name: openclarity-values
-    namespace: security
-    files:
-      - values.yaml=values-openclarity.yaml
 generatorOptions:
   disableNameSuffixHash: true

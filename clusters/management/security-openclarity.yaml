@@ -1,0 +1,66 @@
+---
+# OpenClarity install pipeline (Phase 1a/1b-3) split into two Flux
+# Kustomizations so the HelmRelease is gated on the ExternalSecret
+# pipeline reaching Ready.
+#
+# Why split (not a single Kustomization with `wait: true`):
+#   The chart references externalPostgresql.auth.existingSecret:
+#   openclarity-pg-credentials. That Secret is produced by the pipeline
+#     CNPG openclarity-pg-app
+#       → PushSecret openclarity-pg-mirror (→ OpenBao secret/security/db/openclarity)
+#         → ExternalSecret openclarity-pg-credentials
+#           → K8s Secret openclarity-pg-credentials
+#   If we put the HelmRelease in the same Kustomization as the ESO
+#   objects, Flux applies them in parallel and the chart install fails
+#   until ESO catches up (~5min retry loop). HelmRelease.spec.dependsOn
+#   only accepts other HelmReleases (no Kind discriminator), so we
+#   cannot gate on the ExternalSecret directly inside the HR.
+#
+# Solution: two Flux Kustomizations with Kustomization-level dependsOn.
+# Phase 1 — security-openclarity-eso applies the PushSecret + ExternalSecret
+#   + 4 cert-manager Certificates with `wait: true`, blocking until the
+#   openclarity-pg-credentials Secret + cert secrets exist.
+# Phase 2 — security-openclarity applies the HelmRelease, gated on phase 1.
+#
+# Both Kustomizations live in the same management GitRepository as the
+# rest of the stack — sharing the postBuild substitution context
+# inherited from the root `management` Flux Kustomization.
+
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: security-openclarity-eso
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: management
+    namespace: flux-system
+  path: ./stacks/security/flux-openclarity-eso
+  prune: true
+  # wait: true blocks Ready until the ExternalSecret AND every
+  # cert-manager Certificate report Ready. Down-stream Kustomization
+  # security-openclarity won't apply until then.
+  wait: true
+  timeout: 5m
+  # Inherit the root substitute map (s3_url, *_bucket); harmless even
+  # if the values files in this path don't reference them.
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: security-openclarity
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: management
+    namespace: flux-system
+  path: ./stacks/security/flux-openclarity
+  prune: true
+  wait: true
+  timeout: 15m  # matches HR install timeout (chart spawns 11+ pods)
+  dependsOn:
+    - name: security-openclarity-eso
