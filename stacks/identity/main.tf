@@ -266,7 +266,7 @@ resource "kubernetes_job_v1" "hydra_oidc_client" {
             # only at user login attempt. Capture HTTP status code
             # explicitly: 201 = created, 409 = already registered (both
             # OK), anything else = exit 1 with response body for triage.
-            HTTP_CODE=$(curl -s -o /tmp/hydra-resp.txt -w "%{http_code}" \
+            HTTP_CODE=$(curl -s -o /tmp/hydra-resp.txt -w "%%{http_code}" \
               -X POST http://hydra-admin.identity.svc:4445/admin/clients \
               -H 'Content-Type: application/json' \
               -d "{
