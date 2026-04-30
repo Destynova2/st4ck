@@ -762,6 +762,14 @@ SCW_CI_VARS = \
 	-var="vpc_attach_instance=$(CI_VPC_ATTACH)"
 
 scaleway-ci-init: ## terraform init for CI VM (context-scoped state)
+	@# Fix #6: scaleway-ci-init swaps backends mid-rebuild — first run uses
+	@# LOCAL_BACKEND=1 (vault-backend lives ON the CI VM), then subsequent
+	@# runs migrate to vault-backend. tofu's local cache (.terraform/) holds
+	@# the previous backend config and refuses to switch with
+	@# "Backend configuration changed". Wiping the cache before init makes
+	@# every invocation idempotent across context/backend switches.
+	@# Postmortem 2026-04-29.
+	@rm -rf $(TF_SCW_CI)/.terraform/ $(TF_SCW_CI)/.terraform.lock.hcl
 	$(call tf_init,$(TF_SCW_CI),$(STATE_CI))
 
 scaleway-ci-apply: scaleway-ci-init ## Deploy CI VM for the current context
