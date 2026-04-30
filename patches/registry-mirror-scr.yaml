@@ -1,0 +1,50 @@
+# Talos machine config patch — redirect upstream container registries
+# to Scaleway Container Registry mirror (intra-VPC, no internet egress).
+#
+# Postmortem 2026-04-30 — public registry pulls dominated rebuild time
+# (~10 min PKI mostly waiting on quay.io/openbao + docker.io/busybox).
+#
+# Endpoint corresponds to stacks/registry-mirror/ output `registry_endpoint`.
+# Update the host below if the stack is deployed in a different region:
+#   fr-par → rg.fr-par.scw.cloud
+#   nl-ams → rg.nl-ams.scw.cloud
+#   pl-waw → rg.pl-waw.scw.cloud
+#
+# Apply with:
+#   talosctl patch mc -p @patches/registry-mirror-scr.yaml \
+#       --nodes <node-ip> --talosconfig=...
+#
+# Or include in talos-cluster module config_patches once Phase D ships.
+#
+# This patch coexists with patches/registry-mirror.yaml (mirror.gcr.io
+# fallback for docker.io). Both can be applied — Talos tries endpoints
+# in declared order, so list SCR FIRST for it to take precedence.
+machine:
+  registries:
+    mirrors:
+      docker.io:
+        endpoints:
+          - https://rg.fr-par.scw.cloud/st4ck-mirror
+      quay.io:
+        endpoints:
+          - https://rg.fr-par.scw.cloud/st4ck-mirror
+      ghcr.io:
+        endpoints:
+          - https://rg.fr-par.scw.cloud/st4ck-mirror
+      registry.k8s.io:
+        endpoints:
+          - https://rg.fr-par.scw.cloud/st4ck-mirror
+      gcr.io:
+        endpoints:
+          - https://rg.fr-par.scw.cloud/st4ck-mirror
+      public.ecr.aws:
+        endpoints:
+          - https://rg.fr-par.scw.cloud/st4ck-mirror
+    config:
+      "rg.fr-par.scw.cloud":
+        # Public SCR namespace — no auth required for pulls.
+        # If the namespace is later switched to private (var.is_public=false),
+        # add an SCR API key generated from envs/scaleway/iam:
+        # auth:
+        #   username: nologin
+        #   password: <scw-secret-key>
