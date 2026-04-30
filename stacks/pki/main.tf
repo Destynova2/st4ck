@@ -319,13 +319,119 @@ resource "helm_release" "openbao_app" {
   namespace        = "secrets"
   create_namespace = false
 
-  values = [file("${path.module}/flux/values-openbao-app.yaml")]
+  # Bootstrap with 1 replica, then scale to 3 via terraform_data below.
+  # Same OpenBao 2.x split-brain race as openbao-infra (issue #2274) —
+  # see the comment block on helm_release.openbao_infra above.
+  # Postmortem 2026-04-29 (#11) — fix #5 only sequenced openbao-infra,
+  # openbao-app continued to deploy 3 pods simultaneously and split-brain
+  # silently (the eso-readonly + admin endpoints rotated requests to
+  # empty followers, breaking ESO + day-2 admin login intermittently).
+  values = [
+    file("${path.module}/flux/values-openbao-app.yaml"),
+    yamlencode({
+      server = {
+        ha = {
+          replicas = 1
+        }
+      }
+    }),
+  ]
 
   depends_on = [
     kubernetes_namespace.secrets,
     kubernetes_secret.openbao_seal_key,
     kubectl_manifest.openbao_app_cert,
   ]
+}
+
+# Scale openbao-app to 3 once pod-0 is established + initialized.
+# Mirror of terraform_data.openbao_infra_scale_to_ha — same split-brain
+# detection + recovery logic, with name+selector swapped from infra → app.
+# Idempotent — kubectl scale is no-op if already at desired replicas, and
+# the recovery path is a no-op when raft is healthy with 3 peers.
+# Postmortem 2026-04-29 (#11).
+resource "terraform_data" "openbao_app_scale_to_ha" {
+  triggers_replace = {
+    helm_id = helm_release.openbao_app.id
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      set -e
+      KC="${var.kubeconfig_path}"
+      echo "Waiting for openbao-app-0 to be Ready, active leader, AND initialize blocks done…"
+      # CRITICAL: wait until ALL initialize {} blocks have materialized.
+      # openbao-app's only initialize block mounts secret/ as KV v2; we
+      # check by listing mounts and grepping for it. Without this gate,
+      # pods 1+2 race with pod-0's init → split-brain.
+      # Same pattern as openbao_infra_scale_to_ha (postmortem 2026-04-27).
+      K8S_AUTH=0
+      for i in $(seq 1 90); do
+        READY=$(kubectl --kubeconfig=$KC -n secrets get pod openbao-app-0 -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || true)
+        if [ "$READY" = "true" ]; then
+          K8S_AUTH=$(kubectl --kubeconfig=$KC -n secrets exec -i openbao-app-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true sh -c "
+            bao secrets list 2>/dev/null | grep -c '^secret/'
+          " 2>/dev/null || echo 0)
+          if [ "$K8S_AUTH" = "1" ]; then
+            echo "  pod-0 ready + initialize blocks done (attempt $i)"
+            break
+          fi
+        fi
+        sleep 5
+      done
+      if [ "$K8S_AUTH" != "1" ]; then
+        echo "ERROR: openbao-app-0 not ready after 7.5min — aborting before scale to prevent split-brain"
+        exit 1
+      fi
+      # Extra safety margin so pod-0 is fully settled as quorum-of-1 leader
+      sleep 10
+      echo "Scaling openbao-app to 3 replicas…"
+      kubectl --kubeconfig=$KC -n secrets scale statefulset openbao-app --replicas=3
+      echo "Waiting for pods 1+2 to retry_join + become Ready…"
+      kubectl --kubeconfig=$KC -n secrets wait pod openbao-app-1 openbao-app-2 --for=condition=Ready --timeout=240s || true
+
+      # ─── Split-brain detection + recovery (mirror of #5) ───────────
+      # Same recovery procedure as openbao-infra: scale 3→1, delete PVCs
+      # of pods 1+2, scale back. Expected count is 3 peers; anything less
+      # means split-brain on pod-0's perspective.
+      check_peers() {
+        kubectl --kubeconfig=$KC -n secrets exec -i openbao-app-0 -c openbao -- \
+          env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true sh -c \
+          "bao operator raft list-peers 2>/dev/null | grep -c '^node-' || echo 0" \
+          2>/dev/null || echo 0
+      }
+      sleep 10
+      PEERS=$(check_peers)
+      echo "Initial raft peer count from pod-0 perspective: $PEERS"
+      if [ "$PEERS" != "3" ]; then
+        echo "RECOVERY: split-brain detected (peers=$PEERS, want=3). Wiping pods 1+2 PVCs."
+        kubectl --kubeconfig=$KC -n secrets scale statefulset openbao-app --replicas=1
+        # Wait for pods 1+2 to terminate before deleting PVCs
+        for i in $(seq 1 30); do
+          REM=$(kubectl --kubeconfig=$KC -n secrets get pods -l app.kubernetes.io/instance=openbao-app --no-headers 2>/dev/null | grep -c -E 'openbao-app-(1|2)' || echo 0)
+          [ "$REM" = "0" ] && break
+          sleep 5
+        done
+        # Delete PVCs (StatefulSet creates them as data-openbao-app-<idx>)
+        kubectl --kubeconfig=$KC -n secrets delete pvc data-openbao-app-1 data-openbao-app-2 --ignore-not-found --wait=true --timeout=60s || true
+        sleep 5
+        echo "  Re-scaling to 3 with fresh raft state for pods 1+2"
+        kubectl --kubeconfig=$KC -n secrets scale statefulset openbao-app --replicas=3
+        kubectl --kubeconfig=$KC -n secrets wait pod openbao-app-1 openbao-app-2 --for=condition=Ready --timeout=240s || true
+        sleep 15
+        PEERS=$(check_peers)
+        echo "Post-recovery raft peer count: $PEERS"
+        if [ "$PEERS" != "3" ]; then
+          echo "ERROR: raft still split-brain after recovery (peers=$PEERS). Manual intervention required."
+          echo "  Inspect: kubectl --kubeconfig=$KC -n secrets exec openbao-app-0 -- bao operator raft list-peers"
+          exit 1
+        fi
+      fi
+      echo "OpenBao app raft healthy: 3 peers."
+    EOT
+  }
+
+  depends_on = [helm_release.openbao_app]
 }
 
 # ─── cert-manager — automatic TLS from infra sub-CA ────────────────

@@ -1,5 +1,12 @@
 # OpenBao App — application secrets
 # HA mode with Raft storage (3 replicas) + static seal + self-init + TLS
+#
+# Bootstrap with replicas: 1 — same canonical pattern as openbao-infra.
+# tofu's terraform_data.openbao_app_scale_to_ha sequences the 1→3 scale
+# AFTER pod-0 is established as quorum-of-1 leader. Without this, the
+# OpenBao 2.x race (issue #2274) lets all 3 pods self-init their own
+# 1-node Raft cluster (split-brain). Mirror of fix #5 for openbao-infra.
+# Postmortem 2026-04-29 (#11).
 
 global:
   tlsDisable: false
@@ -13,9 +20,10 @@ server:
 
   ha:
     enabled: true
-    replicas: 3
+    replicas: 1
     raft:
       enabled: true
+      setNodeId: true
       config: |
         ui = true
 
@@ -28,6 +36,28 @@ server:
 
         storage "raft" {
           path = "/openbao/data"
+
+          # retry_join: pods 1+2 wait until pod-0 is the active leader,
+          # then auto-join its Raft cluster. Without this each pod
+          # initializes its own 1-node Raft cluster (= no HA, service
+          # round-robin sends requests to empty followers). Same fix as
+          # openbao-infra (postmortem 2026-04-26 + 2026-04-29).
+          # leader_tls_servername MUST match a SAN on openbao-app-tls.
+          retry_join {
+            leader_api_addr       = "https://openbao-app-0.openbao-app-internal:8200"
+            leader_tls_servername = "openbao-app"
+            leader_ca_cert_file   = "/openbao/userconfig/openbao-app-tls/ca.crt"
+          }
+          retry_join {
+            leader_api_addr       = "https://openbao-app-1.openbao-app-internal:8200"
+            leader_tls_servername = "openbao-app"
+            leader_ca_cert_file   = "/openbao/userconfig/openbao-app-tls/ca.crt"
+          }
+          retry_join {
+            leader_api_addr       = "https://openbao-app-2.openbao-app-internal:8200"
+            leader_tls_servername = "openbao-app"
+            leader_ca_cert_file   = "/openbao/userconfig/openbao-app-tls/ca.crt"
+          }
         }
 
         service_registration "kubernetes" {}
