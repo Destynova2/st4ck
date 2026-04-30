@@ -67,13 +67,28 @@ metadata:
     app.kubernetes.io/component: scan-isolation
 spec:
   hard:
-    # Aggregate cap across ALL pods in security ns (operators + scan Jobs +
-    # OpenClarity + Kyverno + Tetragon). Sized for ~6-worker dev cluster.
-    # Tune up for larger clusters by changing context vars later.
-    requests.cpu: "16"
-    requests.memory: "32Gi"
-    limits.cpu: "32"
-    limits.memory: "64Gi"
+    # Aggregate cap across ALL pods in security ns. Sized for the realistic
+    # toolchain footprint on a ~6-worker dev cluster:
+    #   Tetragon DaemonSet  ~3 CPU (6 nodes * 500m)
+    #   Kyverno controllers ~2 CPU (4 ctrl * 500m, plus admission peaks)
+    #   OpenClarity         ~3 CPU (apiserver + ui + orchestrator + cnpg)
+    #   Trivy operator      ~1.5 CPU (operator + trivy-server)
+    #   Active scan jobs    ~6 CPU (concurrentScanJobsLimit=2 * ~2 CPU each)
+    #   Headroom for spikes / retries / postgres workers ~5 CPU
+    #   ─────────────────────────────────────────────────────
+    #   Total minimum       ~28 CPU; quota=48 gives ~70% margin.
+    #
+    # Postmortem 2026-04-29: previous cap of 32 was sized for trivy scan
+    # jobs in isolation — when the security ns also hosts the toolchain
+    # (kyverno + tetragon + openclarity + trivy + scan jobs) the
+    # LimitRange default cpu: "1" applied to containers without explicit
+    # limits exhausted the quota before scans could start.
+    # Pair with explicit limits.cpu in values-tetragon, values-kyverno,
+    # values-openclarity, values-trivy.
+    requests.cpu: "20"
+    requests.memory: "48Gi"
+    limits.cpu: "48"
+    limits.memory: "96Gi"
     # Cap concurrent pods so a runaway scan loop can't fork-bomb the ns.
     pods: "150"
     # Cap PVCs (Trivy server PVC + openclarity-pg + maybe future scanners).

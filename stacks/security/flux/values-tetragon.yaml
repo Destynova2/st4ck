@@ -13,9 +13,27 @@ extraHostPathMounts:
   - name: sys-kernel-tracing
     mountPath: /sys/kernel/tracing
 
+# Resources for the tetragon container (per-node DaemonSet pod).
+# limits.cpu REQUIRED by security-scan-quota — without it the LimitRange
+# default of 1 CPU multiplies across the DaemonSet (6 nodes -> 6 CPUs)
+# and exhausts the namespace quota. Postmortem 2026-04-29.
 resources:
   requests:
     cpu: 100m
     memory: 128Mi
   limits:
+    cpu: 500m
     memory: 512Mi
+
+# Tetragon also schedules an `export-stdout` sidecar (hubble exporter) per
+# node. Its default request is unset, so the LimitRange would charge it
+# 1 CPU * 6 nodes against the quota too. Pin it small.
+export:
+  stdout:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi

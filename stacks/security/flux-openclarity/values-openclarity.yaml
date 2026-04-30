@@ -32,11 +32,30 @@ scanners:
     enabled: false  # Trivy operator already handles secret scanning
 
 # ─── Backend (UI + API + Postgres) ──────────────────────────────────
+# Every chart sub-component below needs an explicit limits.cpu — without
+# it, the security namespace LimitRange (default cpu: "1") fills in 1 CPU
+# per container and exhausts security-scan-quota before scan jobs start.
+# Postmortem 2026-04-29 (rebuild quota audit).
 ui:
   enabled: true
   service:
     type: ClusterIP
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
 
+# Database: use external CNPG cluster (openclarity-pg) instead of the
+# chart's bundled Bitnami postgres (paywall post-Aug-2025) or SQLite
+# (no concurrent writes, harder backup). The credentials secret is
+# re-keyed by stacks/security/main.tf from CNPG's openclarity-pg-app.
+#
+# NOTE: previously this file had TWO `apiserver:` blocks — YAML last-wins
+# silently dropped the first block's `replicaCount` and `resources`.
+# Consolidated into one block here. Postmortem 2026-04-29.
 apiserver:
   replicaCount: 1
   resources:
@@ -44,13 +63,8 @@ apiserver:
       cpu: 100m
       memory: 256Mi
     limits:
+      cpu: 500m
       memory: 1Gi
-
-# Database: use external CNPG cluster (openclarity-pg) instead of the
-# chart's bundled Bitnami postgres (paywall post-Aug-2025) or SQLite
-# (no concurrent writes, harder backup). The credentials secret is
-# re-keyed by stacks/security/main.tf from CNPG's openclarity-pg-app.
-apiserver:
   database:
     postgresql:
       enabled: false
@@ -81,6 +95,13 @@ orchestrator:
     create: true
     automountServiceAccountToken: true
   kubernetes: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
 # Container Runtime Discovery DaemonSet — incompatible with Talos's
 # read-only root filesystem (it writes to /etc/containers; that's a
@@ -101,12 +122,14 @@ crDiscoveryServer:
     st4ck.io/disable-cr-discovery: "true"
 
 # ─── Scanner job resources ───────────────────────────────────────────
+# limits.cpu REQUIRED by security-scan-quota (postmortem 2026-04-29).
 scannerJobs:
   resources:
     requests:
       cpu: 100m
       memory: 256Mi
     limits:
+      cpu: 1000m
       memory: 2Gi  # Grype DB can grow ~1GB
   ttlSecondsAfterFinished: 300
 

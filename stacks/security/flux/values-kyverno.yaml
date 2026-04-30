@@ -1,5 +1,9 @@
 # Kyverno — Kubernetes policy engine
 # Validates, mutates, and generates resources
+#
+# All four controller containers MUST set limits.cpu — without it the
+# security ns LimitRange (default cpu: "1") fills in 1 CPU each → 4 CPUs
+# silently consumed against security-scan-quota. Postmortem 2026-04-29.
 
 replicaCount: 1
 
@@ -13,22 +17,46 @@ admissionController:
         cpu: 100m
         memory: 128Mi
       limits:
+        cpu: 500m
         memory: 384Mi
   webhookConfiguration:
     failurePolicy: Fail
 
 backgroundController:
   replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 384Mi
 
 cleanupController:
   replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
 
 reportsController:
   replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 384Mi
 
+# Top-level kyverno chart fallback (some sub-charts read from here).
 resources:
   requests:
     cpu: 100m
     memory: 128Mi
   limits:
+    cpu: 500m
     memory: 384Mi
