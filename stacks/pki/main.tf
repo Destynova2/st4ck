@@ -242,12 +242,17 @@ resource "terraform_data" "openbao_infra_scale_to_ha" {
       # too (initialize blocks run sequentially per OpenBao docs).
       # Without this check, pods 1+2 race with pod-0's init → split-brain.
       # Postmortem 2026-04-27 (#80).
+      # Bug #32 fix (postmortem 2026-04-30 PHASE D.3): the previous probe
+      # called `bao auth list` without auth → 403 → grep -c → 0 →
+      # K8S_AUTH stays 0 → script hangs the full 7.5min then exits "not
+      # ready" even though pod is actually fine. Login first using the
+      # admin password baked into pod env (BAO_ADMIN_PASSWORD).
       K8S_AUTH=0
       for i in $(seq 1 90); do
         READY=$(kubectl --kubeconfig=$KC -n secrets get pod openbao-infra-0 -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || true)
         if [ "$READY" = "true" ]; then
           K8S_AUTH=$(kubectl --kubeconfig=$KC -n secrets exec -i openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true sh -c "
-            bao auth list 2>/dev/null | grep -c '^kubernetes/'
+            bao login -method=userpass username=admin password=\$BAO_ADMIN_PASSWORD >/dev/null 2>&1 && bao auth list 2>/dev/null | grep -c '^kubernetes/'
           " 2>/dev/null || echo 0)
           if [ "$K8S_AUTH" = "1" ]; then
             echo "  pod-0 ready + initialize blocks done (attempt $i)"
@@ -278,19 +283,39 @@ resource "terraform_data" "openbao_infra_scale_to_ha" {
       # observed pods 1+2 self-electing as their own raft leaders
       # (separate single-peer rafts) instead of joining pod-0's quorum.
       # Manual recovery was: scale 3→1, delete PVCs of pods 1+2, scale
-      # back. Now automated. The expected count is 3 peers; anything
-      # less means split-brain on pod-0's perspective.
-      check_peers() {
-        kubectl --kubeconfig=$KC -n secrets exec -i openbao-infra-0 -c openbao -- \
-          env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true sh -c \
-          "bao operator raft list-peers 2>/dev/null | grep -c '^node-' || echo 0" \
-          2>/dev/null || echo 0
+      # back. Now automated.
+      #
+      # Bug #32 (postmortem 2026-04-30 PHASE D.3): the previous probe
+      # called `bao operator raft list-peers` which requires auth (403
+      # when called without) AND requires an active leader (500 when
+      # only pod-0 is alive in a 3-replica STS during recovery scale-down).
+      # Combined with `2>/dev/null | grep -c | echo 0` fallback → always
+      # 0 → false positive split-brain → recursive recovery loop.
+      #
+      # Fix: use kubelet readiness as the source of truth. The helm chart's
+      # readiness probe hits /v1/sys/health which only returns 200 when the
+      # pod is part of an active cluster (leader OR follower replicating).
+      # If all 3 pods report Ready=true, raft is healthy by definition.
+      # Bug #32 (PHASE D.3): label selector matches the agent-injector pod
+      # too. Filter by name pattern to count only StatefulSet pods.
+      check_ready_count() {
+        COUNT=0
+        for p in openbao-infra-0 openbao-infra-1 openbao-infra-2; do
+          R=$(kubectl --kubeconfig=$KC -n secrets get pod $p -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || echo false)
+          [ "$R" = "true" ] && COUNT=$((COUNT+1))
+        done
+        echo $COUNT
       }
-      sleep 10
-      PEERS=$(check_peers)
-      echo "Initial raft peer count from pod-0 perspective: $PEERS"
-      if [ "$PEERS" != "3" ]; then
-        echo "RECOVERY: split-brain detected (peers=$PEERS, want=3). Wiping pods 1+2 PVCs."
+      # Wait up to 60s for pods 1+2 to become Ready before declaring split-brain
+      READY=0
+      for i in $(seq 1 12); do
+        sleep 5
+        READY=$(check_ready_count)
+        [ "$READY" = "3" ] && break
+      done
+      echo "Initial Ready pod count: $READY"
+      if [ "$READY" != "3" ]; then
+        echo "RECOVERY: split-brain detected (ready=$READY, want=3). Wiping pods 1+2 PVCs."
         kubectl --kubeconfig=$KC -n secrets scale statefulset openbao-infra --replicas=1
         # Wait for pods 1+2 to terminate before deleting PVCs
         for i in $(seq 1 30); do
@@ -303,17 +328,29 @@ resource "terraform_data" "openbao_infra_scale_to_ha" {
         sleep 5
         echo "  Re-scaling to 3 with fresh raft state for pods 1+2"
         kubectl --kubeconfig=$KC -n secrets scale statefulset openbao-infra --replicas=3
+        # Bug #32 fix: wait for pods 1+2 to EXIST before kubectl wait (otherwise
+        # `kubectl wait` returns immediately with `pods "openbao-infra-2" not found`
+        # → false-pass through `|| true` → premature ready check → loop).
+        for i in $(seq 1 30); do
+          if kubectl --kubeconfig=$KC -n secrets get pod openbao-infra-1 openbao-infra-2 >/dev/null 2>&1; then break; fi
+          sleep 2
+        done
         kubectl --kubeconfig=$KC -n secrets wait pod openbao-infra-1 openbao-infra-2 --for=condition=Ready --timeout=240s || true
-        sleep 15
-        PEERS=$(check_peers)
-        echo "Post-recovery raft peer count: $PEERS"
-        if [ "$PEERS" != "3" ]; then
-          echo "ERROR: raft still split-brain after recovery (peers=$PEERS). Manual intervention required."
-          echo "  Inspect: kubectl --kubeconfig=$KC -n secrets exec openbao-infra-0 -- bao operator raft list-peers"
+        # Wait up to 60s for raft membership to converge after the rejoin
+        READY=0
+        for i in $(seq 1 12); do
+          sleep 5
+          READY=$(check_ready_count)
+          [ "$READY" = "3" ] && break
+        done
+        echo "Post-recovery Ready pod count: $READY"
+        if [ "$READY" != "3" ]; then
+          echo "ERROR: raft still split-brain after recovery (ready=$READY). Manual intervention required."
+          echo "  Inspect: kubectl --kubeconfig=$KC -n secrets describe pod openbao-infra-1 openbao-infra-2"
           exit 1
         fi
       fi
-      echo "OpenBao raft healthy: 3 peers."
+      echo "OpenBao infra raft healthy: 3 pods Ready."
     EOT
   }
 
@@ -405,19 +442,40 @@ resource "terraform_data" "openbao_app_scale_to_ha" {
 
       # ─── Split-brain detection + recovery (mirror of #5) ───────────
       # Same recovery procedure as openbao-infra: scale 3→1, delete PVCs
-      # of pods 1+2, scale back. Expected count is 3 peers; anything less
-      # means split-brain on pod-0's perspective.
-      check_peers() {
-        kubectl --kubeconfig=$KC -n secrets exec -i openbao-app-0 -c openbao -- \
-          env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true sh -c \
-          "bao operator raft list-peers 2>/dev/null | grep -c '^node-' || echo 0" \
-          2>/dev/null || echo 0
+      # of pods 1+2, scale back.
+      #
+      # Bug #32 (postmortem 2026-04-30 PHASE D.3): the previous probe
+      # called `bao operator raft list-peers` which requires auth. The
+      # openbao-app stack has NO userpass admin enabled (only openbao-infra
+      # does — see secrets.tf seed), so the call returned 403. Output
+      # piped through `grep -c` always returned 0 → false positive
+      # split-brain → recursive recovery loop that never converges.
+      #
+      # Fix: use kubelet readiness as the source of truth. The helm chart's
+      # readiness probe hits /v1/sys/health which only returns 200 when the
+      # pod is part of an active cluster (leader OR follower replicating).
+      # If all 3 pods report Ready=true, raft is healthy by definition.
+      # Bug #32 (PHASE D.3): name-based count (avoid label collision with
+      # agent-injector). openbao-app has no agent-injector but kept consistent
+      # with infra for safety.
+      check_ready_count() {
+        COUNT=0
+        for p in openbao-app-0 openbao-app-1 openbao-app-2; do
+          R=$(kubectl --kubeconfig=$KC -n secrets get pod $p -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || echo false)
+          [ "$R" = "true" ] && COUNT=$((COUNT+1))
+        done
+        echo $COUNT
       }
-      sleep 10
-      PEERS=$(check_peers)
-      echo "Initial raft peer count from pod-0 perspective: $PEERS"
-      if [ "$PEERS" != "3" ]; then
-        echo "RECOVERY: split-brain detected (peers=$PEERS, want=3). Wiping pods 1+2 PVCs."
+      # Wait up to 60s for pods 1+2 to become Ready after scale → 3
+      READY=0
+      for i in $(seq 1 12); do
+        sleep 5
+        READY=$(check_ready_count)
+        [ "$READY" = "3" ] && break
+      done
+      echo "Initial Ready pod count: $READY"
+      if [ "$READY" != "3" ]; then
+        echo "RECOVERY: split-brain detected (ready=$READY, want=3). Wiping pods 1+2 PVCs."
         kubectl --kubeconfig=$KC -n secrets scale statefulset openbao-app --replicas=1
         # Wait for pods 1+2 to terminate before deleting PVCs
         for i in $(seq 1 30); do
@@ -430,17 +488,29 @@ resource "terraform_data" "openbao_app_scale_to_ha" {
         sleep 5
         echo "  Re-scaling to 3 with fresh raft state for pods 1+2"
         kubectl --kubeconfig=$KC -n secrets scale statefulset openbao-app --replicas=3
+        # Bug #32 fix: wait for pods 1+2 to EXIST before kubectl wait (otherwise
+        # `kubectl wait` returns immediately with `pods "openbao-app-2" not found`
+        # → false-pass through `|| true` → premature ready check → loop).
+        for i in $(seq 1 30); do
+          if kubectl --kubeconfig=$KC -n secrets get pod openbao-app-1 openbao-app-2 >/dev/null 2>&1; then break; fi
+          sleep 2
+        done
         kubectl --kubeconfig=$KC -n secrets wait pod openbao-app-1 openbao-app-2 --for=condition=Ready --timeout=240s || true
-        sleep 15
-        PEERS=$(check_peers)
-        echo "Post-recovery raft peer count: $PEERS"
-        if [ "$PEERS" != "3" ]; then
-          echo "ERROR: raft still split-brain after recovery (peers=$PEERS). Manual intervention required."
-          echo "  Inspect: kubectl --kubeconfig=$KC -n secrets exec openbao-app-0 -- bao operator raft list-peers"
+        # Wait up to 60s for raft membership to converge after the rejoin
+        READY=0
+        for i in $(seq 1 12); do
+          sleep 5
+          READY=$(check_ready_count)
+          [ "$READY" = "3" ] && break
+        done
+        echo "Post-recovery Ready pod count: $READY"
+        if [ "$READY" != "3" ]; then
+          echo "ERROR: raft still split-brain after recovery (ready=$READY). Manual intervention required."
+          echo "  Inspect: kubectl --kubeconfig=$KC -n secrets describe pod openbao-app-1 openbao-app-2"
           exit 1
         fi
       fi
-      echo "OpenBao app raft healthy: 3 peers."
+      echo "OpenBao app raft healthy: 3 pods Ready."
     EOT
   }
 

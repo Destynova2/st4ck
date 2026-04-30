@@ -655,7 +655,11 @@ scaleway-image-clean: scaleway-image-init ## Destroy ALL image resources (VM + s
 .PHONY: scaleway-init scaleway-plan scaleway-apply scaleway-destroy
 
 # Resolve the image name for the current REGION from the image stage outputs.
-SCW_IMAGE_NAME = $$($(TF) -chdir=$(TF_SCW_IMAGE) output -raw image_name)
+# Override via SCW_IMAGE_NAME=<name> env var when image stage state is empty
+# (e.g., post-vault-backend-loss recovery — the image already exists in
+# Scaleway, just not in tofu state). Recursively-expanded so the override
+# wins when set on the command line.
+SCW_IMAGE_NAME ?= $$($(TF) -chdir=$(TF_SCW_IMAGE) output -raw image_name)
 
 SCW_CLUSTER_VARS = \
 	-var="context_file=$(CTX_FILE)" \
