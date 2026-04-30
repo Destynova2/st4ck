@@ -194,8 +194,25 @@ resource "kubernetes_config_map" "platform_dashboard" {
 # validates against the live K8s API at PLAN time — fails when the VMRule
 # CRD doesn't exist yet (installed by helm_release.vm_k8s_stack in the same
 # apply). kubectl_manifest is lazy: validation happens at apply time only.
+#
+# Postmortem 2026-04-29 (#25, Phase C resume): vm-k8s-stack moved to Flux
+# (ADR-028) so the VMRule CRD only appears AFTER flux-bootstrap-apply +
+# Flux's first reconcile. On a fresh cluster, the apply hits
+#   "resource [operator.victoriametrics.com/v1beta1/VMRule] isn't valid"
+# and Make stops, blocking the rest of k8s-up. Gate the resource on the
+# CRD existing — first apply leaves count=0 (no VMRule yet), Flux deploys
+# vm-k8s-stack later, then `make k8s-monitoring-apply` again creates the
+# VMRule. The Flux-driven retry loop handles propagation; tofu plan stays
+# converged once the CRD is established.
+data "kubernetes_resources" "vmrule_crd" {
+  api_version    = "apiextensions.k8s.io/v1"
+  kind           = "CustomResourceDefinition"
+  field_selector = "metadata.name=vmrules.operator.victoriametrics.com"
+}
 
 resource "kubectl_manifest" "flux_alerts" {
+  count = length(data.kubernetes_resources.vmrule_crd.objects) > 0 ? 1 : 0
+
   yaml_body = yamlencode({
     apiVersion = "operator.victoriametrics.com/v1beta1"
     kind       = "VMRule"
