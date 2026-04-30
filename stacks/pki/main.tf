@@ -372,26 +372,28 @@ resource "terraform_data" "openbao_app_scale_to_ha" {
       KC="${var.kubeconfig_path}"
       echo "Waiting for openbao-app-0 to be Ready, active leader, AND initialize blocks done…"
       # CRITICAL: wait until ALL initialize {} blocks have materialized.
-      # openbao-app's only initialize block mounts secret/ as KV v2; we
-      # check by listing mounts and grepping for it. Without this gate,
-      # pods 1+2 race with pod-0's init → split-brain.
+      # openbao-app's only initialize block mounts secret/ as KV v2.
+      # Postmortem 2026-04-29 (#22, Phase C resume): the previous probe
+      # used `bao secrets list | grep ^secret/` which requires auth, but
+      # openbao-app has NO userpass admin enabled (only openbao-infra does
+      # — see secrets.tf seed). Loop hung at 0 forever → exit 1.
+      # Auth-free probe: `bao status -format=json` returns initialized=true
+      # once the initialize{} block ran, regardless of seal/auth state.
       # Same pattern as openbao_infra_scale_to_ha (postmortem 2026-04-27).
-      K8S_AUTH=0
+      INIT=0
       for i in $(seq 1 90); do
         READY=$(kubectl --kubeconfig=$KC -n secrets get pod openbao-app-0 -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || true)
         if [ "$READY" = "true" ]; then
-          K8S_AUTH=$(kubectl --kubeconfig=$KC -n secrets exec -i openbao-app-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true sh -c "
-            bao secrets list 2>/dev/null | grep -c '^secret/'
-          " 2>/dev/null || echo 0)
-          if [ "$K8S_AUTH" = "1" ]; then
-            echo "  pod-0 ready + initialize blocks done (attempt $i)"
+          INIT=$(kubectl --kubeconfig=$KC -n secrets exec -i openbao-app-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true sh -c "bao status -format=json 2>/dev/null | grep -c '\"initialized\": true'" 2>/dev/null || echo 0)
+          if [ "$INIT" = "1" ]; then
+            echo "  pod-0 ready + initialized=true (attempt $i)"
             break
           fi
         fi
         sleep 5
       done
-      if [ "$K8S_AUTH" != "1" ]; then
-        echo "ERROR: openbao-app-0 not ready after 7.5min — aborting before scale to prevent split-brain"
+      if [ "$INIT" != "1" ]; then
+        echo "ERROR: openbao-app-0 not initialized after 7.5min — aborting before scale to prevent split-brain"
         exit 1
       fi
       # Extra safety margin so pod-0 is fully settled as quorum-of-1 leader
