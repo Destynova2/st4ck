@@ -74,8 +74,14 @@ resource "kubernetes_namespace" "storage" {
 resource "kubernetes_namespace" "garage" {
   metadata {
     name = "garage"
+    # PSA labels MUST mirror what stacks/storage/flux/namespace.yaml
+    # declares (Flux re-applies the namespace at reconcile, which would
+    # otherwise strip any label not present on both sides). Postmortem
+    # 2026-04-29 — drift caused garage pods to lose enforce: baseline
+    # silently between Flux reconciles.
     labels = {
       "pod-security.kubernetes.io/enforce" = "baseline"
+      "pod-security.kubernetes.io/warn"    = "baseline"
     }
   }
 }
