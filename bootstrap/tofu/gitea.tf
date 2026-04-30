@@ -20,26 +20,45 @@ resource "terraform_data" "gitea_install" {
       GITEA="${var.gitea_internal_url}"
       USER="${var.ci_admin}"
 
+      # ─── Wait for Gitea API (Pattern 1: 1s polling + explicit timeout) ──
+      # Phase F-bis: 60×sleep 2 (max 120s) → 300×sleep 1 (max 300s) with
+      # ~typical detect 2s vs old 4s. HTTP roundtrip on /api/v1/version is
+      # cheap enough to poll every second without flooding the server.
       echo "[gitea] Waiting for API..."
-      for i in $(seq 1 60); do
-        wget -qO /dev/null "$GITEA/api/v1/version" 2>/dev/null && break
-        sleep 2
-      done
-
-      echo "[gitea] Waiting for admin user '$USER' (created host-side via podman exec)..."
-      for i in $(seq 1 60); do
-        if wget -qO /tmp/user.json "$GITEA/api/v1/users/$USER" 2>/dev/null \
-           && grep -q "\"login\"" /tmp/user.json; then
-          echo "[gitea] User '$USER' exists — proceeding"
-          exit 0
+      ready=0
+      for i in $(seq 1 300); do
+        if wget -qO /dev/null "$GITEA/api/v1/version" 2>/dev/null; then
+          echo "[gitea] API ready after $${i}s"
+          ready=1
+          break
         fi
-        sleep 2
+        sleep 1
       done
+      if [ "$ready" -ne 1 ]; then
+        echo "[gitea] ERROR: API not reachable after 300s at $GITEA" >&2
+        exit 1
+      fi
 
-      echo "[gitea] ERROR: admin user '$USER' was not created within 120s" >&2
-      echo "[gitea] Expected: setup.sh on the VM should run:" >&2
-      echo "  podman exec -u git platform-gitea gitea admin user create --username $USER ..." >&2
-      exit 1
+      # ─── Wait for admin user (Pattern 1) ──────────────────────────────
+      # User is created host-side via `podman exec ... gitea admin user create`
+      # (envs/scaleway/ci/setup.sh.tpl). Poll the public users API until present.
+      echo "[gitea] Waiting for admin user '$USER' (created host-side via podman exec)..."
+      found=0
+      for i in $(seq 1 300); do
+        if wget -qO /tmp/user.json "$GITEA/api/v1/users/$USER" 2>/dev/null \
+           && grep -q '"login"' /tmp/user.json; then
+          echo "[gitea] User '$USER' exists — proceeding (after $${i}s)"
+          found=1
+          break
+        fi
+        sleep 1
+      done
+      if [ "$found" -ne 1 ]; then
+        echo "[gitea] ERROR: admin user '$USER' was not created within 300s" >&2
+        echo "[gitea] Expected: setup.sh on the VM should run:" >&2
+        echo "  podman exec -u git platform-gitea gitea admin user create --username $USER ..." >&2
+        exit 1
+      fi
     SH
   }
 }
