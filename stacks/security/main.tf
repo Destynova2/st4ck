@@ -72,9 +72,13 @@ resource "kubernetes_namespace" "security" {
 
 # ─── CNPG external certificates (Phase 1b-3) ───────────────────────
 # Same pattern as stacks/identity/main.tf — see header in
-# stacks/security/flux/openclarity-pg-certs.yaml for the full rationale.
+# stacks/security/flux-openclarity-eso/openclarity-pg-certs.yaml for the
+# full rationale. Files moved out of flux/ during the OpenClarity Flux
+# split (Bug #21 / Phase C resume): the ESO + cert pipeline lives in
+# flux-openclarity-eso/ so the HelmRelease Kustomization (flux-openclarity)
+# can dependsOn it cleanly.
 data "kubectl_file_documents" "openclarity_pg_certs" {
-  content = file("${path.module}/flux/openclarity-pg-certs.yaml")
+  content = file("${path.module}/flux-openclarity-eso/openclarity-pg-certs.yaml")
 }
 
 resource "kubectl_manifest" "openclarity_pg_certs" {
@@ -126,8 +130,9 @@ resource "kubectl_manifest" "openclarity_pg_cluster" {
 }
 
 # Phase 1a-3: openclarity-pg-credentials is no longer materialized by Tofu.
-# The PushSecret + ExternalSecret pair in flux/external-secrets-openclarity.yaml
-# now owns the lifecycle:
+# The PushSecret + ExternalSecret pair in
+# flux-openclarity-eso/external-secrets-openclarity.yaml now owns the
+# lifecycle:
 #   1. CNPG creates openclarity-pg-app on cluster bootstrap
 #   2. PushSecret openclarity-pg-mirror copies it into OpenBao at
 #      secret/security/db/openclarity (rotation-safe, see eso-readonly policy
@@ -192,7 +197,7 @@ resource "kubectl_manifest" "cosign_externalsecrets" {
 }
 
 data "kubectl_file_documents" "openclarity_eso" {
-  content = file("${path.module}/flux/external-secrets-openclarity.yaml")
+  content = file("${path.module}/flux-openclarity-eso/external-secrets-openclarity.yaml")
 }
 
 resource "kubectl_manifest" "openclarity_eso" {
