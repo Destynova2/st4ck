@@ -41,7 +41,6 @@ vmagent:
     scrapeInterval: 30s
     externalLabels:
       cluster: talos
-    scrapeInterval: 30s
 
 # ─── VMAlert (alerting rules evaluation) ────────────────────────────
 vmalert:
