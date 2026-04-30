@@ -659,7 +659,12 @@ scaleway-image-clean: scaleway-image-init ## Destroy ALL image resources (VM + s
 # (e.g., post-vault-backend-loss recovery — the image already exists in
 # Scaleway, just not in tofu state). Recursively-expanded so the override
 # wins when set on the command line.
-SCW_IMAGE_NAME ?= $$($(TF) -chdir=$(TF_SCW_IMAGE) output -raw image_name)
+#
+# Bug #36 (postmortem 2026-04-30 Phase F-bis-2 destroy fail): without
+# `2>/dev/null`, `tofu output` warning text "No outputs found..." (~549
+# chars when state is empty) leaked into the var → Scaleway SDK rejected
+# (limit 128 chars). Strict capture + recipe-level non-empty check.
+SCW_IMAGE_NAME ?= $$($(TF) -chdir=$(TF_SCW_IMAGE) output -raw image_name 2>/dev/null)
 
 SCW_CLUSTER_VARS = \
 	-var="context_file=$(CTX_FILE)" \
@@ -679,9 +684,11 @@ scaleway-plan: scaleway-init
 
 scaleway-apply: scaleway-init ## Create Talos cluster for ENV=$(ENV) INSTANCE=$(INSTANCE) REGION=$(REGION)
 	@test -f "$(CTX_FILE)" || { echo "ERROR: $(CTX_FILE) not found"; exit 1; }
+	@test -n "$(SCW_IMAGE_NAME)" || { echo "ERROR: SCW_IMAGE_NAME empty — image stack has no output. Run 'make scaleway-image-apply REGION=$(REGION)' OR override 'SCW_IMAGE_NAME=<name> make scaleway-apply ...' (Bug #36)"; exit 1; }
 	$(SCW_CLUSTER_ENV) $(TF) -chdir=$(TF_SCALEWAY) apply -auto-approve $(SCW_CLUSTER_VARS)
 
 scaleway-destroy: scaleway-init ## Destroy the Talos cluster for the current context
+	@test -n "$(SCW_IMAGE_NAME)" || { echo "ERROR: SCW_IMAGE_NAME empty — image stack has no output. Run 'make scaleway-image-apply REGION=$(REGION)' OR override 'SCW_IMAGE_NAME=<name> make scaleway-destroy ...' (Bug #36)"; exit 1; }
 	$(SCW_CLUSTER_ENV) $(TF) -chdir=$(TF_SCALEWAY) destroy -auto-approve $(SCW_CLUSTER_VARS)
 
 # ═══════════════════════════════════════════════════════════════════════
