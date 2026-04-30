@@ -26,3 +26,16 @@ variable "dns_subdomain_prefix" {
   type        = string
   default     = "api"
 }
+
+# ─── Shared private network ──────────────────────────────────────────────
+# Bug #31 (postmortem 2026-04-30): cluster looks up the shared PN by name
+# instead of creating its own. The PN is created by the CI stack
+# (envs/scaleway/ci/main.tf as `${ci-prefix}-pn`). One CI VM per env class
+# owns the PN — typically `instance="shared"` for dev, `instance="<region>"`
+# for prod. Override per-env in the cluster context if you run a different
+# CI topology.
+variable "shared_pn_instance" {
+  description = "Instance name of the CI VM that owns the shared PN. Default 'shared' (dev). Use 'eu', 'us', etc. for prod."
+  type        = string
+  default     = "shared"
+}

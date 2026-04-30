@@ -72,6 +72,14 @@ talos/
   old + new coexist.
 - **Single Scaleway project `st4ck`** hosts every env class (dev/staging/prod).
   9 IAM apps scoped per env class × 3 roles (image-builder/cluster/ci).
+- **Shared VPC private network** (Bug #31 fix, postmortem 2026-04-30): the
+  per-env CI VM (default instance `shared` for dev) OWNS the canonical PN
+  `${ci-prefix}-pn` (e.g. `st4ck-dev-shared-fr-par-pn`). Cluster stacks
+  reference it via a read-only data source lookup by name. Order matters:
+  `make scaleway-ci-apply` MUST run before `make scaleway-up`. This avoids
+  the previous chicken/egg where each stack created its own PN, leaving CI
+  + cluster on different L2-isolated PNs (172.16.0.x vs 172.16.8.x).
+  Override via `var.shared_pn_instance` in the cluster context if needed.
 - **Terraform module `talos-cluster`**: generates machine secrets + machine configs
   via the `siderolabs/talos` provider. Each env calls this module then creates
   infra with its own provider (libvirt, scaleway).

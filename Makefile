@@ -750,11 +750,12 @@ scaleway-cp-replace: scaleway-init ## Replace one CP node (NODE=cp-XX) — etcd 
 
 .PHONY: scaleway-ci-init scaleway-ci-apply scaleway-ci-destroy
 
-# CI_VPC_ATTACH (optional) — name of the cluster instance whose VPC the
-# CI VM should join via a private NIC. Used so Flux source-controller can
-# reach Gitea over the VPC (cluster's egress IP isn't in the CI SG, so the
-# public route is dropped). For the dev-shared CI serving dev-mgmt:
-#   make scaleway-ci-apply ENV=dev INSTANCE=shared CI_VPC_ATTACH=mgmt
+# Bug #31 (postmortem 2026-04-30): CI stack now OWNS the shared private
+# network. The cluster stack uses a data source lookup by name. New deploy
+# order REQUIRES the CI to be applied BEFORE the cluster:
+#   make scaleway-ci-apply ENV=dev INSTANCE=shared REGION=fr-par   # creates PN + CI VM
+#   make scaleway-up      ENV=dev INSTANCE=mgmt   REGION=fr-par   # consumes PN
+# The previous `CI_VPC_ATTACH` variable inverted the dependency and is gone.
 SCW_CI_VARS = \
 	-var="context_file=$(CTX_FILE)" \
 	-var="project_id=$(SCW_PROJECT_ID)" \
@@ -763,8 +764,7 @@ SCW_CI_VARS = \
 	-var="scw_image_access_key=$(SCW_IMG_AK)" \
 	-var="scw_image_secret_key=$(SCW_IMG_SK)" \
 	-var="scw_cluster_access_key=$(SCW_CLUSTER_AK)" \
-	-var="scw_cluster_secret_key=$(SCW_CLUSTER_SK)" \
-	-var="vpc_attach_instance=$(CI_VPC_ATTACH)"
+	-var="scw_cluster_secret_key=$(SCW_CLUSTER_SK)"
 
 scaleway-ci-init: ## terraform init for CI VM (context-scoped state)
 	@# Fix #6: scaleway-ci-init swaps backends mid-rebuild — first run uses
@@ -898,6 +898,10 @@ scaleway-teardown-vm: ## Safely destroy the CI VM (migrates state to local first
 
 .PHONY: scaleway-up scaleway-down scaleway-teardown scaleway-nuke scaleway-wait scaleway-kubeconfig
 
+# Bug #31 (postmortem 2026-04-30): scaleway-up REQUIRES the per-env CI VM to
+# already exist (it owns the shared PN consumed by the cluster). Order:
+#   1. make scaleway-ci-apply ENV=dev INSTANCE=shared REGION=fr-par
+#   2. make scaleway-up       ENV=dev INSTANCE=mgmt   REGION=fr-par
 scaleway-up: scaleway-apply scaleway-wait scaleway-kubeconfig k8s-up scaleway-seed-iam ## Create cluster + all k8s stacks for the current context (+ seed IAM keys into OpenBao for audit trail)
 
 scaleway-wait: ## Wait for K8s API server of the current context to be reachable

@@ -281,15 +281,23 @@ resource "scaleway_instance_ip" "ci" {
   tags = local.base_tags
 }
 
-# ─── Optional VPC attachment ─────────────────────────────────────────────
-# Looks up the cluster's existing private network by name convention
-# (created by envs/scaleway/main.tf as `${prefix}-pn`). Only resolves when
-# var.vpc_attach_instance is non-empty.
-data "scaleway_vpc_private_network" "cluster" {
-  count      = var.vpc_attach_instance == "" ? 0 : 1
-  name       = "${local.namespace}-${local.env}-${var.vpc_attach_instance}-${local.region}-pn"
+# ─── Shared Private Network (CI stack OWNS it) ───────────────────────────
+# Bug #31 (postmortem 2026-04-30): the cluster stack used to create its own
+# private network, while the CI stack tried to look up the cluster's PN via
+# data source. Because the CI VM is bootstrapped FIRST (it hosts
+# vault-backend, which the cluster's tfstate depends on), the data source
+# always resolved to empty → CI ended up on a default Scaleway-allocated PN
+# (subnet 172.16.0.0/22) while the cluster created its own (172.16.8.0/24).
+# Cross-PN traffic timed out (Scaleway PNs are L2-isolated).
+#
+# Fix (Option B): CI stack OWNS the canonical shared PN. Cluster stack
+# switches to a data source lookup by name. Per-env shared CI VM is the
+# canonical PN owner. Naming: ${ci-prefix}-pn (e.g. st4ck-dev-shared-fr-par-pn).
+resource "scaleway_vpc_private_network" "shared" {
+  name       = "${local.prefix}-pn"
   project_id = var.project_id
   region     = local.region
+  tags       = concat(local.base_tags, ["ci-owned", "shared-pn"])
 }
 
 resource "scaleway_instance_server" "ci" {
@@ -304,13 +312,10 @@ resource "scaleway_instance_server" "ci" {
     size_in_gb = var.root_disk_size
   }
 
-  # Optional private NIC into the cluster's VPC. Scaleway auto-allocates an
-  # IPAM IP from the VPC's subnet; readable via .private_ip below.
-  dynamic "private_network" {
-    for_each = data.scaleway_vpc_private_network.cluster
-    content {
-      pn_id = private_network.value.id
-    }
+  # Private NIC on the shared PN owned by this stack. Scaleway auto-allocates
+  # an IPAM IP from the PN's subnet; readable via .private_ips below.
+  private_network {
+    pn_id = scaleway_vpc_private_network.shared.id
   }
 
   user_data = {

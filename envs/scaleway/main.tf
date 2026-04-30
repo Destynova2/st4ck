@@ -165,11 +165,21 @@ module "talos" {
   )
 }
 
-# ─── Private network ────────────────────────────────────────────────────
-
-resource "scaleway_vpc_private_network" "cluster" {
-  name = "${local.prefix}-pn"
-  tags = local.base_tags
+# ─── Private network (data source — owned by CI stack) ─────────────────
+# Bug #31 (postmortem 2026-04-30): cluster used to create its own PN, while
+# CI stack tried to look up the cluster's PN via a data source. Because CI
+# is bootstrapped first (it hosts vault-backend), the CI's data source
+# always returned empty and got a default-allocated PN (172.16.0.0/22)
+# instead. Cross-PN traffic timed out (Scaleway PNs are L2-isolated).
+#
+# Fix: CI stack now OWNS the canonical shared PN. Cluster looks it up via
+# data source by name. The PN is shared per-env (one CI VM per env hosts it).
+# Naming convention: ${namespace}-${env}-${var.shared_pn_instance}-${region}-pn
+# (matches the CI's prefix). Default `shared_pn_instance` = "shared".
+data "scaleway_vpc_private_network" "shared" {
+  name       = "${local.namespace}-${local.env}-${var.shared_pn_instance}-${local.region}-pn"
+  project_id = var.project_id
+  region     = local.region
 }
 
 # ─── Security group ─────────────────────────────────────────────────────
@@ -199,7 +209,7 @@ resource "scaleway_instance_security_group" "cluster" {
     action   = "accept"
     port     = 2379
     protocol = "TCP"
-    ip_range = scaleway_vpc_private_network.cluster.ipv4_subnet[0].subnet
+    ip_range = data.scaleway_vpc_private_network.shared.ipv4_subnet[0].subnet
   }
 
   # etcd peer
@@ -207,7 +217,7 @@ resource "scaleway_instance_security_group" "cluster" {
     action   = "accept"
     port     = 2380
     protocol = "TCP"
-    ip_range = scaleway_vpc_private_network.cluster.ipv4_subnet[0].subnet
+    ip_range = data.scaleway_vpc_private_network.shared.ipv4_subnet[0].subnet
   }
 
   # Cilium health
@@ -215,7 +225,7 @@ resource "scaleway_instance_security_group" "cluster" {
     action   = "accept"
     port     = 4240
     protocol = "TCP"
-    ip_range = scaleway_vpc_private_network.cluster.ipv4_subnet[0].subnet
+    ip_range = data.scaleway_vpc_private_network.shared.ipv4_subnet[0].subnet
   }
 
   # Hubble relay
@@ -223,7 +233,7 @@ resource "scaleway_instance_security_group" "cluster" {
     action   = "accept"
     port     = 4244
     protocol = "TCP"
-    ip_range = scaleway_vpc_private_network.cluster.ipv4_subnet[0].subnet
+    ip_range = data.scaleway_vpc_private_network.shared.ipv4_subnet[0].subnet
   }
 
   # Cilium VXLAN
@@ -231,7 +241,7 @@ resource "scaleway_instance_security_group" "cluster" {
     action   = "accept"
     port     = 8472
     protocol = "UDP"
-    ip_range = scaleway_vpc_private_network.cluster.ipv4_subnet[0].subnet
+    ip_range = data.scaleway_vpc_private_network.shared.ipv4_subnet[0].subnet
   }
 
   # kubelet
@@ -239,7 +249,7 @@ resource "scaleway_instance_security_group" "cluster" {
     action   = "accept"
     port     = 10250
     protocol = "TCP"
-    ip_range = scaleway_vpc_private_network.cluster.ipv4_subnet[0].subnet
+    ip_range = data.scaleway_vpc_private_network.shared.ipv4_subnet[0].subnet
   }
 }
 
@@ -307,7 +317,7 @@ resource "scaleway_instance_server" "cp" {
   security_group_id = scaleway_instance_security_group.cluster.id
 
   private_network {
-    pn_id = scaleway_vpc_private_network.cluster.id
+    pn_id = data.scaleway_vpc_private_network.shared.id
   }
 
   additional_volume_ids = [scaleway_instance_volume.cp_ephemeral[each.key].id]
@@ -340,7 +350,7 @@ resource "scaleway_instance_server" "wrk" {
   security_group_id = scaleway_instance_security_group.cluster.id
 
   private_network {
-    pn_id = scaleway_vpc_private_network.cluster.id
+    pn_id = data.scaleway_vpc_private_network.shared.id
   }
 
   additional_volume_ids = [scaleway_instance_volume.wrk_ephemeral[each.key].id]

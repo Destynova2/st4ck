@@ -93,18 +93,9 @@ variable "gitea_admin_email" {
   default = "admin@st4ck.local"
 }
 
-# ─── VPC attachment (private NIC into a cluster's VPC) ───────────────────
-# When set, the CI VM gets a private NIC in the named instance's VPC
-# (`{namespace}-{env}-{vpc_attach_instance}-{region}-pn`). Lets in-cluster
-# components like Flux source-controller reach Gitea/vault-backend over
-# private addresses instead of routing back through the public IP (which
-# the security group rightly drops).
-#
-# Use the cluster's instance name, NOT the CI's own. For dev-shared CI
-# serving the dev-mgmt cluster: vpc_attach_instance = "mgmt".
-# Empty (default) = no private NIC, public-only behavior.
-variable "vpc_attach_instance" {
-  description = "Instance name whose VPC the CI VM joins (private NIC). Empty = no attachment."
-  type        = string
-  default     = ""
-}
+# ─── Shared Private Network ───────────────────────────────────────────────
+# Bug #31 (postmortem 2026-04-30): CI stack now OWNS the shared PN
+# (`${ci-prefix}-pn`, e.g. st4ck-dev-shared-fr-par-pn). The cluster stack
+# references it via a data source lookup by name. Per-env shared CI VM is
+# the canonical PN owner. The previous `vpc_attach_instance` variable
+# inverted the dependency (CI lookup → cluster create) and is gone.
