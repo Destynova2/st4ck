@@ -1,12 +1,12 @@
 # OpenBao App — application secrets
 # HA mode with Raft storage (3 replicas) + static seal + self-init + TLS
 #
-# Phase F-bis-2 — Helm-native HA. Deploy 3 replicas d'emblée avec
-# podManagementPolicy=OrderedReady (K8s sequential start) + retry_join
-# blocks pour tous les pods. Remplace l'ancien pattern Bootstrap@1 +
-# terraform_data.openbao_app_scale_to_ha (Fix #5/#11/#32) qui scalait
-# 1→3 par script bash + recovery loop fragile sur split-brain.
-# Postmortem 2026-04-30 — Phase F-bis-2.
+# Bootstrap with replicas: 1 — same canonical pattern as openbao-infra.
+# tofu's terraform_data.openbao_app_scale_to_ha sequences the 1→3 scale
+# AFTER pod-0 is established as quorum-of-1 leader. Without this, the
+# OpenBao 2.x race (issue #2274) lets all 3 pods self-init their own
+# 1-node Raft cluster (split-brain). Mirror of fix #5 for openbao-infra.
+# Postmortem 2026-04-29 (#11).
 
 global:
   tlsDisable: false
@@ -18,21 +18,9 @@ server:
   standalone:
     enabled: false
 
-  # Phase F-bis-2 — Helm-native HA pattern. Voir values-openbao-infra.yaml
-  # pour rationale complet (OpenBao 2.x split-brain race window éliminée
-  # architecturalement par podManagementPolicy=OrderedReady).
-  statefulSet:
-    podManagementPolicy: OrderedReady
-
-  livenessProbe:
-    initialDelaySeconds: 60
-
-  readinessProbe:
-    failureThreshold: 6
-
   ha:
     enabled: true
-    replicas: 3
+    replicas: 1
     raft:
       enabled: true
       setNodeId: true

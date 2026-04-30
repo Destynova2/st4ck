@@ -11,29 +11,6 @@ server:
   standalone:
     enabled: false
 
-  # Phase F-bis-2 — Helm-native HA: deploy 3 replicas d'emblée with
-  # podManagementPolicy=OrderedReady. K8s GARANTIT que pod-0 est Ready
-  # AVANT que pod-1 soit créé (et idem pod-2 vs pod-1) — la race window
-  # qui causait le bug split-brain OpenBao 2.x #2274 (chaque pod
-  # self-init son propre 1-node raft cluster) est éliminée
-  # architecturalement par le séquencement K8s.
-  # Remplace l'ancien pattern terraform_data.openbao_*_scale_to_ha
-  # (Fix #5/#11/#32) qui scalait 1→3 par script bash.
-  statefulSet:
-    podManagementPolicy: OrderedReady
-
-  # Liveness initialDelaySeconds: 60 → laisse le temps aux blocks
-  # initialize {} de matérialiser sans flapping. Sans ça, livenessProbe
-  # fail pendant les 30-60s d'init API → kubelet kill le pod en plein
-  # init → loop infini.
-  livenessProbe:
-    initialDelaySeconds: 60
-
-  # Readiness failureThreshold: 6 (vs default 2) → tolère ~30s pendant
-  # raft join (period=5s × 6) avant de marquer pod NotReady.
-  readinessProbe:
-    failureThreshold: 6
-
   ha:
     enabled: true
     replicas: 3
