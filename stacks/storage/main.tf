@@ -183,6 +183,28 @@ resource "terraform_data" "garage_buckets_keys" {
         SECRET_NAME=$(echo "$ENTRY" | cut -d: -f4)
         SECRET_FMT=$(echo "$ENTRY" | cut -d: -f5)
 
+        # ─── Ensure target namespace exists ─────────────────────────────
+        # Some entries write into namespaces owned by OTHER stacks
+        # (cnpg-s3-credentials -> identity ns, owned by stacks/identity).
+        # The storage stack's depends_on only references storage's own
+        # resources, so a fresh rebuild or isolated `tofu apply` of just
+        # the storage stack reaches this loop before the identity stack
+        # has created its namespace, and `kubectl create secret -n
+        # identity` exits non-zero (`set -eu` aborts the whole script,
+        # leaving the Garage keys in an inconsistent state).
+        #
+        # We don't add a tofu-level cross-stack data.kubernetes_namespace
+        # dependency because that would FAIL plan when the namespace
+        # doesn't yet exist, deadlocking the storage <-> identity stack
+        # ordering. An idempotent `kubectl create namespace` is the
+        # right level — namespaces are cheap, the identity stack will
+        # later adopt it (server-side-apply doesn't conflict on an
+        # already-existing namespace with no labels).
+        if ! kubectl get ns "$SECRET_NS" >/dev/null 2>&1; then
+          echo "  Namespace $SECRET_NS missing — creating (will be adopted by its owning stack later)."
+          kubectl create namespace "$SECRET_NS"
+        fi
+
         if kubectl -n "$SECRET_NS" get secret "$SECRET_NAME" >/dev/null 2>&1; then
           echo "  Secret $SECRET_NAME exists, skipping."
           continue
