@@ -40,11 +40,12 @@ machine:
       public.ecr.aws:
         endpoints:
           - https://rg.fr-par.scw.cloud/st4ck-mirror
-    config:
-      "rg.fr-par.scw.cloud":
-        # Public SCR namespace — no auth required for pulls.
-        # If the namespace is later switched to private (var.is_public=false),
-        # add an SCR API key generated from envs/scaleway/iam:
-        # auth:
-        #   username: nologin
-        #   password: <scw-secret-key>
+    # Bug #42 (postmortem 2026-04-30): config: { "rg.fr-par.scw.cloud": {} }
+    # Talos validates "value cannot be null". Public SCR needs no auth ni
+    # TLS custom — entire `config` block omitted. Re-add only if private
+    # SCR (var.is_public=false) ou TLS pinning needed:
+    # config:
+    #   "rg.fr-par.scw.cloud":
+    #     auth:
+    #       username: nologin
+    #       password: <scw-secret-key>
