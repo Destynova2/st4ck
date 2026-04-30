@@ -742,6 +742,72 @@ de scale 1→3 orchestre par terraform_data".
 deviendront defensive backup, mais doivent etre fonctionnels). APRES sandbox
 test (1-2j minimum).
 
+### Phase F-bis-2 v3 — PKI VM Root + Sub-CAs cluster Job (~1 jour, post-demo)
+
+**Probleme** : Phase F-bis-2 v1 (Helm-native HA OpenBao) a echoue (issue #2274
+OpenBao 2.x : initialize blocks racent avec retry_join malgre OrderedReady,
+split-brain reproductible — revert commit `78a301f`). Phase v2 (operator
+bao-operator community) trop risque (projet jeune, pas de support officiel).
+
+**Insight 2026-04-30 (idee user)** : decoupler Root et Sub-CAs.
+- Root CA reste sur VM (DEJA present : `bootstrap/tofu/pki.tf`, ECDSA P-384,
+  10 yr, idempotent via `lifecycle.ignore_changes = all`).
+- Sub-CAs crees dans cluster OpenBao via Helm post-install Job au lieu de
+  `terraform_data.bootstrap_openbao_pki` (~180 LOC bash inline fragile).
+
+**Architecture cible** :
+
+```
+CI VM (bootstrap/tofu/pki.tf)
+  ├── Root CA           : tls_self_signed_cert.root_ca, P-384, 10y
+  ├── Intermediate Infra: tls_locally_signed_cert.infra_ca, signe par root, 5y
+  └── Distribution      : K8s Secret pki-root-ca (ns secrets) via tofu
+       │
+       ▼
+Cluster (Helm post-install Job)
+  └── stacks/pki/flux/job-bootstrap-openbao-pki.yaml
+      ├── ServiceAccount + Role + RoleBinding (RBAC scoped)
+      ├── Wait OpenBao API (300s budget)
+      ├── Mount pki_int/ (5y) — PAS pki/ (root reste VM)
+      ├── Configure issuer URLs
+      ├── Create roles cluster-issuer (EC strict) + cilium-hubble (any-key)
+      └── Enable auth/kubernetes + policy cert-manager + binding SA
+```
+
+**Source-only (Phase F-bis-2 v3)** :
+- Cree `stacks/pki/flux/job-bootstrap-openbao-pki.yaml` (~280 LOC YAML)
+- Wire dans `stacks/pki/flux/kustomization.yaml`
+- Refactor `terraform_data.bootstrap_openbao_pki` en no-op shim (~20 LOC,
+  preserve l'adresse de la resource pour que les `depends_on` dans
+  `stacks/pki/main.tf` restent resolus sans toucher main.tf)
+- Cree `docs/adr/032-pki-vm-root-cluster-subca-job.md`
+
+**Migration step-by-step** :
+1. Source-only commit (cette phase — sans `tofu apply`)
+2. Validation post-demo : `tofu apply stacks/pki` puis
+   `kubectl logs -n secrets job/bootstrap-openbao-pki`
+3. Intermediate CA loading (follow-up) : etendre RBAC pour lire
+   `pki-infra-ca` ET invoquer `pki_int/config/ca pem_bundle=@<bundle>`,
+   ou one-shot manuel
+4. Phase F-bis-2 v4 : remplacer `depends_on = [terraform_data.
+   bootstrap_openbao_pki]` par `kubernetes_job` data source ou
+   `time_sleep`, supprimer le shim, `tofu state rm` sur chaque cluster
+
+**Impact estime** :
+- -180 LOC bash dans Tofu (provisioner inline supprime)
+- +280 LOC YAML Helm Job (artefact K8s standard, lisible/auditable)
+- Pattern K8s-natif (Job + Helm hook + RBAC scoped)
+- RBAC scope reduit : Job lit 2 secrets + exec sur openbao-infra-0 only
+  (vs Tofu kubeconfig full)
+- Failure visibility : `kubectl logs` au lieu de Tofu output tronque
+- Idempotence Helm-native : si Helm release inchangee, Job ne re-tourne pas
+
+**ADR-032** : "PKI hierarchy — Root CA on VM, sub-CAs in cluster via Helm Job"
+(creee 2026-04-30).
+
+**Sequencement** : Source-only OK pendant Agent #10 rebuild (ne touche pas
+`stacks/pki/main.tf`). Deploy + validation post-demo.
+
 ### Phase H — Rebase + merge feat/kamaji-karpenter + deploy KaaS layer (~1h30-2h, apres Phase D)
 
 **Probleme** : la branche `feat/kamaji-karpenter` (92 fichiers, +2469/-105 LOC, 10+ commits)

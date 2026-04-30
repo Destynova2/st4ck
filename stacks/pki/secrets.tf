@@ -221,22 +221,56 @@ resource "terraform_data" "seed_openbao_secrets" {
   }
 }
 
-# ─── OpenBao PKI engine bootstrap (Phase 1b-1) ────────────────────────
+# ─── OpenBao PKI engine bootstrap ─────────────────────────────────────
 #
-# Mounts pki/ (root) and pki_int/ (intermediate) on OpenBao Infra and
-# pre-creates the `cluster-issuer` role + cert-manager Kubernetes auth
-# binding. Idempotent: every step guarded by a `bao read` probe so
-# re-applies are no-ops.
+# Phase F-bis-2 v3 (2026-04-30): logic MOVED to a Helm post-install Job
+# at `stacks/pki/flux/job-bootstrap-openbao-pki.yaml` (see ADR-032).
 #
-# Why HERE and not in a separate terraform_data: this MUST run after
-# helm_release.openbao_infra and after the seal+admin login is wired,
-# but BEFORE cert-manager tries to use the Vault Issuer (which lives
-# in flux/cluster-issuer.yaml, applied via kubectl_manifest.cluster_issuer
-# below). The depends_on chain enforces the order.
+# The resource is kept here as a no-op `terraform_data` so the existing
+# `depends_on = [terraform_data.bootstrap_openbao_pki]` chains in
+# `main.tf` (cluster_secret_store, cluster_issuer_vault,
+# cluster_issuer_cilium) keep resolving without YAML edits across the
+# stack. The provisioner now just echoes a one-liner and exits 0.
 #
-# CA private keys NEVER leave OpenBao — generation uses
-# `pki/root/generate/internal` which keeps the key inside the engine.
-# Only the public certificate is emitted.
+# Why a no-op shim instead of full removal:
+#   - The Helm Job runs INSIDE the cluster after `helm install` of
+#     openbao-infra. Removing this resource would also need to remove
+#     the depends_on edges in main.tf (Agent #10's territory this
+#     session), which would deadlock the Tofu DAG ordering: the Vault
+#     ClusterIssuer and ClusterSecretStore need pki_int/ + cert-manager
+#     auth role to exist before cert-manager hits them. The Helm Job
+#     guarantees that — but Tofu can't observe the Job's completion
+#     without a `kubernetes_job` data source + wait, which adds 30s of
+#     extra polling to every plan. Keeping the no-op shim means the
+#     Tofu DAG still has a serialization point (this resource) that
+#     downstream resources depend on, even though the actual work
+#     happens out-of-band via Flux/Helm.
+#
+# Migration to definitive removal (planned, post-validation):
+#   1. Verify Helm Job runs successfully on a fresh cluster bootstrap.
+#   2. Replace the depends_on edges in main.tf with `time_sleep` (~60s)
+#      OR a `kubernetes_job` data source with wait_for_completion.
+#   3. Delete this entire resource block.
+#   4. `tofu state rm 'terraform_data.bootstrap_openbao_pki'` on every
+#      existing cluster to drop the old state entry.
+#
+# The original ~180-LOC bash provisioner is preserved in git history
+# (commit before this refactor) — restore via `git show <prev>:stacks/
+# pki/secrets.tf` if rollback is needed.
+#
+# Original behavior (pre-Phase F-bis-2 v3):
+#   - Mount pki/ (10y) + pki_int/ (5y) on OpenBao Infra
+#   - Generate root CA INSIDE the cluster (duplicated VM root!)
+#   - Generate intermediate CSR, sign with cluster root
+#   - Configure issuer URLs (CRL/OCSP)
+#   - Create roles: cluster-issuer (EC strict), cilium-hubble (any key)
+#   - Enable auth/kubernetes, write cert-manager policy + role binding
+#
+# New behavior (Helm Job):
+#   - Skip pki/ mount entirely (no cluster root — VM owns it)
+#   - Mount pki_int/ only
+#   - Same roles + auth as before
+#   - Intermediate CA loading deferred to follow-up (see Job comments)
 
 resource "terraform_data" "bootstrap_openbao_pki" {
   depends_on = [
@@ -244,177 +278,16 @@ resource "terraform_data" "bootstrap_openbao_pki" {
     terraform_data.seed_openbao_secrets,
   ]
 
-  # Re-run on admin password change only — PKI bootstrap itself is
-  # purely idempotent against OpenBao state, so any other input would
-  # cause unnecessary re-execution. Keep the input small and stable.
-  input = sha256(random_password.openbao_admin.result)
+  # No re-run trigger needed — the resource is a pure no-op shim.
+  # Static input so the resource is created once and never re-runs.
+  input = "phase-f-bis-2-v3-noop-shim"
 
   provisioner "local-exec" {
-    environment = {
-      KUBECONFIG         = var.kubeconfig_path
-      BAO_ADMIN_PASSWORD = random_password.openbao_admin.result
-    }
     command = <<-EOT
-      set -eu
-
-      # `-i` is required so heredoc stdin (bao policy write -) reaches the pod.
-      BAO="kubectl -n secrets exec -i openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true"
-
-      # ─── Wait for OpenBao Infra API (Pattern 1: 1s polling) ──────────
-      # Same pattern as seed_openbao_secrets above — see the comment
-      # there for rationale. Phase F-bis: 60×sleep 5 → 300×sleep 1.
-      echo "Waiting for OpenBao Infra API..."
-      ready=0
-      for i in $(seq 1 300); do
-        if $BAO bao status >/dev/null 2>&1; then
-          echo "  OpenBao ready after $${i}s"
-          ready=1
-          break
-        fi
-        sleep 1
-      done
-      if [ "$ready" -ne 1 ]; then
-        echo "ERROR: OpenBao Infra API not reachable after 300s" >&2
-        exit 1
-      fi
-
-      echo "Logging in as admin..."
-      $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1 || \
-        { echo "ERROR: OpenBao login failed"; exit 1; }
-
-      # ─── 1. Enable pki + pki_int mounts ──────────────────────────
-      echo "Enabling pki/ mount (10y max-lease)..."
-      $BAO bao secrets enable -path=pki -max-lease-ttl=87600h pki 2>&1 | grep -v "path is already in use" || true
-
-      echo "Enabling pki_int/ mount (5y max-lease)..."
-      $BAO bao secrets enable -path=pki_int -max-lease-ttl=43800h pki 2>&1 | grep -v "path is already in use" || true
-
-      # ─── 2. Generate root CA (idempotent) ────────────────────────
-      # `bao read pki/cert/ca` returns "no certificate" stderr + exit 2
-      # when unset; once generated it returns the PEM with exit 0.
-      echo "Checking for existing root CA..."
-      if $BAO bao read pki/cert/ca 2>&1 | grep -q -- "-----BEGIN CERTIFICATE-----"; then
-        echo "  root CA already present, skipping generation"
-      else
-        echo "  generating root CA (EC P-384, 10y)..."
-        $BAO bao write -field=certificate pki/root/generate/internal \
-          common_name="st4ck-platform-root" \
-          issuer_name="st4ck-platform-root" \
-          ttl=87600h key_type=ec key_bits=384 >/dev/null
-      fi
-
-      # ─── 3. Generate + sign intermediate (idempotent) ────────────
-      echo "Checking for existing intermediate CA..."
-      if $BAO bao read pki_int/cert/ca 2>&1 | grep -q -- "-----BEGIN CERTIFICATE-----"; then
-        echo "  intermediate CA already present, skipping generation"
-      else
-        echo "  generating intermediate CSR (EC P-384)..."
-        CSR=$($BAO bao write -field=csr pki_int/intermediate/generate/internal \
-              common_name="st4ck-platform-intermediate" key_type=ec key_bits=384)
-        echo "  signing intermediate with root (5y)..."
-        CERT=$($BAO bao write -field=certificate pki/root/sign-intermediate \
-              csr="$CSR" format=pem_bundle ttl=43800h)
-        echo "  uploading signed intermediate..."
-        $BAO bao write pki_int/intermediate/set-signed certificate="$CERT" >/dev/null
-      fi
-
-      # ─── 4. Issuer URLs (CRL/OCSP discovery) ─────────────────────
-      # Always (re)write — cheap and ensures URLs match the current
-      # OpenBao service DNS even if a previous bootstrap used a stale name.
-      echo "Configuring issuer URLs..."
-      $BAO bao write pki_int/config/urls \
-        issuing_certificates="https://openbao-infra.secrets.svc.cluster.local:8200/v1/pki_int/ca" \
-        crl_distribution_points="https://openbao-infra.secrets.svc.cluster.local:8200/v1/pki_int/crl" >/dev/null
-
-      # ─── 5. cert-manager role on pki_int ─────────────────────────
-      # allow_any_name=true: cert-manager Issuer requests carry CN/SAN
-      # validated by the cert-manager Certificate CR itself, not the role.
-      # max_ttl=35040h (4y) — covers CNPG + identity-pg CA Certificates
-      # which spec duration=87600h (10y). PKI truncates to max_ttl, but
-      # cert-manager computes renewalTime from ACTUAL notAfter, so as long
-      # as max_ttl >> renewBefore (here 720h), no renewal storm. Headroom
-      # is bounded by pki_int issuer validity (5y from bootstrap).
-      echo "Writing pki_int/roles/cluster-issuer..."
-      # key_type=ec + key_bits=0: only ECDSA keys (any curve P-256/P-384).
-      # All Certificate CRs in this repo use ECDSA (matches root + intermediate
-      # which are ECDSA-P384). Default key_type=rsa would reject them with
-      # "role requires keys of type rsa". Locking to EC is more secure than
-      # key_type=any (refuses RSA + Ed25519 leaks).
-      $BAO bao write pki_int/roles/cluster-issuer \
-        allow_any_name=true \
-        enforce_hostnames=false \
-        max_ttl=35040h \
-        key_type=ec \
-        key_bits=0 \
-        allowed_uri_sans="spiffe://st4ck/*" >/dev/null
-
-      # ─── 5b. Cilium-specific PKI role (RSA tolerated) ────────────
-      # Cilium's hubble.tls.auto helm chart hardcodes RSA-2048 private
-      # keys for the auto-generated Certificate CRs (no override
-      # exposed). The strict cluster-issuer role above rejects RSA, so
-      # we add a SECOND role that accepts any key type, scoped narrowly
-      # to *.hubble-grpc.cilium.io CNs only — this isolates the RSA
-      # exception to Cilium and keeps every other Certificate strict EC.
-      # Used by the cilium-issuer ClusterIssuer (stacks/pki/main.tf).
-      echo "Writing pki_int/roles/cilium-hubble..."
-      # Two CN suffixes used by Cilium hubble.tls.auto:
-      #   *.hubble-grpc.cilium.io   ← hubble-server-certs (peer.svc gRPC)
-      #   *.hubble-relay.cilium.io  ← hubble-relay-client-certs
-      # CN allowlist scoped to these — strict enough that this role
-      # can't be misused for arbitrary cluster TLS.
-      $BAO bao write pki_int/roles/cilium-hubble \
-        allowed_domains="hubble-grpc.cilium.io,hubble-relay.cilium.io" \
-        allow_subdomains=true \
-        allow_glob_domains=true \
-        enforce_hostnames=false \
-        max_ttl=26280h \
-        key_type=any \
-        key_bits=0 >/dev/null
-
-      # ─── 6. cert-manager Kubernetes auth role + policy ───────────
-      # Kubernetes auth method may already be enabled by another
-      # bootstrap step (ESO uses it too) — silence "already in use".
-      echo "Ensuring auth/kubernetes is enabled..."
-      # Idempotent: any HTTP 400 (already enabled, path conflict) is fine.
-      # Only abort if the auth method genuinely can't be queried after.
-      $BAO bao auth enable kubernetes 2>&1 || echo "  auth/kubernetes already enabled (or precondition failed — verifying below)"
-      $BAO bao auth list -format=json 2>&1 | grep -q '"kubernetes/"' || { echo "ERROR: auth/kubernetes not present"; exit 1; }
-
-      # If kubernetes auth was just enabled it needs the cluster's CA +
-      # K8s API URL configured. ESO bootstrap (auto-init Job) normally
-      # does this; reapply here defensively (idempotent — same values).
-      echo "Configuring auth/kubernetes..."
-      $BAO bao write auth/kubernetes/config \
-        kubernetes_host="https://kubernetes.default.svc:443" \
-        disable_local_ca_jwt=false 2>&1 | tail -1 || true
-
-      echo "Writing cert-manager policy..."
-      $BAO bao policy write cert-manager - <<'EOF'
-path "pki_int/sign/cluster-issuer" {
-  capabilities = ["update"]
-}
-path "pki_int/issue/cluster-issuer" {
-  capabilities = ["update"]
-}
-# ADR-028 wave 4 — Cilium hubble certs use a separate PKI role
-# (cilium-hubble) because the Cilium chart hardcodes RSA-2048 (no
-# privateKey override exposed) and our main cluster-issuer enforces
-# key_type=ec. Same policy because cert-manager is the same client.
-path "pki_int/sign/cilium-hubble" {
-  capabilities = ["update"]
-}
-path "pki_int/issue/cilium-hubble" {
-  capabilities = ["update"]
-}
-EOF
-
-      echo "Binding cert-manager SA → cert-manager policy..."
-      $BAO bao write auth/kubernetes/role/cert-manager \
-        bound_service_account_names=cert-manager \
-        bound_service_account_namespaces=cert-manager \
-        policies=cert-manager ttl=24h >/dev/null
-
-      echo "OpenBao PKI engine bootstrapped."
+      echo "[Phase F-bis-2 v3] terraform_data.bootstrap_openbao_pki is now a no-op shim."
+      echo "[Phase F-bis-2 v3] PKI engine bootstrap moved to Helm post-install Job:"
+      echo "[Phase F-bis-2 v3]   stacks/pki/flux/job-bootstrap-openbao-pki.yaml"
+      echo "[Phase F-bis-2 v3] See ADR-032 for the full migration rationale."
     EOT
   }
 }

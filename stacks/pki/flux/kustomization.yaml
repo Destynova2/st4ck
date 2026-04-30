@@ -9,6 +9,12 @@ resources:
   - helmrelease-openbao-app.yaml
   - helmrelease-cert-manager.yaml
   - cluster-issuer.yaml
+  # Phase F-bis-2 v3 — replaces terraform_data.bootstrap_openbao_pki
+  # (~180 LOC bash in stacks/pki/secrets.tf). Helm post-install hook
+  # mounts pki_int/, creates cluster-issuer + cilium-hubble roles,
+  # wires cert-manager K8s auth. Idempotent — safe to re-run on every
+  # upgrade. See ADR-032.
+  - job-bootstrap-openbao-pki.yaml
 configMapGenerator:
   - name: openbao-infra-values
     namespace: secrets
