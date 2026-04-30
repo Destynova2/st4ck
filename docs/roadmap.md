@@ -527,6 +527,7 @@ Phase D (now)  → debloque rebuild 100/100 valide (ne change pas archi)
 Phase E (next) → reduit rebuild 30min → 10min, air-gap ready
 Phase F (after) → -1 VM, simplification ops
 Phase G (R&D) → multi-tier scheduling VM/BM/GPU cost-optimised (decision matrix)
+Phase H (apres D) → rebase + merge feat/kamaji-karpenter, deploy KaaS layer
 ```
 
 ### Phase G — Multi-tier scheduling VM/BM/GPU (decision matrix, ~3 mois)
@@ -586,6 +587,38 @@ G.3 (decision) — Option A vs B vs C selon retours POC + maturite vCluster
 ```
 
 **ADR-031** a creer : "Multi-tier autoscaling — Kamaji+Karpenter glue vs vCluster Auto Nodes vs hybride".
+
+### Phase H — Rebase + merge feat/kamaji-karpenter + deploy KaaS layer (~1h30-2h, apres Phase D)
+
+**Probleme** : la branche `feat/kamaji-karpenter` (92 fichiers, +2469/-105 LOC, 10+ commits)
+porte le wiring Flux pour les stacks `capi/`, `kamaji/`, `autoscaling/`, `gateway-api/`,
+`managed-cluster/`. MAIS un de ses commits (`6ece223` "vendor Garage + local-path-provisioner
+charts") **contradit Fix #4 et Fix #12** (qui movent ces 2 charts de Flux → tofu cni/storage
+stacks). Merger sans rebase = regressions Phase D.
+
+**Plan** :
+1. Wait Phase D termine + valide 100/100 sur main
+2. Rebase `feat/kamaji-karpenter` sur main :
+   - Drop le commit `6ece223` (vendor Garage + local-path)
+   - Conserver Kamaji + Karpenter wiring + ESO fixes (af9741a, 0db4230, ef71622)
+   - Re-tester ESO PushSecret pattern (interagit potentiellement avec Fix #7+#15)
+3. Merge `feat/kamaji-karpenter` → main
+4. Lancer `make kaas-up` qui apply :
+   - `stacks/capi/` (Cluster API + CABPT + Talos infra provider)
+   - `stacks/kamaji/` (Hosted Control Planes operator)
+   - `stacks/autoscaling/` (Karpenter + provider-cluster-api + KEDA + VPA + prometheus-adapter)
+   - `stacks/gateway-api/` (Cilium Gateway + tenant TLSRoute)
+5. Valider tenant cluster bootstrap end-to-end (CAPI Cluster CR → Talos CP via Kamaji + workers via Karpenter)
+
+**Effort estime** : ~1h30-2h
+- Wait Phase D : ~25min
+- Rebase + resolution conflits : 30-60min
+- Merge + push : 5min
+- `make kaas-up` apply : 10-15min
+- Validation tenant cluster : 10min
+
+**Lien avec Phase G** : Phase H deploie l'infra Karpenter + CAPI necessaire pour POC G.1
+(2 NodePool VM + BM). Sequencement : H avant G.1.
 
 ---
 
