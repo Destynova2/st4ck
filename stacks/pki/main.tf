@@ -242,6 +242,7 @@ resource "terraform_data" "openbao_infra_scale_to_ha" {
       # too (initialize blocks run sequentially per OpenBao docs).
       # Without this check, pods 1+2 race with pod-0's init → split-brain.
       # Postmortem 2026-04-27 (#80).
+      K8S_AUTH=0
       for i in $(seq 1 90); do
         READY=$(kubectl --kubeconfig=$KC -n secrets get pod openbao-infra-0 -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || true)
         if [ "$READY" = "true" ]; then
@@ -255,6 +256,16 @@ resource "terraform_data" "openbao_infra_scale_to_ha" {
         fi
         sleep 5
       done
+      # Postmortem 2026-04-29 (#13): hard-exit if loop expired without
+      # confirming the kubernetes-auth gate. Previously the loop fell
+      # through silently → unconditional scale to 3 → exact split-brain
+      # that fix #5 was designed to recover from. Surface the real
+      # readiness failure instead of papering over it (recovery adds
+      # latency + fragility; better to fail fast at apply time).
+      if [ "$K8S_AUTH" != "1" ]; then
+        echo "ERROR: openbao-infra-0 not ready after 7.5min — aborting before scale to prevent split-brain"
+        exit 1
+      fi
       # Extra safety margin so pod-0 is fully settled as quorum-of-1 leader
       sleep 10
       echo "Scaling openbao-infra to 3 replicas…"
