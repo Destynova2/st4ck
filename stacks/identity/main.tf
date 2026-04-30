@@ -260,7 +260,14 @@ resource "kubernetes_job_v1" "hydra_oidc_client" {
               sleep 5
             done
             echo "Registering kubernetes OIDC client..."
-            curl -sf -X POST http://hydra-admin.identity.svc:4445/admin/clients \
+            # Postmortem 2026-04-29 (#19): curl -sf || true swallowed
+            # every 4xx/5xx, not just 409-Conflict (idempotent re-run).
+            # Bad client_secret format or Hydra startup failure surfaced
+            # only at user login attempt. Capture HTTP status code
+            # explicitly: 201 = created, 409 = already registered (both
+            # OK), anything else = exit 1 with response body for triage.
+            HTTP_CODE=$(curl -s -o /tmp/hydra-resp.txt -w "%{http_code}" \
+              -X POST http://hydra-admin.identity.svc:4445/admin/clients \
               -H 'Content-Type: application/json' \
               -d "{
                 \"client_id\": \"kubernetes\",
@@ -270,7 +277,16 @@ resource "kubernetes_job_v1" "hydra_oidc_client" {
                 \"scope\": \"openid email profile\",
                 \"redirect_uris\": [\"http://localhost:8000\", \"http://localhost:18000\"],
                 \"token_endpoint_auth_method\": \"client_secret_basic\"
-              }" || true
+              }")
+            case "$HTTP_CODE" in
+              201) echo "  OIDC client created" ;;
+              409) echo "  OIDC client already registered (409 — idempotent)" ;;
+              *)
+                echo "ERROR: Hydra returned HTTP $HTTP_CODE"
+                cat /tmp/hydra-resp.txt
+                exit 1
+                ;;
+            esac
             echo "Done."
           EOT
           ]
