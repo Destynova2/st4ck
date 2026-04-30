@@ -150,6 +150,12 @@ server:
                 # template them into the helm values fragment).
                 path "secret/data/storage/harbor-s3"     { capabilities = ["create", "update", "read", "delete", "patch"] }
                 path "secret/metadata/storage/harbor-s3" { capabilities = ["create", "update", "read", "delete", "list", "patch"] }
+
+                # Grafana → OpenBao (currently tofu-seeded; future
+                # PushSecret targets would 403 silently without this
+                # write entry). Postmortem 2026-04-29 (#16).
+                path "secret/data/monitoring/grafana"     { capabilities = ["create", "update", "read", "delete", "patch"] }
+                path "secret/metadata/monitoring/grafana" { capabilities = ["create", "update", "read", "delete", "list", "patch"] }
                 EOP
             }
           }
