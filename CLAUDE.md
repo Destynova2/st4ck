@@ -179,7 +179,10 @@ env-apply (scaleway/local)
     │
 cni              ← Cilium + local-path-provisioner MUST be first (~30s)
     │
-pki              ← OpenBao in-cluster + cert-manager + auto-init (~2min)
+pki              ← OpenBao in-cluster + cert-manager + auto-init (~3-4min realistic, 2min unrealistic
+                   target — incompressible: chart helm install + 6-8 sequential init blocks + raft join.
+                   Mesure runtime 2026-04-30 : ~10min avec scripts scale 1→3 séquentiels + Fix #5/#11
+                   recovery loops. Helm-native HA migration (Phase F-bis-2 roadmap) viserait ~3-4min.)
     │
 monitoring       ← VictoriaMetrics + Headlamp (~2min)
     │

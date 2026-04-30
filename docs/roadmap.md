@@ -653,6 +653,95 @@ provisioners — abandon scale orchestre".
 **Sequencement** : Phase F-bis APRES Phase D (besoin Bug #32 fixe + cluster
 sain pour valider que les nouveaux scripts marchent).
 
+### Phase F-bis-2 — Migration Helm-native HA OpenBao (~1 jour + sandbox test, gain ~-5min PKI)
+
+**Probleme** : meme apres Phase F-bis (polling 5s→1s), le bottleneck PKI reste
+~5-6min minimum car :
+- helm install + pod-0 boot incompressible (~30-60s)
+- OpenBao initialize blocks 6-8 commandes API sequentielles (~30-60s)
+- scale 1→3 + raft join sequentiel (~1-2min × 2 (infra + app))
+
+Le scaling orchestre par script `terraform_data.openbao_*_scale_to_ha`
+existe pour eviter le bug OpenBao 2.x #2274 (race split-brain quand 3 pods
+spawn simultanement, chacun devient leader d'un cluster 1-node).
+
+**Solution** : `replicas: 3` d'emblee + `retry_join` blocks dans values
++ `podManagementPolicy: OrderedReady` :
+
+```yaml
+server:
+  statefulSet:
+    podManagementPolicy: OrderedReady  # K8s GARANTIT pod-0 Ready avant pod-1
+  ha:
+    replicas: 3
+    raft:
+      enabled: true
+      setNodeId: true
+      config: |
+        storage "raft" {
+          retry_join { leader_api_addr = "https://openbao-infra-0.openbao-infra-internal:8200" }
+          retry_join { leader_api_addr = "https://openbao-infra-1.openbao-infra-internal:8200" }
+          retry_join { leader_api_addr = "https://openbao-infra-2.openbao-infra-internal:8200" }
+        }
+  livenessProbe:
+    initialDelaySeconds: 60  # eviter flapping pendant init blocks
+```
+
+**Risques mitigues** :
+
+| Risque | Sans mitigation | Avec mitigation |
+|---|---|---|
+| Split-brain au boot (race window) | possible | **~0 avec OrderedReady** (K8s sequential start) |
+| Flapping liveness probe pendant init | possible | **~0 avec initialDelaySeconds: 60** |
+| Network partition Cilium → leader thrash | rare | natif Raft, recovery automatique |
+| OpenBao 2.x quirk inconnu | possible | **TEST SANDBOX OBLIGATOIRE avant prod** |
+
+**Strategie deploy (mode DEV — pas de prod, iterate fast)** :
+
+1. **Modifier values + supprimer terraform_data.scale_to_ha** (~1-2h source)
+2. **Destroy cluster + rebuild from 0** (~30min)
+3. **Si raft 3/3 healthy + tests passent** : commit + done
+4. **Si fail** : revert commit, debug, retry
+
+Pas de sandbox separe — st4ck est en dev, on detruit/reconstruit au besoin.
+3-5 itérations max avant de valider ou abandonner l'approche.
+
+**Defensive backup** : garder un script terraform_data simplified comme
+post-deploy check :
+```hcl
+resource "terraform_data" "openbao_infra_health_check" {
+  depends_on = [helm_release.openbao_infra]
+  provisioner "local-exec" {
+    command = <<-EOT
+      # Just verify raft healthy after helm install
+      # If not healthy after 5min, surface the error (don't auto-recover —
+      # helm-native should have prevented the bug from happening)
+      for i in $(seq 1 300); do
+        READY=$(kubectl ... | wc -l)
+        [ "$READY" = "3" ] && exit 0
+        sleep 1
+      done
+      exit 1
+    EOT
+  }
+}
+```
+
+Plus simple, plus rapide, juste un sanity check final.
+
+**Impact estime** :
+- PKI rebuild : ~10min (actuel) → ~3-4min (apres F-bis-2)
+- Code maintenance : -250 lignes scripts bash terraform_data
+- Robustesse runtime : Raft natif > scripts custom
+- Recovery automatique sur pod crash : Native StatefulSet (vs manual)
+
+**ADR-032** a creer : "OpenBao HA — Helm-native retry_join + OrderedReady au lieu
+de scale 1→3 orchestre par terraform_data".
+
+**Sequencement** : APRES Phase F-bis (fix Bug #32 d'abord — recovery scripts
+deviendront defensive backup, mais doivent etre fonctionnels). APRES sandbox
+test (1-2j minimum).
+
 ### Phase H — Rebase + merge feat/kamaji-karpenter + deploy KaaS layer (~1h30-2h, apres Phase D)
 
 **Probleme** : la branche `feat/kamaji-karpenter` (92 fichiers, +2469/-105 LOC, 10+ commits)
