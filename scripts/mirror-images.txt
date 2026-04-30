@@ -1,0 +1,83 @@
+# Curated upstream container images mirrored to Scaleway Container Registry
+# (rg.fr-par.scw.cloud/st4ck-mirror).
+#
+# Format: one image reference per line, ignoring blank lines and lines
+# starting with `#`. Use full upstream coordinates including registry host
+# (so `docker.io/...` not just `library/...`).
+#
+# Generated 2026-04-29 from the live `dev/mgmt/fr-par` cluster
+# (kubectl get pods -A -o jsonpath ...) plus extras pinned in
+# stacks/*/variables.tf and patches/*.yaml that aren't currently running
+# (kratos, hydra, pomerium, garage, harbor, trivy, tetragon, kyverno, etc).
+#
+# Refresh procedure:
+#   1. After each cluster rebuild, capture the live set:
+#        kubectl get pods -A -o jsonpath='{range .items[*]}{range .spec.initContainers[*]}{.image}{"\n"}{end}{range .spec.containers[*]}{.image}{"\n"}{end}{end}' \
+#          | sort -u > /tmp/live-images.txt
+#   2. Diff against this file and add anything new.
+#   3. Re-run scripts/mirror-images-to-scr.sh to push new entries.
+
+# ─── Cilium (CNI) ──────────────────────────────────────────────────────
+quay.io/cilium/cilium:v1.17.13
+quay.io/cilium/cilium-envoy:v1.35.9-1770554954-8ce3bb4eca04188f4a0a1bfbd0a06a40f90883de
+quay.io/cilium/operator-generic:v1.17.13
+quay.io/cilium/hubble-relay:v1.17.13
+
+# ─── PKI: OpenBao + cert-manager + ESO ────────────────────────────────
+quay.io/openbao/openbao:2.5.1
+docker.io/hashicorp/vault-k8s:1.7.2
+docker.io/hashicorp/vault:1.17
+quay.io/jetstack/cert-manager-controller:v1.19.4
+quay.io/jetstack/cert-manager-webhook:v1.19.4
+quay.io/jetstack/cert-manager-cainjector:v1.19.4
+ghcr.io/external-secrets/external-secrets:v0.20.4
+
+# ─── Storage: local-path + Garage + Velero + Harbor ───────────────────
+docker.io/rancher/local-path-provisioner:v0.0.34
+docker.io/rancher/local-path-provisioner:v0.0.35
+docker.io/busybox:latest
+docker.io/busybox:stable
+docker.io/dxflrs/amd64_garage:v2.3.0
+docker.io/dxflrs/garage:v2.2.0
+docker.io/velero/velero-plugin-for-aws:v1.14.0
+
+# ─── Kubernetes core (registry.k8s.io) ────────────────────────────────
+registry.k8s.io/coredns/coredns:v1.13.2
+registry.k8s.io/kube-apiserver:v1.35.0
+registry.k8s.io/kube-controller-manager:v1.35.0
+registry.k8s.io/kube-scheduler:v1.35.0
+registry.k8s.io/kube-proxy:v1.35.0
+registry.k8s.io/pause:3.10
+
+# ─── Identity: Kratos + Hydra + Pomerium + CNPG ───────────────────────
+docker.io/oryd/kratos:v1.3.1
+docker.io/oryd/hydra:v2.3.0
+docker.io/pomerium/pomerium:v0.30.0
+ghcr.io/cloudnative-pg/cloudnative-pg:1.27.0
+
+# ─── Security: Trivy + Tetragon + Kyverno + OpenClarity ───────────────
+ghcr.io/aquasecurity/trivy-operator:0.27.0
+ghcr.io/aquasecurity/trivy:0.59.1
+quay.io/cilium/tetragon:v1.5.0
+quay.io/cilium/tetragon-operator:v1.5.0
+ghcr.io/kyverno/kyverno:v1.15.0
+ghcr.io/kyverno/kyvernopre:v1.15.0
+ghcr.io/openclarity/openclarity-api-server:1.1.3
+
+# ─── Monitoring: VictoriaMetrics + VictoriaLogs + Headlamp ────────────
+docker.io/victoriametrics/victoria-metrics:v1.121.0
+docker.io/victoriametrics/operator:v0.62.0
+docker.io/victoriametrics/victoria-logs:v1.40.0-victorialogs
+ghcr.io/headlamp-k8s/headlamp:v0.36.0
+
+# ─── Flux v2 ──────────────────────────────────────────────────────────
+ghcr.io/fluxcd/source-controller:v1.6.2
+ghcr.io/fluxcd/kustomize-controller:v1.6.2
+ghcr.io/fluxcd/helm-controller:v1.4.1
+ghcr.io/fluxcd/notification-controller:v1.6.0
+
+# ─── KaaS: CAPI + Kamaji + Karpenter (Phase A) ────────────────────────
+registry.k8s.io/cluster-api/cluster-api-controller:v1.10.7
+ghcr.io/clastix/kamaji:v1.5.1
+ghcr.io/aenix-io/etcd-operator:v0.5.0
+public.ecr.aws/karpenter/controller:1.7.4
