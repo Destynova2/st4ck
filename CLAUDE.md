@@ -169,7 +169,7 @@ bootstrap (once, podman)
 env-apply (scaleway/local)
     │ → kubeconfig → ~/.kube/talos-$(ENV)
     │
-cni              ← Cilium MUST be first (~30s)
+cni              ← Cilium + local-path-provisioner MUST be first (~30s)
     │
 pki              ← OpenBao in-cluster + cert-manager + auto-init (~2min)
     │
@@ -196,12 +196,12 @@ Note: pipeline was initially parallel (make -j2) but race conditions
 
 | Stack | Owns | Interface |
 |-------|------|-----------|
-| cni | Cilium | kube-system (CNI DaemonSet) |
+| cni | Cilium, local-path-provisioner | kube-system (CNI DaemonSet), local-path-storage namespace, default StorageClass |
 | monitoring | vm-k8s-stack, VictoriaLogs, Headlamp | monitoring namespace |
 | pki | OpenBao x2, cert-manager, ClusterIssuer, CA secrets | ClusterIssuer "internal-ca", secrets namespace |
 | identity | Kratos, Hydra, Pomerium, OIDC registration | identity namespace |
 | security | Trivy, Tetragon, Kyverno, Cosign policy | security namespace |
-| storage | local-path, Garage, Velero, Harbor | storage namespace |
+| storage | Garage, Velero, Harbor | storage namespace |
 | flux-bootstrap | Flux v2, GitRepository, root Kustomization | flux-system namespace |
 | external-secrets | ESO, ClusterSecretStore | external-secrets namespace |
 

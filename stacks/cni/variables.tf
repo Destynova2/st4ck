@@ -8,3 +8,9 @@ variable "cilium_version" {
   type        = string
   default     = "1.17.13"
 }
+
+variable "local_path_provisioner_version" {
+  description = "local-path-provisioner Helm chart version (containeroo repo)"
+  type        = string
+  default     = "0.0.35"
+}
