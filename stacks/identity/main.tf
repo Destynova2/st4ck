@@ -233,103 +233,19 @@ resource "kubectl_manifest" "hydra_tls_cert" {
 # ADR-028 — no double-apply.
 
 # ─── OIDC client registration (kubernetes → Hydra) ────────────────
-
-resource "kubernetes_job_v1" "hydra_oidc_client" {
-  metadata {
-    name      = "hydra-oidc-register"
-    namespace = "identity"
-  }
-
-  spec {
-    template {
-      metadata {
-        labels = {
-          app = "hydra-setup"
-        }
-      }
-      spec {
-        container {
-          name    = "register"
-          image   = "curlimages/curl:8.12.1"
-          command = ["/bin/sh", "-c"]
-          args = [<<-EOT
-            # Pattern 1 (Phase F-bis): sleep 1 vs 5, max 300 iterations
-            # (5min). Hydra admin endpoint typically becomes ready within
-            # 10-20s after the pod starts; polling 1s vs 5s catches the
-            # transition ~5x faster. Add explicit timeout exit (was
-            # implicit fall-through before, with the next curl POST then
-            # failing on connection refused with a confusing error).
-            echo "Waiting for Hydra admin..."
-            READY=0
-            for i in $(seq 1 300); do
-              if curl -sf http://hydra-admin.identity.svc:4445/health/ready >/dev/null 2>&1; then
-                READY=1
-                break
-              fi
-              if [ $((i % 10)) -eq 0 ]; then
-                echo "  attempt $i/300..."
-              fi
-              sleep 1
-            done
-            if [ "$READY" -ne 1 ]; then
-              echo "ERROR: Hydra admin not ready after 5 min"
-              exit 1
-            fi
-            echo "Registering kubernetes OIDC client..."
-            # Postmortem 2026-04-29 (#19): curl -sf || true swallowed
-            # every 4xx/5xx, not just 409-Conflict (idempotent re-run).
-            # Bad client_secret format or Hydra startup failure surfaced
-            # only at user login attempt. Capture HTTP status code
-            # explicitly: 201 = created, 409 = already registered (both
-            # OK), anything else = exit 1 with response body for triage.
-            HTTP_CODE=$(curl -s -o /tmp/hydra-resp.txt -w "%%{http_code}" \
-              -X POST http://hydra-admin.identity.svc:4445/admin/clients \
-              -H 'Content-Type: application/json' \
-              -d "{
-                \"client_id\": \"kubernetes\",
-                \"client_secret\": \"$OIDC_CLIENT_SECRET\",
-                \"grant_types\": [\"authorization_code\", \"refresh_token\"],
-                \"response_types\": [\"code\"],
-                \"scope\": \"openid email profile\",
-                \"redirect_uris\": [\"http://localhost:8000\", \"http://localhost:18000\"],
-                \"token_endpoint_auth_method\": \"client_secret_basic\"
-              }")
-            case "$HTTP_CODE" in
-              201) echo "  OIDC client created" ;;
-              409) echo "  OIDC client already registered (409 — idempotent)" ;;
-              *)
-                echo "ERROR: Hydra returned HTTP $HTTP_CODE"
-                cat /tmp/hydra-resp.txt
-                exit 1
-                ;;
-            esac
-            echo "Done."
-          EOT
-          ]
-
-          env {
-            name  = "OIDC_CLIENT_SECRET"
-            value = local.secrets["oidc_client_secret"]
-          }
-        }
-
-        restart_policy = "Never"
-      }
-    }
-
-    backoff_limit = 3
-  }
-
-  wait_for_completion = true
-
-  timeouts {
-    create = "10m"
-  }
-
-  # Hydra now Flux-owned; this Job waits for the admin endpoint via curl
-  # retry loop, so depends_on becomes namespace-only.
-  depends_on = [kubernetes_namespace.identity]
-}
+#
+# Bug #35 (Phase F-bis-2, postmortem 2026-04-30): the registration Job used
+# to live here as kubernetes_job_v1.hydra_oidc_client. Since ADR-028 moved
+# Hydra ownership to Flux, the admin endpoint only exists AFTER Flux has
+# reconciled, which happens AFTER `make k8s-identity-apply` completes. The
+# Job then sat for 10 min and timed out, blocking every fresh `make
+# scaleway-up`.
+#
+# Solution: registration is now a post-Flux step. The script lives at
+# `scripts/register-hydra-oidc-client.sh` and is wired through the
+# `make oidc-register` target. The OIDC client secret is exposed as the
+# `oidc_client_secret` output (see outputs.tf). A future Phase F-bis-3
+# will replace this with Hydra Maester (OAuth2Client CRD).
 
 # Pomerium → Flux owner (ADR-028 wave 2). The 3 secrets (client/shared/
 # cookie) come from the pomerium-secrets ExternalSecret which renders a

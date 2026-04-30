@@ -302,6 +302,25 @@ flux-bootstrap-destroy: flux-bootstrap-init
 		-var="gitea_admin_password=$(GITEA_ADMIN_PWD)" \
 		-var="flux_deploy_key_suffix=$(CTX_ID)"
 
+# ─── oidc-register (post-Flux, Bug #35) ──────────────────────────────────
+#
+# Register the kubernetes OIDC client in Hydra. Used to live inside the
+# identity tofu apply, but Hydra is now Flux-owned (ADR-028) so its admin
+# endpoint only appears AFTER Flux reconciles — long after identity-apply
+# returns. Run this AFTER `make flux-bootstrap-apply` once Flux has
+# deployed Hydra (kubectl wait below blocks until then).
+.PHONY: oidc-register
+oidc-register: ## Register Kubernetes OIDC client in Hydra (post-Flux step)
+	@echo "[oidc-register] waiting for Hydra admin pod (max 5 min — Flux must have reconciled)"
+	@KUBECONFIG=$(KC_FILE) kubectl -n identity wait --for=condition=Ready pod \
+		-l app.kubernetes.io/name=hydra,app.kubernetes.io/component=admin \
+		--timeout=300s
+	@OIDC_CLIENT_SECRET=$$(TF_HTTP_USERNAME='$(TF_HTTP_USERNAME)' TF_HTTP_PASSWORD='$(TF_HTTP_PASSWORD)' \
+		$(TF) -chdir=$(TF_IDENTITY) output -raw oidc_client_secret 2>/dev/null) ; \
+	test -n "$$OIDC_CLIENT_SECRET" || { echo "ERROR: oidc_client_secret not in identity tofu output — run k8s-identity-apply first"; exit 1; } ; \
+	KUBECONFIG=$(KC_FILE) OIDC_CLIENT_SECRET="$$OIDC_CLIENT_SECRET" \
+		bash scripts/register-hydra-oidc-client.sh
+
 # ─── KaaS stacks — Kamaji + CAPI + autoscaling + gateway (management cluster) ──
 
 TF_CAPI           := stacks/capi
