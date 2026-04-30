@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Bug #41 split — Kyverno ClusterPolicies live in their own Flux
+# Kustomization (security-kyverno-policies) gated on security-kyverno
+# (the HelmRelease) reaching Ready, so the kyverno.io/v1 CRDs exist
+# at server-side dry-run time.
+#
+# external-secret-cosign.yaml is co-located here because the cosign
+# verifyImages policy reads the cosign-public-key Secret produced by
+# that ExternalSecret — keeping them in the same Kustomization keeps
+# the dependency surface obvious.
+namespace: security
+resources:
+  - cosign-policy.yaml
+  - external-secret-cosign.yaml

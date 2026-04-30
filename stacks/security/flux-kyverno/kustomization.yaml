@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Bug #41 split — Kyverno HelmRelease lives in its own Flux Kustomization
+# (security-kyverno) so it reaches Ready (= CRDs installed) BEFORE the
+# downstream Kustomization security-kyverno-policies applies the
+# ClusterPolicy CRs that depend on those CRDs. Mirror of the
+# security-openclarity / storage-harbor two-phase pattern. See
+# clusters/management/security-kyverno.yaml for wiring.
+namespace: security
+resources:
+  - helmrelease-kyverno.yaml
+configMapGenerator:
+  - name: kyverno-values
+    namespace: security
+    files:
+      - values.yaml=values-kyverno.yaml
+generatorOptions:
+  disableNameSuffixHash: true

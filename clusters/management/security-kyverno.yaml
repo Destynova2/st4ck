@@ -1,0 +1,67 @@
+---
+# Bug #41 (postmortem 2026-04-29) — Kyverno install pipeline split into
+# two Flux Kustomizations so the ClusterPolicy CRs are gated on the
+# HelmRelease reaching Ready (= kyverno.io/v1 CRDs installed).
+#
+# Why split (not a single Kustomization with `wait: true`):
+#   stacks/security/flux/ used to bundle helmrelease-kyverno.yaml
+#   together with cosign-policy.yaml (kind: ClusterPolicy). Flux applies
+#   every manifest in a Kustomization with server-side dry-run before
+#   commit. The ClusterPolicy dry-run failed with
+#     no matches for kind "ClusterPolicy" in version "kyverno.io/v1"
+#   because the Kyverno chart had not had a chance to install its CRDs
+#   yet. The dry-run failure aborted the whole Kustomization → Kyverno
+#   HelmRelease never reconciled → CRDs never appeared → infinite loop.
+#   HelmRelease.spec.dependsOn only accepts other HelmReleases (no Kind
+#   discriminator), so we cannot gate the ClusterPolicy at the HR layer.
+#
+# Solution: two Flux Kustomizations with Kustomization-level dependsOn,
+# mirror of clusters/management/security-openclarity.yaml +
+# clusters/management/storage-harbor.yaml.
+#   Phase 1 — security-kyverno applies the HelmRelease + values
+#     ConfigMap with `wait: true`, blocking until the HR is Ready
+#     (chart hooks finished, CRDs installed, controllers up).
+#   Phase 2 — security-kyverno-policies applies the ClusterPolicy +
+#     the cosign ExternalSecret it consumes, gated on phase 1.
+#
+# Both Kustomizations live in the same management GitRepository as the
+# rest of the stack — sharing the postBuild substitution context
+# inherited from the root `management` Flux Kustomization.
+
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: security-kyverno
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: management
+    namespace: flux-system
+  path: ./stacks/security/flux-kyverno
+  prune: true
+  # wait: true blocks Ready until the Kyverno HelmRelease reports Ready
+  # (= chart install finished, CRDs registered, admission webhook live).
+  # Down-stream Kustomization security-kyverno-policies won't apply
+  # until then.
+  wait: true
+  timeout: 10m  # chart spawns 4 controllers + CRDs + webhooks
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: security-kyverno-policies
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: management
+    namespace: flux-system
+  path: ./stacks/security/flux-kyverno-policies
+  prune: true
+  wait: true
+  timeout: 5m
+  dependsOn:
+    - name: security-kyverno

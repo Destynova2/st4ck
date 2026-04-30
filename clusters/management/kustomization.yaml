@@ -21,3 +21,7 @@ resources:
   # Same two-phase split for Harbor (postmortem 2026-04-29 #15).
   # storage-harbor-eso → storage-harbor — see file header for rationale.
   - storage-harbor.yaml
+  # Bug #41 (postmortem 2026-04-29) — Kyverno HR + ClusterPolicies split.
+  # security-kyverno (HR) → security-kyverno-policies (ClusterPolicy +
+  # cosign ExternalSecret). Same chicken/egg fix as the two above.
+  - security-kyverno.yaml
