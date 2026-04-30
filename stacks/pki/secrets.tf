@@ -149,11 +149,28 @@ resource "terraform_data" "seed_openbao_secrets" {
       # `-i` is required so heredoc stdin (bao policy write -) reaches the pod.
       BAO="kubectl -n secrets exec -i openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true"
 
+      # ─── Wait for OpenBao Infra API (Pattern 1: 1s polling) ──────────
+      # Phase F-bis: 60×sleep 5 (max 5min) → 300×sleep 1 (max 5min) with
+      # ~typical detect 2-3s vs old 5-10s. `kubectl exec` roundtrip is
+      # the dominant cost (~150-300ms) so dropping sleep to 1s gives a
+      # ~3-5× speedup on warm cluster — important on Bug #32 recovery
+      # path where this loop runs multiple times during pki re-apply.
+      # Explicit timeout exit instead of fall-through to `bao login`
+      # which surfaced opaque "connection refused" before.
       echo "Waiting for OpenBao Infra API..."
-      for i in $(seq 1 60); do
-        $BAO bao status >/dev/null 2>&1 && break
-        echo "  attempt $i/60..." && sleep 5
+      ready=0
+      for i in $(seq 1 300); do
+        if $BAO bao status >/dev/null 2>&1; then
+          echo "  OpenBao ready after $${i}s"
+          ready=1
+          break
+        fi
+        sleep 1
       done
+      if [ "$ready" -ne 1 ]; then
+        echo "ERROR: OpenBao Infra API not reachable after 300s" >&2
+        exit 1
+      fi
 
       echo "Logging in..."
       $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1 || \
@@ -243,11 +260,23 @@ resource "terraform_data" "bootstrap_openbao_pki" {
       # `-i` is required so heredoc stdin (bao policy write -) reaches the pod.
       BAO="kubectl -n secrets exec -i openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true"
 
+      # ─── Wait for OpenBao Infra API (Pattern 1: 1s polling) ──────────
+      # Same pattern as seed_openbao_secrets above — see the comment
+      # there for rationale. Phase F-bis: 60×sleep 5 → 300×sleep 1.
       echo "Waiting for OpenBao Infra API..."
-      for i in $(seq 1 60); do
-        $BAO bao status >/dev/null 2>&1 && break
-        echo "  attempt $i/60..." && sleep 5
+      ready=0
+      for i in $(seq 1 300); do
+        if $BAO bao status >/dev/null 2>&1; then
+          echo "  OpenBao ready after $${i}s"
+          ready=1
+          break
+        fi
+        sleep 1
       done
+      if [ "$ready" -ne 1 ]; then
+        echo "ERROR: OpenBao Infra API not reachable after 300s" >&2
+        exit 1
+      fi
 
       echo "Logging in as admin..."
       $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1 || \
