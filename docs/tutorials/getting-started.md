@@ -146,12 +146,12 @@ At this point, your cluster has:
 
 | Stack | Components | Namespace |
 |-------|-----------|-----------|
-| CNI | Cilium (eBPF, replaces kube-proxy) | kube-system |
+| CNI | Cilium (eBPF, replaces kube-proxy), local-path StorageClass | kube-system, local-path-storage |
 | Monitoring | VictoriaMetrics, VictoriaLogs, Grafana, Headlamp | monitoring |
 | PKI | OpenBao x2, cert-manager, Root/Intermediate CA | secrets |
 | Identity | Kratos, Hydra, Pomerium (OIDC/SSO) | identity |
 | Security | Trivy, Tetragon, Kyverno, Cosign policy | security |
-| Storage | local-path, Garage S3, Velero, Harbor | garage, storage |
+| Storage | Garage S3, Velero, Harbor | garage, storage |
 | GitOps | Flux v2 (day-2 reconciliation) | flux-system |
 
 ## Next steps

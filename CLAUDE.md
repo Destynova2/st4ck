@@ -34,12 +34,12 @@ talos/
 │
 ├── stacks/                             # 1 stack = 1 folder (TF + values + flux)
 │   │  ─── Core (deployed by `make scaleway-up` / `make k8s-up`) ───
-│   ├── cni/                            # Cilium CNI (eBPF, replaces kube-proxy)
+│   ├── cni/                            # Cilium CNI + local-path StorageClass
 │   ├── pki/                            # OpenBao + cert-manager + CA secrets
 │   ├── monitoring/                     # vm-k8s-stack + VictoriaLogs + Headlamp
 │   ├── identity/                       # Kratos + Hydra + Pomerium
 │   ├── security/                       # Trivy + Tetragon + Kyverno
-│   ├── storage/                        # local-path + Garage + Velero + Harbor
+│   ├── storage/                        # Garage + Velero + Harbor
 │   ├── flux-bootstrap/                 # Flux v2 + GitRepository + root Kustomization
 │   ├── external-secrets/               # Flux only (ESO + ClusterSecretStore)
 │   │  ─── KaaS / Phase A (deployed by `make kaas-up`) ─────────────

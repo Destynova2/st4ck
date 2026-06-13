@@ -200,7 +200,7 @@ make scaleway-kubeconfig         # Exporter kubeconfig
 make k8s-up
 ```
 
-Ceci deploie dans l'ordre : CNI -> storage (local-path) -> PKI -> monitoring -> identity -> security -> storage (complet) -> Flux.
+Ceci deploie dans l'ordre : CNI (Cilium + local-path) -> PKI -> monitoring -> identity -> security -> storage -> Flux.
 
 ### Etape 5 : Restaurer PostgreSQL depuis barman
 
@@ -269,8 +269,7 @@ Sauvegarde DR (hors-site)
     |
     v
 [5] make k8s-up                 <- tous les stacks K8s
-    |   |-- cni (Cilium)
-    |   |-- storage (local-path)
+    |   |-- cni (Cilium + local-path)
     |   |-- pki (CA + cert-manager + OpenBao in-cluster)
     |   |-- monitoring
     |   |-- identity (CNPG + Kratos + Hydra + Pomerium)

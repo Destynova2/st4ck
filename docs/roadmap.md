@@ -34,6 +34,7 @@
 
 - [x] Talos v1.12.6 + Kubernetes v1.35.4 (Scaleway)
 - [x] Cilium 1.17.13 + Hubble relay
+- [x] local-path-provisioner 0.0.35 (StorageClass defaut, stack CNI)
 - [x] Talos Factory schematic avec extension DRBD
 
 ### Phase 1.2 — CI/CD & Registry (S2-S3)
@@ -181,18 +182,18 @@
 **Depends** : Phase 1.5
 
 ```
-20. local-path provisioner
-    └── StorageClass par defaut
-
-21. Garage
+20. Garage
     ├── Stockage objet S3-compatible (Rust, leger)
     ├── 3 pods StatefulSet, PVCs sur local-path
     ├── replication_factor = 3 (replication applicative)
     └── ~100 MB RAM par pod
 
-22. Velero
+21. Velero
     ├── Backup application-aware
     └── Target: Garage S3
+
+22. Harbor
+    └── Registry conteneurs avec backend Garage S3
 ```
 
 **Decision** : Garage seul (sans Longhorn) retenu. Voir ADR-002 et ADR-003.
@@ -203,7 +204,6 @@
 
 **Livrable** : stockage objet S3 + backups automatises.
 
-- [x] local-path-provisioner 0.0.35 (StorageClass defaut)
 - [x] Garage v2.2.0 (3 pods, S3-compatible, PVCs local-path, cluster layout configure)
 - [x] Velero 11.4.0 (backup → Garage S3, BackupStorageLocation available, backup/restore teste)
 - [x] Harbor 1.16.2 (registry conteneurs, S3 Garage backend, Trivy scan integre)
@@ -886,13 +886,13 @@ stacks). Merger sans rebase = regressions Phase D.
 ```
 make k8s-up (~15 minutes end-to-end, sequentiel strict)
 │
-├── 1. k8s-cni-apply        (~30s)  — Cilium CNI
+├── 1. k8s-cni-apply        (~30s)  — Cilium CNI + local-path
 ├── 2. k8s-pki-apply        (~1 min) — PKI + OpenBao x2 + cert-manager
 ├── 3. k8s-monitoring-apply (~2 min) — vm-k8s-stack + VictoriaLogs + Headlamp
 ├── 4. k8s-identity-apply   (~1 min) — Kratos + Hydra + Pomerium
 │       └── Secrets auto-generes via random_id (zero tfvars)
 ├── 5. k8s-security-apply   (~2 min) — Trivy + Tetragon + Kyverno + Cosign
-├── 6. k8s-storage-apply    (~2 min) — local-path + Garage + Velero + Harbor
+├── 6. k8s-storage-apply    (~2 min) — Garage + Velero + Harbor
 └── 7. flux-bootstrap-apply (~30s)   — Flux SSH + GitRepository
 
 Post-deploy (optionnel) :

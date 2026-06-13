@@ -160,12 +160,12 @@ Toutes les stacks K8s sont provider-agnostiques — elles recoivent uniquement u
 
 | Stack | Composants | Namespace |
 |---|---|---|
-| k8s-cni | Cilium + Hubble | kube-system |
+| k8s-cni | Cilium + Hubble + local-path StorageClass | kube-system, local-path-storage |
 | k8s-pki | OpenBao x2, cert-manager, CA secrets | secrets |
 | k8s-monitoring | VictoriaMetrics, VictoriaLogs, Grafana, Headlamp | monitoring |
 | k8s-identity | Kratos, Hydra, Pomerium | identity |
 | k8s-security | Trivy, Tetragon, Kyverno, Cosign policy | security |
-| k8s-storage | local-path, Garage, Velero, Harbor | garage, storage |
+| k8s-storage | Garage, Velero, Harbor | garage, storage |
 | flux-bootstrap | Flux v2, GitRepository, root Kustomization | flux-system |
 
 ## Cluster K8s — vue composants

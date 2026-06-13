@@ -30,12 +30,12 @@ make scaleway-headlamp                    # Open dashboard (token in clipboard)
 
 | Stack | Components | Deploy time |
 |-------|-----------|-------------|
-| **CNI** | Cilium (eBPF, replaces kube-proxy) | ~30s |
+| **CNI** | Cilium + local-path default StorageClass | ~30s |
 | **PKI** | OpenBao x2 + cert-manager + 3-tier CA | ~2min |
 | **Monitoring** | VictoriaMetrics + VictoriaLogs + Grafana + Headlamp | ~2min |
 | **Identity** | Ory Kratos + Hydra + Pomerium (OIDC/SSO) | ~1min |
 | **Security** | Trivy + Tetragon + Kyverno + Cosign | ~2min |
-| **Storage** | Garage S3 + Velero + Harbor + local-path | ~3min |
+| **Storage** | Garage S3 + Velero + Harbor | ~3min |
 | **GitOps** | Flux v2 (SSH → Gitea) | ~30s |
 
 Zero secrets in Git. All auto-generated, stored in OpenBao, synced by ESO.

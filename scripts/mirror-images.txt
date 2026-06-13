@@ -32,7 +32,7 @@ quay.io/jetstack/cert-manager-webhook:v1.19.4
 quay.io/jetstack/cert-manager-cainjector:v1.19.4
 ghcr.io/external-secrets/external-secrets:v0.20.4
 
-# ─── Storage: local-path + Garage + Velero + Harbor ───────────────────
+# ─── CNI storage dependency: local-path-provisioner ───────────────────
 docker.io/rancher/local-path-provisioner:v0.0.34
 docker.io/rancher/local-path-provisioner:v0.0.35
 docker.io/busybox:latest

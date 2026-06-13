@@ -43,6 +43,7 @@ Tofu only owns helm releases that satisfy ONE of:
 1. **Bootstrap dependency** — must exist BEFORE Flux can reconcile
    anything. Concretely:
    - Cilium (CNI required for any pod scheduling)
+   - local-path-provisioner (default StorageClass required before PKI PVCs)
    - cert-manager (required for the Flux GitRepository TLS, and
      for OpenBao endpoint certs)
    - OpenBao Infra (Flux SSH key comes out of OpenBao via ESO; ESO
@@ -63,7 +64,7 @@ Everything else is Flux-owned. As of this ADR, that means:
 - monitoring: vm-k8s-stack, victoria-logs, victoria-logs-collector, headlamp
 - identity: kratos, hydra
 - security: trivy-operator, tetragon, kyverno
-- storage: local-path-provisioner, velero
+- storage: velero
 
 Pomerium (identity) and openclarity (security) remain tofu-managed for
 now because their values use `templatefile()` with secrets that need
