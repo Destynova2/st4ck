@@ -26,6 +26,7 @@ type FakeBackend struct {
 	StopErr  error
 	OfferErr error
 
+	ListCalls  int
 	StartCalls int
 	StopCalls  int
 }
@@ -77,6 +78,7 @@ func (f *FakeBackend) ServerStatus(serverID string) Status {
 func (f *FakeBackend) ListServers(_ context.Context, zone, tag string) ([]Server, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.ListCalls++
 	if f.ListErr != nil {
 		return nil, f.ListErr
 	}
