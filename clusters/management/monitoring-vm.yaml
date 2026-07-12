@@ -29,6 +29,14 @@ spec:
   prune: true
   wait: true
   timeout: 10m
+  # postBuild is NOT inherited from the root `management`
+  # Kustomization — each child needs its own substituteFrom
+  # for the ${x_version} pins (platform version registry).
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: platform-versions
+
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -48,3 +56,10 @@ spec:
   prune: true
   wait: true
   timeout: 5m
+  # postBuild is NOT inherited from the root `management`
+  # Kustomization — each child needs its own substituteFrom
+  # for the ${x_version} pins (platform version registry).
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: platform-versions

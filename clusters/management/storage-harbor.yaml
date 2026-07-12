@@ -27,8 +27,8 @@
 # Phase 2 — storage-harbor applies the HelmRelease, gated on phase 1.
 #
 # Both Kustomizations live in the same management GitRepository as the
-# rest of the stack — sharing the postBuild substitution context
-# inherited from the root `management` Flux Kustomization.
+# rest of the stack. postBuild is NOT inherited from the root
+# Kustomization — each child declares its own substituteFrom below.
 
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -47,6 +47,12 @@ spec:
   # Down-stream Kustomization storage-harbor won't apply until then.
   wait: true
   timeout: 5m
+  # postBuild is NOT inherited from the root `management` Kustomization —
+  # declared on every child so ${x_version} pins resolve wherever used.
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: platform-versions
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -65,3 +71,10 @@ spec:
   timeout: 15m  # matches HR install timeout (chart spawns 10+ pods)
   dependsOn:
     - name: storage-harbor-eso
+  # postBuild is NOT inherited from the root `management`
+  # Kustomization — each child needs its own substituteFrom
+  # for the ${x_version} pins (platform version registry).
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: platform-versions
