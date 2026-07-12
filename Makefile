@@ -203,7 +203,7 @@ k8s-identity-apply: k8s-identity-init ## Deploy Kratos + Hydra + Pomerium
 		-target=kubernetes_namespace.identity
 	@echo "[identity] phase 2/3: wait for CNPG to materialise the identity-pg-app secret (~60s)"
 	@KUBECONFIG=$(KC_FILE) kubectl -n identity wait --for=create secret/identity-pg-app --timeout=180s
-	@echo "[identity] phase 3/3: full apply (Kratos/Hydra/Pomerium consume the now-existing PG DSN)"
+	@echo "[identity] phase 3/3: full apply (CNPG operator + ESO seeds; Kratos/Hydra/Pomerium are Flux-owned, ADR-028)"
 	$(TF) -chdir=$(TF_IDENTITY) apply -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS)
 
 k8s-identity-destroy: k8s-identity-init
@@ -223,7 +223,7 @@ k8s-security-apply: k8s-security-init ## Deploy Trivy + Tetragon + Kyverno + Ope
 		-target=kubectl_manifest.openclarity_pg_cluster
 	@echo "[security] phase 2/3: wait for CNPG to materialise openclarity-pg-app secret"
 	@KUBECONFIG=$(KC_FILE) kubectl -n security wait --for=create secret/openclarity-pg-app --timeout=180s
-	@echo "[security] phase 3/3: full apply (Trivy + Tetragon + Kyverno + OpenClarity)"
+	@echo "[security] phase 3/3: full apply (namespace + ESO seeds; Trivy/Tetragon/Kyverno/OpenClarity are Flux-owned, ADR-028)"
 	$(TF) -chdir=$(TF_SECURITY) apply -auto-approve $(K8S_COMMON_VARS)
 
 k8s-security-destroy: k8s-security-init
@@ -1251,7 +1251,7 @@ velero-test: ## Run Velero backup/restore e2e test (Chainsaw)
 	@command -v chainsaw >/dev/null 2>&1 || { echo "Error: chainsaw required"; exit 1; }
 	KUBECONFIG=$(KC_FILE) chainsaw test tests/velero/
 
-test: validate scaleway-test ## Run validation + tofu test + e2e tests
+test: validate scaleway-test ## Run validation + OpenTofu tests (E2E: make velero-test)
 
 clean: ## Remove all build artifacts
 	rm -rf $(OUT_DIR)
