@@ -1,10 +1,14 @@
 # M0-REPORT — spike karpenter-provider-scaleway
 
-**Date** : 2026-07-12
-**Réf.** : LLD-002 (`docs/design/002-karpenter-scaleway-em.md`), plan §9.
+**Date** : 2026-07-12 (mis à jour post-revue M0-FIX, même jour)
+**Réf.** : LLD-002 (`docs/design/002-karpenter-scaleway-em.md`), plan §9 ;
+revues : `CODEX-REVIEW.md`, `docs/reviews/2026-07-12-audit-code-karpenter.md`,
+`…-audit-xray-karpenter.md`, `…-premortem-metal.md`.
 **État global** : critère de sortie n°3 (squelette compilant + fake + tests)
-**atteint**. Critères n°1, 2 et 4 (validations matérielles / bout en bout)
-**non exécutés** — ils exigent un serveur EM réel ; runbook ci-dessous.
+**atteint** — 57 tests, CI Woodpecker en gate. Les bloquants de revue
+code/architecture sont levés (statut détaillé §5). Critères n°1, 2 et 4
+(validations matérielles / bout en bout) **non exécutés** — ils exigent un
+serveur EM réel ; runbook ci-dessous.
 
 ## 1. État des livrables code
 
@@ -28,13 +32,20 @@
    sérialiserait les provisionnements ; (b) la fenêtre
    `registrationTimeout = 15 min` couvre déjà POST+boot (C1) ; (c) `List()`
    inclut `starting`, donc pas de GC intempestif pendant le boot ; le retry
-   `Delete` du core observe `stopping` → `NodeClaimNotFoundError` au retour
-   suivant, comportement équivalent au poll. Aligné sur kwok/cluster-api
-   (aucun provider upstream ne poll dans Create).
-2. **`stopping` et `error` traités comme éteints** (`PoweredOn()` =
-   `ready`|`starting`) pour Get/Delete/List. Un serveur en `error` disparaît
-   de List() → NodeClaim GC → reschedule. Le LLD ne tranchait que
-   `ready→stopping→stopped`.
+   `Delete` du core observe la progression `stopping` → `stopped` (nil tant
+   que la terminaison est en cours, NotFound une fois `stopped` — contrat
+   core, corrigé par M0-FIX). Aligné sur kwok/cluster-api (aucun provider
+   upstream ne poll dans Create).
+2. **Machine à états complète, fail-closed** *(remplace l'écart initial
+   « stopping/error traités comme éteints », infirmé par la revue Codex)* :
+   les 13 statuts SDK sont classés startable/live/terminating/transient/
+   blocked/failed. Seul `stopped` (ou l'absence du serveur) signifie
+   « instance disparue » pour Get/List/Delete ; `locked`/`out_of_stock`/
+   `error`/statut inconnu restent visibles et Delete y répond par une
+   erreur explicite (le finalizer reste, l'opérateur voit). Conséquence
+   assumée : un serveur en `error` ne disparaît plus silencieusement de
+   List() — le nœud passe NotReady et reste visible (bruyant plutôt que
+   l'érosion silencieuse P1 du pré-mortem).
 3. **Overhead vide** (`InstanceTypeOverhead{}`) et **maxPods = 110** figé.
    Comme kwok/cluster-api. L'Allocatable annoncé est donc optimiste vs le
    kubelet Talos réel (kubeReserved) — à recaler avec la mesure matérielle
@@ -125,3 +136,71 @@ en ~2 min.
 Chart Helm + intégration stack `autoscaling/` (contexte multi-env), scale
 des replicas piloté (KEDA sur pods Pending metal), métriques pool,
 backoff 429, regénération controller-gen.
+
+## 5. Revue M0-FIX (2026-07-12) — statut des findings, un par un
+
+### 5.1 Codex (`CODEX-REVIEW.md`)
+
+| Finding | Statut | Commit / argument |
+|---|---|---|
+| Critical #1 — claim TTL 2 min peut ré-assigner le dernier serveur | **fixed** `65854df` | Claim lié au UID du NodeClaim ; un claim démarré ne se libère jamais tant que l'API dit `stopped` ; retry Create = resume du même claim ; preuve horloge fake (stale `stopped` 3×TTL → ICE, pas de double providerID, pas de second StartServer) |
+| Critical #2 — Delete NotFound pendant `stopping` | **fixed** `a0dd67a` | nil sur `stopping`/transitoire (le core retry), NotFound uniquement `stopped`/absent ; test rejoué conformément au « Proof expected » |
+| Major #3 — statuts incomplets, fail-open `out_of_stock`/inconnu | **fixed** `a0dd67a` | 13 statuts / 6 classes, inconnu = failed (jamais NotFound) ; matrice de statuts × {Create,Delete,Get,List,GetInstanceTypes} |
+| Major #4 — invalidation d'inventaire écrasée par un fetch en vol | **fixed** `42859df` | Générations par clé ; test d'interleaving déterministe fetch→Invalidate→store avec backend bloquant |
+| Major #5 — échecs StartServer post-claim non classifiés | **fixed** `65854df` | Relecture de désambiguïsation ; rejet définitif + dernier candidat → ICE ; ambigu → claim conservé (fail-closed) |
+| Major #6 — NodeClass absente = ICE | **fixed** `3ed6458` | `NodeClassNotReadyError` ; jamais ICE pour une erreur de config |
+| Major #7 — égalité d'octets providerID non prouvée côté bootstrap | **fixed (part codable)** `fd02d1e` | Le module injecte `provider-id` dérivé des MÊMES (zone, server-id) que `pool.FormatProviderID` + output `provider_id`. La preuve d'égalité octet à octet sur nœud réel reste le critère matériel n°1 (runbook §3.1) — inexécutable sans serveur |
+| Minor — parsing providerID accepte des segments en trop | **fixed** `ee996b1` | Rejet strict + cas golden `scaleway-em://fr-par-2/abc/def` |
+
+Conditions d'approbation Codex : 1-3 prouvées par tests unitaires (57, CI en
+gate) ; la n°4 (byte equality sur machineconfig rendu / smoke réel) est
+transférée au runbook matériel §3.1 avec le contrat partagé committé des
+deux côtés.
+
+### 5.2 Audit-code (F1-F13, CQI 8.0)
+
+| # | Statut | Commit / argument |
+|---|---|---|
+| F1 sentinelle nil `buildInstanceType` + fake divergent | **fixed** `ee996b1` | Paramètre explicite `computeAvailability` ; fake aligné (slice vide non-nil) ; contrat « jamais nil » documenté sur `Backend.ListServers` ; preuve pool vide → `Available=false` |
+| F2 `invalidateInventoryFor` (param mort, doc mensongère, erreur avalée) | **fixed** `ee996b1` | Filtre réel par tag du serveur, doc alignée, échec loggé V(1) ; preuve : Delete pool A n'invalide pas pool B |
+| F3 `Requeue: true` déprécié | **fixed** `ee996b1` | `RequeueAfter: time.Second` sur conflit optimiste |
+| F4 map `claimed` jamais purgée | **fixed** `65854df` | Purge des IDs absents du listing dans la passe verrouillée du claim |
+| F5 duplication Delete/Get | **fixed** `a0dd67a` | `serverFromProviderID` partagé (parse + Get + garde d'appartenance) |
+| F6 résolveurs jumeaux, wrapping incohérent | **fixed** `3ed6458` | Les deux wrappent ; `apierrors.IsNotFound` unwrappe via `errors.As` (vérifié) |
+| F7 arch amd64 codée en dur | **documenté** `ee996b1` | Hypothèse écrite au point d'usage + README ; résolution depuis `Offer.CPUs` = M1 (comme recommandé « fix M0 : documenter ») |
+| F8 slice de cache partagée | **fixed** `42859df` | `slices.Clone` au hit et au fill ; test anti-aliasing |
+| F9 log + panic dans main | **fixed** `ee996b1` | `os.Exit(1)` |
+| F10 conversion `int32` non bornée | **argué, non corrigé** | Overflow théorique (gosec G115) sur un pool fini de quelques serveurs ; l'audit le classe Info/« à noter si gosec est activé un jour ». À traiter avec l'arrivée de golangci-lint, pas en spike |
+| F11 validation CRD minimale (pattern zone) | **argué, différé M1** | Durcissement d'admission = lot validation M1 (avec regénération controller-gen) ; en M0 la faute se voit via la condition `APIError` du nodeclass — acceptable pour un spike jamais déployé |
+| F12 bypass cache de `List()` non commenté | **fixed** `8bc7fac` | Commentaire d'intention ; le routage par l'inventaire lui-même est volontairement NON fait (invariant de staleness GC non écrit — XRAY-003) |
+| F13 fake offres sans clé de zone | **argué, différé M1** | Corriger impose `AddOffer(zone, offer)` (le type `Offer` ne porte pas de zone) — churn de signature sans test multi-zone existant à protéger. À faire avec le support multi-zones M2 |
+
+### 5.3 X-ray (`…-audit-xray-karpenter.md`)
+
+| Carte | Statut | Argument |
+|---|---|---|
+| XRAY-001 cache négatif d'offres | **fixed** `8bc7fac` | TTL 1 min sur `ErrOfferNotFound` uniquement (erreurs transitoires jamais cachées) ; preuves compteur : 5 miss = 1 appel, récupération post-TTL, 503 non caché |
+| XRAY-002 single-flight Snapshot | **non fait (assumé)** | Gain ∝ nombre de NodePools par pool (1 en M0) ; le piège single-flight×Invalidate est le vrai risque et les générations de `42859df` posent la base. À mesurer en M1 (télémétrie) avant d'ajouter la complexité |
+| XRAY-003 router List()/nodeclass par l'inventaire | **non fait (needs_invariant)** | La tolérance du GC core à une staleness ≤ 10 s n'est écrite ni testée nulle part ; la carte elle-même dit « sans lui, ne pas appliquer ». Documenté au point d'usage (F12). Budget statique ~1,25 req/10 s assumé en M0 |
+| XRAY-004 sur-invalidation par zone | **fixed** `ee996b1` | = F2 (filtre par tag) |
+| XRAY-005 aliasing snapshot | **fixed** `42859df` | Copie défensive (option la plus sûre de la carte) |
+| XRAY-006 `Available` ignore les claims en vol | **non fait (décision LLD)** | Le LLD C2 assume explicitement la course résiduelle du dernier serveur (ICE testé) ; la carte le note « décision d'architecture », confiance 0.60. Confort opérationnel, pas un bug — M1 si le churn ICE se mesure |
+
+### 5.4 Pré-mortem (`…-premortem-metal.md`)
+
+| Item | Statut | Argument |
+|---|---|---|
+| ERRATUM cohabitation (G4 infirmé) | **acté — aucun mécanisme de partition implémenté** | core v1.14 partitionne par GroupKind de NodeClass (`IsManaged`). Le prérequis réel (CRDs `karpenter.sh` ≥ v1.14 vs chart autoscaling pinné 1.3.3) est documenté au README « Prérequis de déploiement » |
+| Tier 3 #2 garde d'appartenance (S1, mutation #4) | **fixed** `a0dd67a` | Delete/Get refusent tout serveur sans tag de pool déclaré ; le NotFound (plutôt qu'une erreur) garde convergent le flux maintenance « détagger → GC → finalizer retiré sans toucher au matériel » ; refus loggé ; StopServer jamais atteint (testé) |
+| Tier 3 #3 CI | **fixed** `ec1f38c` | Step Woodpecker `karpenter-test` (fmt-check + vet + test), path-filtré |
+| Tier 3 #1 décision de cohabitation (ADR) | **hors périmètre code** | Requalifié par l'ERRATUM en prérequis d'intégration ; documenté README. La décision d'alignement du chart de la stack `autoscaling` appartient à cette stack |
+| Tier 3 #4 gate d'achat (critères matériels 1-2) | **inchangé — runbook §3** | Toujours inexécutable sans serveur EM |
+| G2 dérive version Talos du module | **fixed** `fd02d1e` | Défaut `talos_image_url` v1.10.4 → **v1.12.9** (aligné plateforme) |
+| P7 `spec.replicas` / feature gate | **documenté** | Champ **alpha** dans core v1.14.0, derrière `StaticCapacity` (défaut `false` — vérifié dans `options.go` du tag) ; prérequis README + à re-vérifier au T2 (§3.3) |
+
+### 5.5 Hors périmètre M0-FIX (rappel)
+
+Wipe multi-disques + checksum SHA512 (B2/B3), métriques/alertes érosion
+(P1/O6), apply-config via PN (S2), IAM dédiée (S3), cadence upgrade pool
+éteint (O2), chemin DR (O5) : Tier 2 pré-mortem « avant mise en service du
+pool », non exigés par la mission — inchangés.
