@@ -356,22 +356,18 @@ resource "kubectl_manifest" "flux_git_repo" {
   ]
 }
 
-# ─── Root Kustomizations: ESO first, then everything else ────────
+# ─── Root Kustomization ──────────────────────────────────────────
 #
-# Two-phase split: ESO must be installed BEFORE the management
-# Kustomization can apply the ClusterSecretStore CR (which references
-# the ESO-provided CRD). Without this split, server-side dry-run on the
-# CR fails because the CRD doesn't exist yet.
-#
-# Phase 1 — `management-eso`:
-#   path:  ./clusters/management-eso/  (just external-secrets/flux/)
-#   wait:  true  → blocks until the ESO HelmRelease reports Ready,
-#                  i.e. the CRDs are installed.
-#
-# Phase 2 — `management`:
-#   path:        ./clusters/management/  (all stacks INCLUDING
-#                external-secrets/flux-config which has the CSS)
-# NOTE: management-eso Kustomization removed in postmortem 2026-04-27.
+# Single root: `management` applies ./clusters/management/ (all stacks,
+# including external-secrets/flux-config which holds the
+# ClusterSecretStore). ESO itself is tofu-owned (stacks/pki/main.tf,
+# ADR-033): the CRDs exist before Flux ever reconciles, so no ESO
+# ordering phase is needed here.
+# History: a `management-eso` phase-1 Kustomization (+ a Flux-owned ESO
+# HelmRelease) existed until postmortem 2026-04-27 — two controllers
+# managing the same Helm release conflicted on every upgrade. The dead
+# clusters/management-eso/ + stacks/external-secrets/flux/ leftovers
+# were purged 2026-07-12 (hanoi audit finding #5).
 # ESO is now tofu-managed (in stacks/pki/main.tf alongside cert-manager
 # + ClusterSecretStore — required to break the Flux/CSS catch-22).
 # Two controllers managing the same Helm release conflicts on every

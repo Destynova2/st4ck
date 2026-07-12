@@ -556,7 +556,8 @@ resource "helm_release" "cert_manager" {
 resource "kubernetes_namespace" "external_secrets" {
   metadata {
     name = "external-secrets"
-    # PSA labels MUST mirror stacks/external-secrets/flux/namespace.yaml.
+    # PSA labels: tofu is the sole owner of this namespace (the former
+    # Flux-owned stacks/external-secrets/flux/ was purged 2026-07-12).
     # Same SSA idempotency reasoning as cert_manager above — both
     # sources must declare baseline to prevent silent label stripping
     # on Flux reconcile. Postmortem 2026-04-29 (#14).
