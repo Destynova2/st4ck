@@ -39,6 +39,7 @@ type FakeBackend struct {
 	ListCalls  int
 	StartCalls int
 	StopCalls  int
+	OfferCalls int
 }
 
 var _ Backend = (*FakeBackend)(nil)
@@ -179,6 +180,7 @@ func (f *FakeBackend) StopServer(_ context.Context, zone, serverID string) error
 func (f *FakeBackend) GetOfferByName(_ context.Context, _ string, name string) (Offer, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.OfferCalls++
 	if f.OfferErr != nil {
 		return Offer{}, f.OfferErr
 	}

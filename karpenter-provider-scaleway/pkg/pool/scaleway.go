@@ -5,10 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	baremetal "github.com/scaleway/scaleway-sdk-go/api/baremetal/v1"
 	"github.com/scaleway/scaleway-sdk-go/scw"
 )
+
+// negativeOfferTTL bounds how long a failed offer resolution
+// (ErrOfferNotFound) is served from cache. Without it, a misconfigured
+// spec.offerName would trigger a full-catalog ListOffers on every
+// scheduling loop, every nodeclass poll and every GC pass, indefinitely
+// (XRAY-001). Transient API errors are never cached. Recovery worst case:
+// an offer added to the catalog is seen at most one TTL late; fixing the
+// offerName in the spec changes the cache key, so it resolves immediately.
+const negativeOfferTTL = time.Minute
 
 // ScalewayBackend implements Backend against the Scaleway baremetal v1 API.
 // Authentication comes from the standard SCW_* environment variables
@@ -16,9 +26,16 @@ import (
 type ScalewayBackend struct {
 	api baremetalAPI
 
-	// Offers are static; cache resolutions forever.
+	// Offers are static: positive resolutions are cached forever, negative
+	// ones (offer absent from the catalog) for negativeOfferTTL.
 	offerMu    sync.Mutex
-	offerCache map[string]Offer // key: zone/name
+	offerCache map[string]offerEntry // key: zone/name
+}
+
+type offerEntry struct {
+	offer     Offer
+	err       error // non-nil ⇒ negative entry (ErrOfferNotFound only)
+	fetchedAt time.Time
 }
 
 // baremetalAPI is the subset of *baremetal.API used, extracted for tests.
@@ -40,7 +57,7 @@ func NewScalewayBackend() (*ScalewayBackend, error) {
 	}
 	return &ScalewayBackend{
 		api:        baremetal.NewAPI(client),
-		offerCache: map[string]Offer{},
+		offerCache: map[string]offerEntry{},
 	}, nil
 }
 
@@ -100,9 +117,15 @@ func (b *ScalewayBackend) StopServer(ctx context.Context, zone, serverID string)
 func (b *ScalewayBackend) GetOfferByName(ctx context.Context, zone, name string) (Offer, error) {
 	key := zone + "/" + name
 	b.offerMu.Lock()
-	if o, ok := b.offerCache[key]; ok {
-		b.offerMu.Unlock()
-		return o, nil
+	if e, ok := b.offerCache[key]; ok {
+		if e.err == nil {
+			b.offerMu.Unlock()
+			return e.offer, nil
+		}
+		if time.Since(e.fetchedAt) < negativeOfferTTL {
+			b.offerMu.Unlock()
+			return Offer{}, e.err
+		}
 	}
 	b.offerMu.Unlock()
 
@@ -111,6 +134,7 @@ func (b *ScalewayBackend) GetOfferByName(ctx context.Context, zone, name string)
 		Name: &name,
 	}, scw.WithContext(ctx), scw.WithAllPages())
 	if err != nil {
+		// Transient API failure: never cached, the next call retries.
 		return Offer{}, fmt.Errorf("listing offers in %s: %w", zone, err)
 	}
 	for _, o := range resp.Offers {
@@ -119,11 +143,15 @@ func (b *ScalewayBackend) GetOfferByName(ctx context.Context, zone, name string)
 		}
 		offer := toOffer(o)
 		b.offerMu.Lock()
-		b.offerCache[key] = offer
+		b.offerCache[key] = offerEntry{offer: offer}
 		b.offerMu.Unlock()
 		return offer, nil
 	}
-	return Offer{}, fmt.Errorf("offer %q in %s: %w", name, zone, ErrOfferNotFound)
+	notFound := fmt.Errorf("offer %q in %s: %w", name, zone, ErrOfferNotFound)
+	b.offerMu.Lock()
+	b.offerCache[key] = offerEntry{err: notFound, fetchedAt: time.Now()}
+	b.offerMu.Unlock()
+	return Offer{}, notFound
 }
 
 func toServer(s *baremetal.Server) Server {

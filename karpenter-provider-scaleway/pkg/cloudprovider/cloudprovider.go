@@ -288,6 +288,11 @@ func (c *CloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
 	seen := map[string]struct{}{}
 	for i := range nodeClassList.Items {
 		nodeClass := &nodeClassList.Items[i]
+		// Direct ListServers on purpose (audit F12): List() feeds the core
+		// GC, whose tolerance to a ≤10 s stale view is an invariant nobody
+		// has written down (XRAY-003 "needs_invariant"). Until that
+		// staleness contract is promoted and tested, the GC keeps reading
+		// the API directly — ~1 call/2 min/nodeclass, within budget.
 		servers, err := c.backend.ListServers(ctx, nodeClass.Spec.Zone, nodeClass.Spec.PoolTag)
 		if err != nil {
 			return nil, fmt.Errorf("listing pool servers for node class %q, %w", nodeClass.Name, err)
