@@ -347,8 +347,16 @@ resource "kubectl_manifest" "flux_git_repo" {
     spec:
       interval: 5m
       url: ${local.gitea_ssh_url}
+      # Env-promotion model (ADR-037): dev tracks the main branch;
+      # qa/prod live in SEPARATE Scaleway projects and pin a release
+      # tag of the same branch (end-to-end tested per env). Set
+      # -var="flux_git_tag=vX.Y.Z" to pin.
       ref:
+        %{~ if var.flux_git_tag != "" ~}
+        tag: ${var.flux_git_tag}
+        %{~ else ~}
         branch: main
+        %{~ endif ~}
       secretRef:
         name: flux-ssh-identity
   YAML

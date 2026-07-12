@@ -27,12 +27,17 @@ spec:
     name: openclarity
     namespace: flux-system
   install:
+    remediation:
+      retries: 3
     createNamespace: false
     # Match tofu's wait=false. OpenClarity has 11+ pods and helm wait
     # used to time out at 5min; we let Flux observe pod readiness instead.
     disableWait: true
     timeout: 15m
   upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
     timeout: 15m
     disableWait: true
   valuesFrom:

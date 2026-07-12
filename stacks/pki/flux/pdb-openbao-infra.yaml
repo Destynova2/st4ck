@@ -1,0 +1,20 @@
+---
+# OpenBao Infra is the platform's secret/PKI backbone (3-replica Raft).
+# Without a PDB, a node drain (talosctl upgrade) or an aggressive
+# eviction could take 2 of 3 replicas down simultaneously and lose Raft
+# quorum. minAvailable: 2 keeps quorum through voluntary disruptions.
+# Labels match the openbao chart's server pods (release openbao-infra).
+# CNPG clusters manage their own PDBs natively; openbao-app runs a
+# single replica (a PDB would block drains, not protect quorum).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: openbao-infra
+  namespace: secrets
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openbao
+      app.kubernetes.io/instance: openbao-infra
+      component: server

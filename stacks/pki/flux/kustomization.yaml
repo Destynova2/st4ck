@@ -5,6 +5,8 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - helmrepository.yaml
+  # Raft quorum protection through node drains (hardening 2026-07-12)
+  - pdb-openbao-infra.yaml
   - helmrelease-openbao-infra.yaml
   - helmrelease-openbao-app.yaml
   - helmrelease-cert-manager.yaml

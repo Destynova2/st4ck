@@ -44,6 +44,7 @@
 - [ADR-034: Hauler Artifact Store](docs/adr/034-hauler-artifact-store.md): Hauler replaces arbor staging; Zarf rejected
 - [ADR-035: Elastic Metal Static Pool](docs/adr/035-elastic-metal-static-pool.md): Static EM pool pending CAPS support (amends ADR-024)
 - [ADR-036: Karpenter Scaleway Provider](docs/adr/036-karpenter-scaleway-provider.md): Where to invest dev effort to unblock Scaleway autoscaling
+- [ADR-037: Env Promotion by Tags](docs/adr/037-env-promotion-tags.md): Isolated Scaleway projects per env class; qa/prod pin release tags of main
 
 ## Documentation (Diataxis)
 - [Landing Page](docs/index.md): What this is and where to go

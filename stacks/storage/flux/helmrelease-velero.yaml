@@ -5,6 +5,11 @@ metadata:
   namespace: storage
 spec:
   interval: 30m
+  # Failed upgrades: retry 3x then roll back (hardening 2026-07-12)
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
   dependsOn:
     - name: garage
       namespace: garage
@@ -17,6 +22,8 @@ spec:
         name: vmware-tanzu
         namespace: flux-system
   install:
+    remediation:
+      retries: 3
     createNamespace: false
     timeout: 10m
   valuesFrom:

@@ -68,3 +68,9 @@ variable "flux_deploy_key_suffix" {
   description = "Suffix appended to the Gitea deploy-key title so multiple clusters can register their own Flux key on the same repo without collision. Use the cluster context-id."
   type        = string
 }
+
+variable "flux_git_tag" {
+  description = "Pin Flux to a release tag of the management repo instead of the main branch. Empty = track main (dev). qa/prod pin a tag per ADR-037."
+  type        = string
+  default     = ""
+}

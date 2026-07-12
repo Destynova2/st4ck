@@ -11,6 +11,12 @@ the hauler manifest generator). Talos/Kubernetes machine versions live in
 `contexts/_defaults.yaml`. `vars.mk` only holds `OUT_DIR` (build artifacts
 directory, default `_out`).
 
+## Env Promotion (ADR-037)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `flux_git_tag` (stacks/flux-bootstrap) | `""` | Empty = Flux tracks `main` (dev). qa/prod run in separate Scaleway projects and pin a release tag: `-var="flux_git_tag=vX.Y.Z"`. Rollback = re-point the previous tag. |
+
 ## Makefile Variables
 
 | Variable | Default | Description |
