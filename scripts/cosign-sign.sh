@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Sign a container image with Cosign using the platform keypair.
 # Usage: cosign-sign.sh <image-ref>
 #
@@ -17,7 +17,7 @@
 #   kubectl -n security get secret cosign-private-key -o jsonpath='{.data.cosign\.key}' | base64 -d > /tmp/cosign.key
 #   COSIGN_KEY=/tmp/cosign.key COSIGN_PASSWORD="" cosign sign --key $COSIGN_KEY "$IMAGE"
 
-set -eu
+set -euo pipefail
 
 IMAGE="${1:?Usage: cosign-sign.sh <image-ref>}"
 
@@ -29,5 +29,6 @@ export COSIGN_PASSWORD="${COSIGN_PASSWORD:-}"
 echo "Signing $IMAGE..."
 cosign sign --key "$COSIGN_KEY" --yes "$IMAGE"
 echo "Verifying signature..."
-cosign verify --key "$COSIGN_KEY" "$IMAGE" | head -3
+VERIFY_OUTPUT="$(cosign verify --key "$COSIGN_KEY" "$IMAGE")"
+printf '%s\n' "$VERIFY_OUTPUT" | sed -n '1,3p'
 echo "Image signed and verified."

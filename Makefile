@@ -928,12 +928,19 @@ scaleway-up: scaleway-apply scaleway-wait scaleway-kubeconfig k8s-up scaleway-se
 
 scaleway-wait: ## Wait for K8s API server of the current context to be reachable
 	@echo "Waiting for API server ($(CTX_ID))..."
-	@for i in $$(seq 1 30); do \
-		$(TF) -chdir=$(TF_SCALEWAY) output -raw kubeconfig 2>/dev/null \
-			| kubectl --kubeconfig /dev/stdin get nodes >/dev/null 2>&1 && break; \
+	@ready=0; \
+	for i in $$(seq 1 30); do \
+		if $(TF) -chdir=$(TF_SCALEWAY) output -raw kubeconfig 2>/dev/null \
+			| kubectl --kubeconfig /dev/stdin get nodes >/dev/null 2>&1; then \
+			ready=1; break; \
+		fi; \
 		echo "  attempt $$i/30..."; sleep 10; \
-	done
-	@echo "API server ready."
+	done; \
+	if [ $$ready -ne 1 ]; then \
+		echo "ERROR: API server ($(CTX_ID)) not reachable after 300s" >&2; \
+		exit 1; \
+	fi; \
+	echo "API server ready."
 
 scaleway-kubeconfig: ## Export kubeconfig to $(KC_FILE)
 	@mkdir -p $(dir $(KC_FILE))
@@ -1173,7 +1180,8 @@ arbor: vault-backend-build ## Pre-stage images, Helm charts, and git repo for de
 
 arbor-verify:
 	@FAIL=0; \
-	grep -E '^\s+image:' bootstrap/platform-pod.yaml | sed 's/.*image:\s*//' | sort -u | while read -r img; do \
+	IMAGES=$$(grep -E '^\s+image:' bootstrap/platform-pod.yaml | sed 's/.*image:\s*//' | sort -u); \
+	for img in $$IMAGES; do \
 		printf "  %-60s" "$$img:"; \
 		if podman image exists "$$img" 2>/dev/null; then echo "OK"; else echo "MISSING"; FAIL=1; fi; \
 	done; \

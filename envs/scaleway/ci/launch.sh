@@ -81,27 +81,51 @@ podman play kube "$WORKDIR/pod-with-secrets.yaml" \
 # Wait for the HTTP listener, then create the admin via the in-pod CLI.
 # Bypasses the cookie-based signup form which is brittle from inside the
 # sidecar. `gitea admin user create` returns non-zero if the user already
-# exists; we treat that as success.
+# exists; tolerate only that specific condition.
 
 echo "Waiting for Gitea HTTP..."
+gitea_ready=0
 for _ in $(seq 1 60); do
-  curl -sf -o /dev/null "http://localhost:3000/api/v1/version" 2>/dev/null && break
+  if curl -sf -o /dev/null "http://localhost:3000/api/v1/version" 2>/dev/null; then
+    gitea_ready=1
+    break
+  fi
   sleep 2
 done
+if [ "$gitea_ready" -ne 1 ]; then
+  echo "FATAL: Gitea HTTP did not become ready after 120s." >&2
+  exit 1
+fi
 
 echo "Creating Gitea admin user '${GITEA_ADMIN}' (idempotent)..."
-podman exec -u git platform-gitea gitea admin user create \
+gitea_output="$(podman exec -u git platform-gitea gitea admin user create \
   --username "${GITEA_ADMIN}" --password "${GITEA_PASSWORD}" --email "admin@ci.local" \
-  --admin --must-change-password=false 2>&1 \
-  || echo "[setup] gitea admin user create returned non-zero (user may already exist — OK)"
+  --admin --must-change-password=false 2>&1)" || {
+  if printf '%s\n' "$gitea_output" | grep -qi 'already exists\|user.*exists'; then
+    echo "[setup] Gitea admin user already exists — OK"
+  else
+    printf '%s\n' "$gitea_output" >&2
+    echo "FATAL: failed to create Gitea admin user." >&2
+    exit 1
+  fi
+}
 
 # ─── Wait for setup sidecar to finish ──────────────────────────────────
 
 echo "Waiting for platform setup..."
+setup_ready=0
 for _ in $(seq 1 120); do
-  podman logs platform-tofu-setup 2>&1 | grep -q '\[setup\] ===' && break
+  if podman logs platform-tofu-setup 2>&1 | grep -q '\[setup\] ==='; then
+    setup_ready=1
+    break
+  fi
   sleep 5
 done
+if [ "$setup_ready" -ne 1 ]; then
+  echo "FATAL: platform setup sidecar did not finish after 600s." >&2
+  podman logs platform-tofu-setup >&2 || true
+  exit 1
+fi
 
 # ─── Export tokens from the setup sidecar ──────────────────────────────
 
