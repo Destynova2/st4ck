@@ -195,19 +195,16 @@ k8s-pki-destroy: k8s-pki-init
 k8s-identity-init:
 	$(call tf_init,$(TF_IDENTITY),$(STATE_IDENTITY))
 
-k8s-identity-apply: k8s-identity-init ## Deploy Kratos + Hydra + Pomerium
-	@echo "[identity] phase 1/3: deploy CNPG operator + identity-pg cluster CR"
-	$(TF) -chdir=$(TF_IDENTITY) apply -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS) \
-		-target=helm_release.cnpg_operator \
-		-target=kubectl_manifest.identity_pg_cluster \
-		-target=kubernetes_namespace.identity
-	@echo "[identity] phase 2/3: wait for CNPG to materialise the identity-pg-app secret (~60s)"
-	@KUBECONFIG=$(KC_FILE) kubectl -n identity wait --for=create secret/identity-pg-app --timeout=180s
-	@echo "[identity] phase 3/3: full apply (CNPG operator + ESO seeds; Kratos/Hydra/Pomerium are Flux-owned, ADR-028)"
-	$(TF) -chdir=$(TF_IDENTITY) apply -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS)
+# Single apply since 2026-07-12 (hanoi pass 2 #2/#5): the 3-phase
+# -target + kubectl-wait choreography guarded a CNPG secret that no tofu
+# resource reads anymore (DSN flows through OpenBao/ESO, ADR-028), and
+# the pki remote_state it fed is gone. Cert-before-Cluster ordering is
+# in the graph (depends_on), not the -target.
+k8s-identity-apply: k8s-identity-init ## Deploy CNPG operator + certs (Kratos/Hydra/Pomerium = Flux)
+	$(TF) -chdir=$(TF_IDENTITY) apply -auto-approve $(K8S_COMMON_VARS)
 
 k8s-identity-destroy: k8s-identity-init
-	$(TF) -chdir=$(TF_IDENTITY) destroy -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS)
+	$(TF) -chdir=$(TF_IDENTITY) destroy -auto-approve $(K8S_COMMON_VARS)
 
 # ─── k8s-security ────────────────────────────────────────────────────────
 
@@ -216,14 +213,11 @@ k8s-identity-destroy: k8s-identity-init
 k8s-security-init:
 	$(call tf_init,$(TF_SECURITY),$(STATE_SECURITY))
 
-k8s-security-apply: k8s-security-init ## Deploy Trivy + Tetragon + Kyverno + OpenClarity
-	@echo "[security] phase 1/3: namespace + CNPG cluster CR for OpenClarity"
-	$(TF) -chdir=$(TF_SECURITY) apply -auto-approve $(K8S_COMMON_VARS) \
-		-target=kubernetes_namespace.security \
-		-target=kubectl_manifest.openclarity_pg_cluster
-	@echo "[security] phase 2/3: wait for CNPG to materialise openclarity-pg-app secret"
-	@KUBECONFIG=$(KC_FILE) kubectl -n security wait --for=create secret/openclarity-pg-app --timeout=180s
-	@echo "[security] phase 3/3: full apply (namespace + ESO seeds; Trivy/Tetragon/Kyverno/OpenClarity are Flux-owned, ADR-028)"
+# Single apply since 2026-07-12 (hanoi pass 2 #2): the CNPG-secret wait
+# guarded nothing tofu reads (ESO retries on refreshInterval — see
+# main.tf comment). The identity→security CRD edge now lives in the
+# stack (terraform_data.wait_cnpg_crd).
+k8s-security-apply: k8s-security-init ## Deploy security namespace + CNPG CR + seeds (Trivy/Tetragon/Kyverno = Flux)
 	$(TF) -chdir=$(TF_SECURITY) apply -auto-approve $(K8S_COMMON_VARS)
 
 k8s-security-destroy: k8s-security-init
@@ -422,22 +416,24 @@ kaas-down: ## Tear down the KaaS control plane (keeps core k8s stacks)
 
 k8s-init: k8s-cni-init k8s-monitoring-init k8s-pki-init k8s-identity-init k8s-security-init k8s-storage-init flux-bootstrap-init ## terraform init every k8s stack
 
-k8s-up: ## Deploy every k8s stack to the current context (ENV, INSTANCE, REGION)
+# Parallel waves since 2026-07-12 (pipeline audit): the races that
+# forced sequential mode are dead — local-path lives in cni (Fix #4),
+# Kyverno/VictoriaMetrics are Flux-owned (ADR-028), no webhook is alive
+# during the applies. Real DAG: cni → pki → {monitoring ∥ identity} →
+# {security ∥ storage} → flux. The security→identity edge (CNPG CRD)
+# is enforced in-stack; storage creates the identity ns idempotently.
+# The old pre-apply of ns.storage was a Fix #4 fossil (hanoi pass 2 #3).
+k8s-up: ## Deploy every k8s stack to the current context (parallel waves)
 	@curl -so /dev/null -w '%{http_code}' $(VB_URL)/state/test 2>/dev/null | grep -qE '^(2|4)' || { echo "ERROR: vault-backend not reachable at $(VB_URL). Run 'make bootstrap' or 'make bootstrap-tunnel'."; exit 1; }
 	$(MAKE) k8s-cni-apply
-	$(MAKE) k8s-storage-init
-	@# Pre-create storage namespace before pki (cnpg-s3 secret target ns).
-	@# Fix #4 (commit 9acf931) moved local-path-provisioner from storage to
-	@# cni stack — k8s-cni-apply above now installs it. Removed broken
-	@# -target=helm_release.local_path_provisioner that referenced a
-	@# resource no longer in the storage stack.
-	$(TF) -chdir=$(TF_STORAGE) apply -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS) -target=kubernetes_namespace.storage
 	$(MAKE) k8s-pki-apply
-	$(MAKE) k8s-monitoring-apply
-	$(MAKE) k8s-identity-apply
-	$(MAKE) k8s-security-apply
-	$(MAKE) k8s-storage-apply
+	$(MAKE) -j2 k8s-wave1
+	$(MAKE) -j2 k8s-wave2
 	$(MAKE) flux-bootstrap-apply
+
+.PHONY: k8s-wave1 k8s-wave2
+k8s-wave1: k8s-monitoring-apply k8s-identity-apply ## (internal) post-pki independent stacks
+k8s-wave2: k8s-security-apply k8s-storage-apply    ## (internal) stacks needing identity
 
 k8s-down: ## Destroy every k8s stack on the current context (correct order)
 	@curl -so /dev/null -w '%{http_code}' $(VB_URL)/state/test 2>/dev/null | grep -qE '^(2|4)' || { echo "ERROR: vault-backend not reachable at $(VB_URL)."; exit 1; }
@@ -1195,7 +1191,7 @@ vmware-bootstrap:
 STACKS := envs/scaleway/iam envs/scaleway/image envs/scaleway envs/scaleway/ci \
 	stacks/cni stacks/monitoring stacks/pki \
 	stacks/identity stacks/security stacks/storage \
-	stacks/flux-bootstrap stacks/external-secrets \
+	stacks/flux-bootstrap \
 	stacks/capi stacks/kamaji stacks/autoscaling stacks/gateway-api \
 	stacks/managed-cluster \
 	modules/naming modules/context

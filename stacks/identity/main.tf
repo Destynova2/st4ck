@@ -27,23 +27,9 @@ locals {
   platform_versions = yamldecode(file("${path.module}/../../clusters/management/versions-configmap.yaml")).data
 }
 
-data "terraform_remote_state" "pki" {
-  backend = "http"
-  config = {
-    address  = var.pki_state_address
-    username = var.pki_state_username
-    password = var.pki_state_password
-  }
-}
-
-locals {
-  secrets = {
-    hydra_system_secret    = data.terraform_remote_state.pki.outputs.hydra_system_secret
-    pomerium_shared_secret = data.terraform_remote_state.pki.outputs.pomerium_shared_secret
-    pomerium_cookie_secret = data.terraform_remote_state.pki.outputs.pomerium_cookie_secret
-    pomerium_client_secret = data.terraform_remote_state.pki.outputs.pomerium_client_secret
-  }
-}
+# The pki remote_state read died with ADR-028 (secrets flow through
+# OpenBao/ESO) — removed 2026-07-12 (hanoi pass 2 #5): it forced
+# pki_state_password on every apply and broke naked `tofu apply`.
 
 provider "kubernetes" {
   config_path = var.kubeconfig_path
