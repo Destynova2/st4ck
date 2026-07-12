@@ -207,6 +207,89 @@ func TestStartedClaimSurvivesStaleStoppedBeyondTTL(t *testing.T) {
 	}
 }
 
+func TestDeleteReleasesStartedClaimOfFinalizedOwner(t *testing.T) {
+	// Re-review Critical proof: Create(A) succeeds while Scaleway keeps
+	// reporting `stopped`; A is deleted (registration never completed).
+	// Delete(A) observes `stopped`, answers NodeClaimNotFound AND releases
+	// A's started claim — Create(B) must then be able to reuse the server
+	// instead of hitting ICE until a controller restart.
+	backend := newTestBackend()
+	backend.StartKeepsStopped = true
+	backend.AddServer(testServer("aaa", pool.StatusStopped))
+	provider := newTestProvider(t, backend, testNodeClass(true))
+
+	claimA := namedNodeClaim("claim-a")
+	created, err := provider.Create(context.Background(), claimA)
+	if err != nil {
+		t.Fatalf("Create(A) returned error: %v", err)
+	}
+	claimA.Status.ProviderID = created.Status.ProviderID
+
+	err = provider.Delete(context.Background(), claimA)
+	if !cloudprovider.IsNodeClaimNotFoundError(err) {
+		t.Fatalf("Delete(A) = %v, want NodeClaimNotFoundError (server stopped)", err)
+	}
+
+	recreated, err := provider.Create(context.Background(), namedNodeClaim("claim-b"))
+	if err != nil {
+		t.Fatalf("Create(B) after A's finalization = %v, want the released server", err)
+	}
+	if recreated.Status.ProviderID != created.Status.ProviderID {
+		t.Fatalf("Create(B) providerID = %q, want the reused server %q", recreated.Status.ProviderID, created.Status.ProviderID)
+	}
+	if backend.StartCalls != 2 {
+		t.Fatalf("StartServer called %d times, want 2 (one per NodeClaim lifecycle)", backend.StartCalls)
+	}
+}
+
+func TestDeleteWithoutProviderIDReleasesOwnerClaims(t *testing.T) {
+	// A Create that failed ambiguously keeps its claim; if the NodeClaim is
+	// then deleted before ever carrying a providerID, the finalization path
+	// must still release the claim.
+	backend := newTestBackend()
+	backend.StartErr = errors.New("gateway timeout")
+	backend.GetErr = errors.New("gateway timeout")
+	backend.AddServer(testServer("aaa", pool.StatusStopped))
+	provider := newTestProvider(t, backend, testNodeClass(true))
+
+	claimA := namedNodeClaim("claim-a")
+	if _, err := provider.Create(context.Background(), claimA); err == nil {
+		t.Fatalf("Create(A) should have failed ambiguously")
+	}
+
+	err := provider.Delete(context.Background(), claimA) // never got a providerID
+	if !cloudprovider.IsNodeClaimNotFoundError(err) {
+		t.Fatalf("Delete(A) = %v, want NodeClaimNotFoundError", err)
+	}
+
+	backend.StartErr = nil
+	backend.GetErr = nil
+	if _, err := provider.Create(context.Background(), namedNodeClaim("claim-b")); err != nil {
+		t.Fatalf("Create(B) = %v, want success (A's claim released on finalization)", err)
+	}
+}
+
+func TestStartedClaimBlocksWhileOwnerAlive(t *testing.T) {
+	// Inverse of the owner-deleted case: as long as NodeClaim A is alive
+	// (no Delete), its started claim keeps protecting the server and
+	// Create(B) gets a clean ICE.
+	backend := newTestBackend()
+	backend.StartKeepsStopped = true
+	backend.AddServer(testServer("aaa", pool.StatusStopped))
+	provider := newTestProvider(t, backend, testNodeClass(true))
+
+	if _, err := provider.Create(context.Background(), namedNodeClaim("claim-a")); err != nil {
+		t.Fatalf("Create(A) returned error: %v", err)
+	}
+	_, err := provider.Create(context.Background(), namedNodeClaim("claim-b"))
+	if !cloudprovider.IsInsufficientCapacityError(err) {
+		t.Fatalf("Create(B) = %v, want InsufficientCapacityError while A is alive", err)
+	}
+	if backend.StartCalls != 1 {
+		t.Fatalf("StartServer called %d times, want 1", backend.StartCalls)
+	}
+}
+
 func TestCreateResumesOwnClaim(t *testing.T) {
 	// A retried Create for the SAME NodeClaim must converge on the same
 	// server and providerID instead of consuming a second pool member.

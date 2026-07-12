@@ -176,21 +176,34 @@ func (c *CloudProvider) startClaimedServer(ctx context.Context, nodeClass *v1alp
 // finalizer stays until an operator intervenes.
 func (c *CloudProvider) Delete(ctx context.Context, nodeClaim *karpv1.NodeClaim) error {
 	if nodeClaim.Status.ProviderID == "" {
+		c.unclaimOwner(nodeClaim.UID)
 		return cloudprovider.NewNodeClaimNotFoundError(fmt.Errorf("nodeclaim %q has no provider ID, nothing was launched", nodeClaim.Name))
 	}
 	server, zone, err := c.serverFromProviderID(ctx, nodeClaim.Status.ProviderID)
 	if err != nil {
+		if cloudprovider.IsNodeClaimNotFoundError(err) {
+			// The core is about to drop the finalizer: this NodeClaim's
+			// claims must not outlive it (re-review Critical).
+			c.unclaimOwner(nodeClaim.UID)
+		}
 		return err
 	}
 	switch server.Status.Class() {
 	case pool.ClassStartable:
-		// Deliberately powered off: the instance is terminated.
+		// Deliberately powered off: the instance is terminated. Release the
+		// finalized owner's claims — a started claim surviving its deleted
+		// NodeClaim while Scaleway still reports `stopped` would hide that
+		// capacity from every future Create until a controller restart
+		// (re-review Critical). Claims held by OTHER live NodeClaims on
+		// this server are preserved.
+		c.unclaimOwner(nodeClaim.UID)
 		return cloudprovider.NewNodeClaimNotFoundError(fmt.Errorf("server %q is %s", server.ID, server.Status))
 	case pool.ClassLive:
 		if err := c.backend.StopServer(ctx, zone, server.ID); err != nil {
 			return fmt.Errorf("stopping server %q, %w", server.ID, err)
 		}
 		c.unclaim(server.ID)
+		c.unclaimOwner(nodeClaim.UID)
 		c.invalidateInventoryFor(ctx, zone, server)
 		return nil
 	case pool.ClassTerminating, pool.ClassTransient:
@@ -434,6 +447,20 @@ func (c *CloudProvider) markClaimStarted(serverID string) {
 func (c *CloudProvider) unclaim(serverID string) {
 	c.mu.Lock()
 	delete(c.claims, serverID)
+	c.mu.Unlock()
+}
+
+// unclaimOwner releases every claim held by a NodeClaim whose finalizer is
+// being dropped. Karpenter never reuses a NodeClaim: once Delete has
+// answered NodeClaimNotFound, no retry of that NodeClaim's Create can come,
+// so its claims are dead weight that would strand stopped capacity forever.
+func (c *CloudProvider) unclaimOwner(owner types.UID) {
+	c.mu.Lock()
+	for id, cl := range c.claims {
+		if cl.owner == owner {
+			delete(c.claims, id)
+		}
+	}
 	c.mu.Unlock()
 }
 
