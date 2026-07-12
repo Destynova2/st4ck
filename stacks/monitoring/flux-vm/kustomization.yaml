@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Phase 1 of the two-phase monitoring split (see
+# clusters/management/monitoring-vm.yaml). Applies the vm-k8s-stack
+# HelmRelease + its values ConfigMap with `wait: true`, so phase 2
+# (flux-alerts/, VMRule CRs) is gated on the VictoriaMetrics operator
+# CRDs being installed. Namespace + HelmRepository live in ../flux/
+# (applied by the root `management` Kustomization).
+resources:
+  - helmrelease-vm-stack.yaml
+configMapGenerator:
+  - name: vm-k8s-stack-values
+    namespace: monitoring
+    files:
+      - values.yaml=values-vm-stack.yaml
+generatorOptions:
+  disableNameSuffixHash: true

@@ -206,85 +206,9 @@ resource "kubernetes_config_map" "platform_dashboard" {
 
 # headlamp → Flux owner (see header note)
 
-# ─── Flux alerting rules (VMRule for VictoriaMetrics) ──────────────────
-# kubectl_manifest (alekc) instead of kubernetes_manifest because the latter
-# validates against the live K8s API at PLAN time — fails when the VMRule
-# CRD doesn't exist yet (installed by helm_release.vm_k8s_stack in the same
-# apply). kubectl_manifest is lazy: validation happens at apply time only.
-#
-# Postmortem 2026-04-29 (#25, Phase C resume): vm-k8s-stack moved to Flux
-# (ADR-028) so the VMRule CRD only appears AFTER flux-bootstrap-apply +
-# Flux's first reconcile. On a fresh cluster, the apply hits
-#   "resource [operator.victoriametrics.com/v1beta1/VMRule] isn't valid"
-# and Make stops, blocking the rest of k8s-up. Gate the resource on the
-# CRD existing — first apply leaves count=0 (no VMRule yet), Flux deploys
-# vm-k8s-stack later, then `make k8s-monitoring-apply` again creates the
-# VMRule. The Flux-driven retry loop handles propagation; tofu plan stays
-# converged once the CRD is established.
-data "kubernetes_resources" "vmrule_crd" {
-  api_version    = "apiextensions.k8s.io/v1"
-  kind           = "CustomResourceDefinition"
-  field_selector = "metadata.name=vmrules.operator.victoriametrics.com"
-}
-
-resource "kubectl_manifest" "flux_alerts" {
-  count = length(data.kubernetes_resources.vmrule_crd.objects) > 0 ? 1 : 0
-
-  yaml_body = yamlencode({
-    apiVersion = "operator.victoriametrics.com/v1beta1"
-    kind       = "VMRule"
-    metadata = {
-      name      = "flux-alerts"
-      namespace = "monitoring"
-    }
-    spec = {
-      groups = [{
-        name = "flux"
-        rules = [
-          {
-            alert = "FluxGitRepositoryNotReady"
-            expr  = "gotk_resource_info{type=\"GitRepository\", ready=\"False\"} == 1"
-            for   = "10m"
-            labels = {
-              severity = "warning"
-            }
-            annotations = {
-              summary     = "Flux GitRepository {{ $labels.name }} not ready"
-              description = "GitRepository {{ $labels.name }} in {{ $labels.exported_namespace }} has been not ready for 10 minutes."
-            }
-          },
-          {
-            alert = "FluxKustomizationNotReady"
-            expr  = "gotk_resource_info{type=\"Kustomization\", ready=\"False\"} == 1"
-            for   = "10m"
-            labels = {
-              severity = "warning"
-            }
-            annotations = {
-              summary     = "Flux Kustomization {{ $labels.name }} not ready"
-              description = "Kustomization {{ $labels.name }} in {{ $labels.exported_namespace }} has been not ready for 10 minutes."
-            }
-          },
-          {
-            alert = "FluxHelmReleaseNotReady"
-            expr  = "gotk_resource_info{type=\"HelmRelease\", ready=\"False\"} == 1"
-            for   = "15m"
-            labels = {
-              severity = "warning"
-            }
-            annotations = {
-              summary     = "Flux HelmRelease {{ $labels.name }} not ready"
-              description = "HelmRelease {{ $labels.name }} in {{ $labels.exported_namespace }} has been not ready for 15 minutes."
-            }
-          },
-        ]
-      }]
-    }
-  })
-
-  # vm-k8s-stack now owned by Flux — depends on namespace only.
-  # The VMRule CRD is installed by Flux's vm-k8s-stack HelmRelease at
-  # bootstrap; on first-ever apply this manifest may transiently fail
-  # until Flux finishes reconciling. Retry-on-error is acceptable here.
-  depends_on = [kubernetes_namespace.monitoring]
-}
+# ─── Flux alerting rules (VMRule) → Flux owner ─────────────────────────
+# Moved to stacks/monitoring/flux-alerts/ (two-phase Kustomization,
+# clusters/management/monitoring-vm.yaml — same pattern as Bug #41).
+# The previous CRD-count-gated kubectl_manifest silently left fresh
+# clusters without Flux alerts (count=0 at first apply, never re-run —
+# hanoi audit 2026-07-12 finding #6).
