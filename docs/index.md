@@ -55,6 +55,7 @@ See [Getting Started](tutorials/getting-started.md) for a detailed walkthrough.
 | Deploy to a specific environment | [How to Deploy](how-to/deploy.md) |
 | Understand the architecture | [Architecture](explanation/architecture.md) |
 | Bootstrap chicken-and-egg | [Bootstrap Mechanics](explanation/bootstrap.md) |
+| Full deployment order, laptop to baremetal | [Deploy Order](explanation/deploy-order.md) |
 | Security model and threat assumptions | [Security Model](explanation/security.md) |
 | All Makefile targets and config options | [Command Reference](reference/commands.md) |
 | All configurable parameters | [Configuration Reference](reference/config.md) |
