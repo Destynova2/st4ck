@@ -68,13 +68,27 @@ def collect_images() -> list[str]:
         if line and not line.startswith("#"):
             images.add(line)
 
+    # Control-plane images track the deployed k8s_version (contexts), not
+    # the hand-maintained tags in mirror-images.txt (sync audit 2026-07-12
+    # critique #1: the list froze at the version of the cluster it was
+    # generated from).
+    k8s_version = yaml.safe_load(DEFAULTS_YAML.read_text())["k8s_version"]
+    kube_prefixes = tuple(
+        f"registry.k8s.io/kube-{c}" for c in
+        ("apiserver", "controller-manager", "proxy", "scheduler")
+    )
+
     kept = []
     for img in sorted(images):
         if "__" in img:  # bootstrap placeholder (locally built, not upstream)
             warn(f"image skipped (build-time placeholder): {img}")
             continue
+        name, _, tag = img.partition(":")
+        if name in kube_prefixes and tag != f"v{k8s_version}":
+            warn(f"kube image retagged to deployed k8s_version: {name}:v{k8s_version} (was :{tag})")
+            img = f"{name}:v{k8s_version}"
         kept.append(img)
-    return kept
+    return sorted(set(kept))
 
 
 def tf_var_defaults(variables_tf: Path) -> dict[str, str]:

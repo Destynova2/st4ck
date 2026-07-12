@@ -59,10 +59,10 @@ spec:
   - name: quay.io/poseidon/matchbox:v0.10.0@sha256:4eeafd794eebbd04a0e9c879382d6b36d98aa8f56beb4d0a75b1caaf7c4d4b98
   - name: registry.k8s.io/cluster-api/cluster-api-controller:v1.10.7
   - name: registry.k8s.io/coredns/coredns:v1.13.2
-  - name: registry.k8s.io/kube-apiserver:v1.35.0
-  - name: registry.k8s.io/kube-controller-manager:v1.35.0
-  - name: registry.k8s.io/kube-proxy:v1.35.0
-  - name: registry.k8s.io/kube-scheduler:v1.35.0
+  - name: registry.k8s.io/kube-apiserver:v1.35.6
+  - name: registry.k8s.io/kube-controller-manager:v1.35.6
+  - name: registry.k8s.io/kube-proxy:v1.35.6
+  - name: registry.k8s.io/kube-scheduler:v1.35.6
   - name: registry.k8s.io/pause:3.10
 ---
 apiVersion: content.hauler.cattle.io/v1

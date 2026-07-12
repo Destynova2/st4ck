@@ -1130,69 +1130,20 @@ bootstrap-update:
 		--configmap=$(BOOTSTRAP_DIR)/configmap.yaml
 
 # ═══════════════════════════════════════════════════════════════════════
-# Arbor — unchanged (pre-stage images, charts, git)
+# Arbor — DEPRECATED, superseded by Hauler (ADR-034)
 # ═══════════════════════════════════════════════════════════════════════
-
-ARBOR_DIR := arbor
+# The old inline recipes are gone: they resolved chart versions by
+# grepping `default = "..."` in stacks/*/variables.tf, and every default
+# moved to null when the platform version registry landed (ADR-033/034).
+# The targets now delegate to their hauler successors.
 
 .PHONY: arbor arbor-verify
 
-arbor: vault-backend-build ## Pre-stage images, Helm charts, and git repo for deployment
-	@echo "=== Arbor: staging deployment artifacts ==="
-	@mkdir -p $(ARBOR_DIR)/charts
-	@echo "--- Pulling container images from platform-pod.yaml ---"
-	@grep -E '^\s+image:' bootstrap/platform-pod.yaml \
-		| sed 's/.*image:\s*//' | sort -u | while read -r img; do \
-		echo "  podman pull $$img"; podman pull "$$img"; \
-	done
-	@echo "--- Pulling Helm charts from stacks ---"
-	@for dir in stacks/*/; do \
-		main="$$dir/main.tf"; vars="$$dir/variables.tf"; [ -f "$$main" ] || continue; \
-		grep -E 'repository\s*=' "$$main" | sed 's/.*=\s*"\(.*\)"/\1/' | while read -r repo; do \
-			chart=$$(grep -A1 "repository.*$$repo" "$$main" | grep 'chart\s*=' | head -1 | sed 's/.*=\s*"\(.*\)"/\1/'); \
-			[ -z "$$chart" ] && continue; \
-			echo "$$chart" | grep -q '/' && continue; \
-			version=$$(grep -B5 "chart.*$$chart" "$$main" | grep 'version\s*=' | head -1 | sed 's/.*=\s*"\{0,1\}\(var\.\)\{0,1\}//;s/"\{0,1\}\s*$$//'); \
-			if echo "$$version" | grep -q '^var\.'; then \
-				varname=$$(echo "$$version" | sed 's/var\.//'); \
-				version=$$(grep -A3 "variable.*$$varname" "$$vars" | grep 'default' | sed 's/.*=\s*"\(.*\)"/\1/'); \
-			fi; \
-			[ -z "$$version" ] && continue; \
-			echo "  helm pull $$chart ($$version) from $$repo"; \
-			helm pull "$$chart" --repo "$$repo" --version "$$version" -d $(ARBOR_DIR)/charts 2>/dev/null \
-				|| echo "    WARN: failed to pull $$chart $$version"; \
-		done; \
-	done
-	@echo "--- Generating manifest ---"
-	@{ echo '{'; echo '  "generated": "'$$(date -u +%Y-%m-%dT%H:%M:%SZ)'",'; \
-		echo '  "images": ['; \
-		grep -E '^\s+image:' bootstrap/platform-pod.yaml | sed 's/.*image:\s*//' | sort -u | while read -r img; do \
-			digest=$$(podman image inspect "$$img" --format '{{index .Digest}}' 2>/dev/null || echo "unknown"); \
-			echo "    {\"image\": \"$$img\", \"sha256\": \"$$digest\"},"; \
-		done; echo '    null'; echo '  ],'; \
-		echo '  "charts": ['; \
-		for f in $(ARBOR_DIR)/charts/*.tgz; do [ -f "$$f" ] || continue; \
-			sha=$$(shasum -a 256 "$$f" | cut -d' ' -f1); \
-			echo "    {\"file\": \"$$(basename $$f)\", \"sha256\": \"$$sha\"},"; \
-		done; echo '    null'; echo '  ]'; echo '}'; \
-	} > $(ARBOR_DIR)/manifest.json
-	@echo "=== Arbor staging complete ==="
+arbor: hauler-manifest hauler-sync ## DEPRECATED alias — use hauler-manifest + hauler-sync
+	@echo "NOTE: arbor is deprecated (ADR-034) — this ran hauler-manifest + hauler-sync."
 
-arbor-verify:
-	@FAIL=0; \
-	IMAGES=$$(grep -E '^\s+image:' bootstrap/platform-pod.yaml | sed 's/.*image:\s*//' | sort -u); \
-	for img in $$IMAGES; do \
-		printf "  %-60s" "$$img:"; \
-		if podman image exists "$$img" 2>/dev/null; then echo "OK"; else echo "MISSING"; FAIL=1; fi; \
-	done; \
-	test -f "$(ARBOR_DIR)/manifest.json" || { echo "FAIL: $(ARBOR_DIR)/manifest.json not found"; exit 1; }; \
-	for f in $(ARBOR_DIR)/charts/*.tgz; do [ -f "$$f" ] || continue; \
-		sha_actual=$$(shasum -a 256 "$$f" | cut -d' ' -f1); \
-		sha_expected=$$(grep "$$(basename $$f)" $(ARBOR_DIR)/manifest.json | sed 's/.*sha256.*: *"\([a-f0-9]*\)".*/\1/' | head -1); \
-		printf "  %-60s" "$$(basename $$f):"; \
-		if [ "$$sha_actual" = "$$sha_expected" ]; then echo "OK"; else echo "SHA256 MISMATCH"; FAIL=1; fi; \
-	done; \
-	[ $$FAIL -eq 0 ]
+arbor-verify: hauler-verify ## DEPRECATED alias — use hauler-verify
+	@echo "NOTE: arbor-verify is deprecated (ADR-034) — this ran hauler-verify."
 
 # ═══════════════════════════════════════════════════════════════════════
 # Hauler — declarative artifact store, successor to arbor (ADR-034)
