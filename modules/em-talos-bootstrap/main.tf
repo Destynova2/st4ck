@@ -155,6 +155,24 @@ resource "null_resource" "wipe_dummy_os" {
   depends_on = [scaleway_baremetal_server.this]
 }
 
+# ─── providerID contract (Karpenter EM pool) ────────────────────────────
+#
+# MUST stay byte-identical to pool.FormatProviderID in
+# karpenter-provider-scaleway/pkg/pool/providerid.go:
+#   scaleway-em://<zone>/<server-id>
+# e.g. scaleway-em://fr-par-2/11111111-2222-3333-4444-555555555555
+# Karpenter matches Nodes to NodeClaims by strict string equality of
+# spec.providerID (LLD C3): one byte of drift = registration timeout loop.
+locals {
+  # The scaleway TF provider exposes zone-prefixed IDs ("fr-par-2/<uuid>");
+  # the baremetal API and the Go provider use the bare UUID.
+  server_uuid = element(
+    split("/", scaleway_baremetal_server.this.id),
+    length(split("/", scaleway_baremetal_server.this.id)) - 1,
+  )
+  provider_id = "scaleway-em://${var.zone}/${local.server_uuid}"
+}
+
 # ─── Step 3+4+5 — dd Talos + reboot normal + apply-config ───────────────
 
 resource "null_resource" "talos_install" {
@@ -162,6 +180,7 @@ resource "null_resource" "talos_install" {
     server_id   = scaleway_baremetal_server.this.id
     image_url   = var.talos_image_url
     config_hash = sha256(var.talos_machine_config)
+    provider_id = var.kubelet_provider_id_enabled ? local.provider_id : ""
   }
 
   # Stage 3 — dd Talos image onto the clean disk.
@@ -218,12 +237,16 @@ resource "null_resource" "talos_install" {
     EOT
   }
 
-  # Stage 5 — apply machine config (insecure mode, port 50000).
+  # Stage 5 — apply machine config (insecure mode, port 50000). When
+  # enabled, the kubelet provider-id is injected as a strategic-merge
+  # config patch so it is derived from the SAME zone/server-id values the
+  # Karpenter provider uses (never hand-written in the machine config).
   provisioner "local-exec" {
     interpreter = ["/bin/bash", "-c"]
     environment = {
       SERVER_IP      = scaleway_baremetal_server.this.ips[0].address
       MACHINE_CONFIG = var.talos_machine_config
+      PROVIDER_ID    = var.kubelet_provider_id_enabled ? local.provider_id : ""
     }
     command = <<-EOT
       set -euo pipefail
@@ -231,8 +254,17 @@ resource "null_resource" "talos_install" {
       tmp=$(mktemp)
       trap 'rm -f "$tmp"' EXIT
       printf '%s' "$MACHINE_CONFIG" > "$tmp"
-      echo "[step 5] talosctl apply-config --insecure -n $SERVER_IP"
-      talosctl apply-config --insecure -n "$SERVER_IP" -f "$tmp"
+      if [ -n "$PROVIDER_ID" ]; then
+        echo "[step 5] talosctl apply-config --insecure -n $SERVER_IP (kubelet provider-id: $PROVIDER_ID)"
+        # A Talos validation error here means the kubelet arg is denylisted
+        # (M0 criterion #1) -> set kubelet_provider_id_enabled=false and use
+        # talos-ccm (Option B of LLD-002 §4).
+        talosctl apply-config --insecure -n "$SERVER_IP" -f "$tmp" \
+          --config-patch "{\"machine\":{\"kubelet\":{\"extraArgs\":{\"provider-id\":\"$PROVIDER_ID\"}}}}"
+      else
+        echo "[step 5] talosctl apply-config --insecure -n $SERVER_IP"
+        talosctl apply-config --insecure -n "$SERVER_IP" -f "$tmp"
+      fi
       echo "[step 5] config applied — Talos will reboot into normal mode"
     EOT
   }

@@ -34,9 +34,25 @@ variable "ssh_private_key_path" {
 variable "talos_image_url" {
   description = "Public URL of the Talos metal-amd64 RAW image (xz-compressed)."
   type        = string
-  default     = "https://factory.talos.dev/image/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba/v1.10.4/metal-amd64.raw.xz"
-  # Default schematic = vanilla (no extensions). Build a custom one at
-  # https://factory.talos.dev to add iscsi-tools, util-linux-tools, etc.
+  default     = "https://factory.talos.dev/image/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba/v1.12.9/metal-amd64.raw.xz"
+  # Default aligned with the platform Talos version (contexts/_defaults.yaml)
+  # — a pool pre-imaged with an older default drifts out of the kubelet skew
+  # window while powered off (pre-mortem G2/O2). Default schematic = vanilla
+  # (no extensions). Build a custom one at https://factory.talos.dev to add
+  # iscsi-tools, util-linux-tools, etc.
+}
+
+variable "kubelet_provider_id_enabled" {
+  description = <<-EOT
+    Inject machine.kubelet.extraArgs.provider-id at step 5 (Option A of
+    LLD-002 §4), so the kubelet registers the node with the exact provider ID
+    the Karpenter EM provider derives — required for NodeClaim↔Node matching
+    (strict byte equality, LLD C3). Whether Talos v1.12 accepts this kubelet
+    arg is M0 hardware criterion #1: if the denylist rejects it at
+    apply-config, set this to false and fall back to talos-ccm (Option B).
+  EOT
+  type        = bool
+  default     = true
 }
 
 variable "talos_machine_config" {
