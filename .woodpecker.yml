@@ -48,8 +48,10 @@ steps:
         exit "$FAIL"
 
   # ─── Tofu test (pass1 #7 / pass2 #10) — run .tftest.hcl ─────────────
-  # 4 tested dirs: envs/scaleway/{iam,image,ci,.}. The cluster tests
-  # (envs/scaleway/tests/cluster.tftest.hcl) run from envs/scaleway itself.
+  # Tested dirs: envs/scaleway/{iam,image,ci,.} + em-talos-bootstrap
+  # (offline provider_id golden — Karpenter providerID contract). The
+  # cluster tests (envs/scaleway/tests/cluster.tftest.hcl) run from
+  # envs/scaleway itself.
   - name: test-tftest
     image: *tofu_image
     commands:
@@ -59,6 +61,7 @@ steps:
           envs/scaleway/iam \
           envs/scaleway/image \
           envs/scaleway/ci \
+          modules/em-talos-bootstrap \
           envs/scaleway; do
           if [ ! -d "$dir/tests" ] || ! ls "$dir"/tests/*.tftest.hcl >/dev/null 2>&1; then
             echo "--- skipping $dir (no .tftest.hcl)"

@@ -157,20 +157,21 @@ resource "null_resource" "wipe_dummy_os" {
 
 # ─── providerID contract (Karpenter EM pool) ────────────────────────────
 #
-# MUST stay byte-identical to pool.FormatProviderID in
-# karpenter-provider-scaleway/pkg/pool/providerid.go:
-#   scaleway-em://<zone>/<server-id>
-# e.g. scaleway-em://fr-par-2/11111111-2222-3333-4444-555555555555
-# Karpenter matches Nodes to NodeClaims by strict string equality of
-# spec.providerID (LLD C3): one byte of drift = registration timeout loop.
-locals {
+# The derivation lives in the pure submodule modules/provider-id (single
+# source, exercised offline by tests/provider_id.tftest.hcl against the
+# same golden literal as the Go side). Contract: byte-identical to
+# pool.FormatProviderID — scaleway-em://<zone>/<server-id> (LLD C3).
+module "provider_id" {
+  source = "./modules/provider-id"
+
+  zone = var.zone
   # The scaleway TF provider exposes zone-prefixed IDs ("fr-par-2/<uuid>");
-  # the baremetal API and the Go provider use the bare UUID.
-  server_uuid = element(
-    split("/", scaleway_baremetal_server.this.id),
-    length(split("/", scaleway_baremetal_server.this.id)) - 1,
-  )
-  provider_id = "scaleway-em://${var.zone}/${local.server_uuid}"
+  # the submodule keeps only the bare UUID the baremetal API uses.
+  server_id = scaleway_baremetal_server.this.id
+}
+
+locals {
+  provider_id = module.provider_id.provider_id
 }
 
 # ─── Step 3+4+5 — dd Talos + reboot normal + apply-config ───────────────
