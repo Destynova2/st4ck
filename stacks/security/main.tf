@@ -97,6 +97,28 @@ resource "kubectl_manifest" "openclarity_pg_certs" {
   depends_on = [kubernetes_namespace.security]
 }
 
+# The CNPG CRD is installed by the cnpg_operator Helm release in
+# stacks/identity. This cross-stack edge was only guaranteed by k8s-up's
+# ordering (pipeline audit 2026-07-12 A0): a standalone
+# k8s-security-apply on a fresh cluster failed on "resource
+# [postgresql.cnpg.io/v1/Cluster] isn't valid". The wait puts the edge
+# in the stack, not the orchestrator.
+resource "terraform_data" "wait_cnpg_crd" {
+  provisioner "local-exec" {
+    environment = { KUBECONFIG = var.kubeconfig_path }
+    command     = <<-EOT
+      set -eu
+      echo "Waiting for CNPG CRD (installed by stacks/identity)..."
+      for i in $(seq 1 120); do
+        kubectl get crd clusters.postgresql.cnpg.io >/dev/null 2>&1 && exit 0
+        sleep 1
+      done
+      echo "ERROR: CNPG CRD not found after 120s — deploy stacks/identity first." >&2
+      exit 1
+    EOT
+  }
+}
+
 resource "kubectl_manifest" "openclarity_pg_cluster" {
   yaml_body = <<-YAML
     apiVersion: postgresql.cnpg.io/v1
@@ -131,6 +153,7 @@ resource "kubectl_manifest" "openclarity_pg_cluster" {
   YAML
 
   depends_on = [
+    terraform_data.wait_cnpg_crd,
     kubernetes_namespace.security,
     # All 4 cert Secrets must exist before CNPG inspects spec.certificates.
     kubectl_manifest.openclarity_pg_certs,
@@ -225,33 +248,14 @@ resource "kubectl_manifest" "openclarity_eso" {
   ]
 }
 
-# ─── Cosign image verification policy ──────────────────────────────
-
-# Postmortem 2026-04-29 (#26, Phase C resume): Kyverno moved to Flux
-# (ADR-028) so the ClusterPolicy CRD only appears AFTER flux-bootstrap +
-# Flux's first reconcile. Same chicken/egg as VMRule (Bug #25):
-#   "resource [kyverno.io/v1/ClusterPolicy] isn't valid for cluster"
-# blocks k8s-security-apply on a fresh tree. Gate on the CRD; first apply
-# leaves count=0, Flux installs Kyverno, re-running k8s-security-apply
-# (or the next k8s-up) creates the policy.
-data "kubernetes_resources" "kyverno_clusterpolicy_crd" {
-  api_version    = "apiextensions.k8s.io/v1"
-  kind           = "CustomResourceDefinition"
-  field_selector = "metadata.name=clusterpolicies.kyverno.io"
-}
-
-resource "kubectl_manifest" "cosign_verify_policy" {
-  count = length(data.kubernetes_resources.kyverno_clusterpolicy_crd.objects) > 0 ? 1 : 0
-
-  yaml_body = file("${path.module}/verify-images.yaml")
-
-  depends_on = [
-    # Kyverno Flux-owned (ADR-028) — admission webhook may not be ready
-    # at apply time; kubectl_manifest retries until the CRD exists.
-    kubernetes_namespace.security,
-    # Policy references cosign-public-key Secret. ExternalSecret must
-    # have synced before Kyverno tries to validate signatures, otherwise
-    # the policy's ClusterPolicy webhook returns "secret not found".
-    kubectl_manifest.cosign_externalsecrets,
-  ]
-}
+# ─── Cosign image verification policy → Flux owner ─────────────────
+# The ClusterPolicy verify-image-signatures is owned by Flux ONLY
+# (stacks/security/flux-kyverno-policies/cosign-policy.yaml, applied by
+# the security-kyverno-policies Kustomization, gated on the Kyverno HR).
+# A count-gated tofu copy used to live here with an INVALID schema
+# (`key:` rejected by the Kyverno v1.17 CRD) — the documented remediation
+# (re-running k8s-security-apply on a warm cluster) applied the invalid
+# YAML and broke the apply. Removed 2026-07-12 (hanoi pass 2, T3).
+# MIGRATION on clusters where the resource exists in state:
+#   tofu state rm 'kubectl_manifest.cosign_verify_policy[0]'
+# BEFORE applying, otherwise the next apply destroys Flux's policy.
