@@ -53,3 +53,5 @@ images.txt
 # bootstrap and destroy of the CI VM — never commit).
 **/_local_backend_override.tf
 envs/scaleway/ci/files/
+haul/
+haul.tar.zst*

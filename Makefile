@@ -1187,6 +1187,31 @@ arbor-verify:
 	[ $$FAIL -eq 0 ]
 
 # ═══════════════════════════════════════════════════════════════════════
+# Hauler — declarative artifact store, successor to arbor (ADR-034)
+# ═══════════════════════════════════════════════════════════════════════
+
+HAULER_STORE := haul
+HAULER_MANIFEST := hauler-manifest.yaml
+
+.PHONY: hauler-manifest hauler-sync hauler-verify hauler-save hauler-serve
+
+hauler-manifest: ## Regenerate hauler-manifest.yaml from repo sources of truth
+	python3 scripts/hauler-manifest-gen.py -o $(HAULER_MANIFEST)
+
+hauler-sync: ## Pull all artifacts (images, charts, files) into the local store
+	@command -v hauler >/dev/null 2>&1 || { echo "Error: hauler required — https://docs.hauler.dev (curl -sfL https://get.hauler.dev | bash)"; exit 1; }
+	hauler store sync --store $(HAULER_STORE) --filename $(HAULER_MANIFEST)
+
+hauler-verify: ## List store contents (digest-addressed OCI layout)
+	hauler store info --store $(HAULER_STORE)
+
+hauler-save: ## Export store to chunked tarball for air-gap transfer
+	hauler store save --store $(HAULER_STORE) --filename haul.tar.zst
+
+hauler-serve: ## Serve store as OCI registry on :5000 (registry-mirror endpoint candidate)
+	hauler store serve registry --store $(HAULER_STORE) --port 5000
+
+# ═══════════════════════════════════════════════════════════════════════
 # VMware airgap (scripts, not Terraform)
 # ═══════════════════════════════════════════════════════════════════════
 

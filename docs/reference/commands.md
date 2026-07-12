@@ -41,8 +41,13 @@ All commands are Makefile targets. Run `make help` for the full list.
 | `make preflight` | Pre-upgrade checks (variables, files, connectivity, TF validate) |
 | `make upgrade` | Full upgrade: preflight, snapshot, bootstrap-update, provider apply, k8s-up |
 | `make bootstrap-update` | Update running bootstrap pod in-place (preserves PVC data) |
-| `make arbor` | Pre-stage all images, Helm charts for deployment (writes `arbor/manifest.json`) |
+| `make arbor` | Pre-stage all images, Helm charts for deployment (writes `arbor/manifest.json`) — superseded by Hauler (ADR-034) |
 | `make arbor-verify` | Verify arbor staging tree (SHA256 checks on all artifacts) |
+| `make hauler-manifest` | Regenerate `hauler-manifest.yaml` from repo sources of truth (ADR-034) |
+| `make hauler-sync` | Pull all artifacts (images, charts, files) into the local `haul/` store |
+| `make hauler-verify` | List store contents (digest-addressed OCI layout) |
+| `make hauler-save` | Export store to chunked tarball for air-gap transfer |
+| `make hauler-serve` | Serve store as OCI registry on :5000 (registry-mirror endpoint candidate) |
 
 ## K8s Stacks (Provider-Agnostic)
 
