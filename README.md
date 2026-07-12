@@ -2,8 +2,8 @@
 
 > Sovereign Kubernetes platform on Talos Linux — staged deployment with OpenBao-backed state, PKI, secrets, and GitOps.
 
-[![Talos](https://img.shields.io/badge/Talos-v1.12.6-blue)](https://www.talos.dev/)
-[![K8s](https://img.shields.io/badge/Kubernetes-1.35.4-blue)](https://kubernetes.io/)
+[![Talos](https://img.shields.io/badge/Talos-v1.12.9-blue)](https://www.talos.dev/)
+[![K8s](https://img.shields.io/badge/Kubernetes-1.35.6-blue)](https://kubernetes.io/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ```mermaid
@@ -117,7 +117,7 @@ scw_organization_id = "<your-org-id>"
 | High-level design | [HLD](docs/hld-talos-platform.md) |
 | Low-level designs | [LLDs](docs/lld/) |
 | Component inventory | [Technology Stack](docs/techno.md) |
-| Architecture decisions | [ADRs](docs/adr/) (30 ADRs) |
+| Architecture decisions | [ADRs](docs/adr/) (30+ ADRs) |
 | AI agent context | [AGENTS.md](AGENTS.md) |
 
 ## Project structure

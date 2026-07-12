@@ -14,14 +14,11 @@ All commands are Makefile targets. Run `make help` for the full list.
 | `KC_FILE` | `~/.kube/$(NAMESPACE)-$(ENV)-$(INSTANCE)-$(REGION)` | Context-scoped kubeconfig file path |
 | `TF_HTTP_PASSWORD` | (from kms-output) | vault-backend token for state backend |
 
-## Version Variables (vars.mk)
+## Version Pins
 
-| Variable | Value | Description |
-|----------|-------|-------------|
-| `TALOS_VERSION` | v1.12.6 | Talos Linux version |
-| `KUBERNETES_VERSION` | 1.35.4 | Kubernetes version |
-| `CILIUM_VERSION` | 1.17.13 | Cilium CNI version |
-| `IMAGER_IMAGE` | ghcr.io/siderolabs/imager:$(TALOS_VERSION) | Talos image builder |
+All chart/provider pins: `clusters/management/versions-configmap.yaml`
+(single source — tofu + Flux + hauler). Talos/K8s machine versions:
+`contexts/_defaults.yaml`. `vars.mk` holds only `OUT_DIR`.
 
 ## KMS & State Management
 
@@ -152,7 +149,7 @@ Each stack has `-init`, `-apply`, and `-destroy` targets:
 | Command | Description |
 |---------|-------------|
 | `make clean` | Remove all build artifacts |
-| `make garage-chart` | Fetch Garage Helm chart v2.2.0 |
+| `make garage-chart` | Fetch Garage Helm chart v2.3.0 |
 | `make help` | Show all targets with descriptions |
 
 ## Environment Variables

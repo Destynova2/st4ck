@@ -211,7 +211,7 @@ graph TB
 | Trivy Operator | Trivy | Vulnerability + SBOM scanning | security | Deployment |
 | Tetragon | Tetragon | eBPF runtime security | security | DaemonSet |
 | Kyverno | Kyverno | Policy enforcement (Cosign verify) | security | Deployment |
-| Garage | Garage v2.2.0 | S3-compatible object storage | garage | StatefulSet x3 |
+| Garage | Garage v2.3.0 | S3-compatible object storage | garage | StatefulSet x3 |
 | Harbor | Harbor | Container image registry | storage | Multiple deployments |
 | Velero | Velero | Backup/restore to Garage S3 | storage | Deployment |
 | Flux v2 | Flux | GitOps reconciliation | flux-system | Multiple controllers |
@@ -930,7 +930,7 @@ sequenceDiagram
     TF->>Talos: Bootstrap CP-1
     Talos-->>TF: etcd initialized
     TF->>Talos: Get kubeconfig
-    Talos-->>TF: kubeconfig (written to ~/.kube/talos-scaleway)
+    Talos-->>TF: kubeconfig (written to ~/.kube/$(CTX_ID))
 ```
 
 ### Provider-Specific Sequence: Local (libvirt)
@@ -1057,7 +1057,7 @@ graph TD
 
 | Component | Chart | Version | Namespace |
 |-----------|-------|---------|-----------|
-| Garage | Local chart (fetched from upstream) | v2.2.0 | garage |
+| Garage | Local chart (fetched from upstream) | v2.3.0 | garage |
 | Velero | vmware-tanzu/velero | var.velero_version | storage |
 | Harbor | goharbor/harbor | var.harbor_version | storage |
 
@@ -1216,7 +1216,7 @@ graph TD
     end
 
     subgraph "Stack Flux Manifests"
-        ESO_F["stacks/external-secrets/flux/<br/>HelmRepository + HelmRelease + ClusterSecretStore"]
+        ESO_F["stacks/external-secrets/flux-config/<br/>ClusterSecretStore (chart ESO : stacks/pki, ADR-033)"]
         CNI_F["stacks/cni/flux/"]
         MON_F["stacks/monitoring/flux/"]
         PKI_F["stacks/pki/flux/"]
@@ -1307,28 +1307,28 @@ After initial deployment via OpenTofu, the handoff to Flux follows this pattern:
 
 | Layer | Technology | Version |
 |-------|-----------|---------|
-| OS | Talos Linux | v1.12.6 |
-| Kubernetes | Kubernetes | 1.35.4 |
+| OS | Talos Linux | v1.12.9 |
+| Kubernetes | Kubernetes | 1.35.6 |
 | IaC | OpenTofu | 1.9 |
 | CNI | Cilium | 1.17.13 |
 | KMS | OpenBao (bootstrap) | 2.5.1 |
-| PKI | cert-manager | v1.19.4 |
-| PKI | OpenBao (in-cluster) | 0.25.6 (chart) |
-| Metrics | vm-k8s-stack | 0.72.4 |
-| Logs | victoria-logs-single | 0.11.28 |
-| Logs | victoria-logs-collector | 0.2.11 |
-| Dashboard | Headlamp | 0.40.0 |
-| Identity | Ory Kratos | 0.60.1 |
-| Identity | Ory Hydra | 0.60.1 |
+| PKI | cert-manager | v1.21.0 |
+| PKI | OpenBao (in-cluster) | 0.28.4 (chart) |
+| Metrics | vm-k8s-stack | 0.86.0 |
+| Logs | victoria-logs-single | 0.13.8 |
+| Logs | victoria-logs-collector | 0.3.6 |
+| Dashboard | Headlamp | 0.43.0 |
+| Identity | Ory Kratos | 0.62.1 |
+| Identity | Ory Hydra | 0.62.1 |
 | Identity | Pomerium | 34.0.1 |
-| Policy | Kyverno | 3.7.1 |
-| Scanning | Trivy Operator | 0.32.0 |
-| Runtime | Tetragon | 1.6.0 |
-| Storage | Garage | v2.2.0 (app) / 0.9.2 (chart) |
-| CNI storage dependency | local-path-provisioner | 0.0.35 |
-| Registry | Harbor | 1.16.2 |
+| Policy | Kyverno | 3.8.2 |
+| Scanning | Trivy Operator | 0.34.0 |
+| Runtime | Tetragon | 1.7.0 |
+| Storage | Garage | v2.3.0 (app) / 0.9.2 (chart) |
+| CNI storage dependency | local-path-provisioner | 0.0.37 |
+| Registry | Harbor | 1.19.1 |
 | Backup | Velero | 11.4.0 |
-| GitOps | Flux v2 | 2.14.1 |
+| GitOps | Flux v2 | 2.18.4 |
 | Git | Gitea | 1.22-rootless |
 | CI | Woodpecker | v3 |
 

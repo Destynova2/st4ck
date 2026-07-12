@@ -20,7 +20,7 @@
 
 2. Management Cluster (3 CP + 3 workers Talos)
    ├── etcd (integre a Talos)
-   ├── Kubernetes v1.35.4
+   ├── Kubernetes v1.35.6
    └── Cilium CNI 1.17 + Hubble
        ├── eBPF (remplace kube-proxy)
        ├── Network Policies L3/L4/L7
@@ -32,9 +32,9 @@
 
 **Livrable** : cluster 6 noeuds fonctionnel, reseau securise, DNS operationnel.
 
-- [x] Talos v1.12.6 + Kubernetes v1.35.4 (Scaleway)
+- [x] Talos v1.12.9 + Kubernetes v1.35.6 (Scaleway)
 - [x] Cilium 1.17.13 + Hubble relay
-- [x] local-path-provisioner 0.0.35 (StorageClass defaut, stack CNI)
+- [x] local-path-provisioner 0.0.37 (StorageClass defaut, stack CNI)
 - [x] Talos Factory schematic avec extension DRBD
 
 ### Phase 1.2 — CI/CD & Registry (S2-S3)
@@ -66,7 +66,7 @@
 
 - [x] Gitea (deploye sur CI VM avec Woodpecker)
 - [x] Woodpecker CI (pipeline complet : validate → image → cluster → wait-api → addons → secrets → security → storage)
-- [x] Harbor 1.16.2 (registry S3 Garage backend, Helm, Trivy scan integre)
+- [x] Harbor 1.19.1 (registry S3 Garage backend, Helm, Trivy scan integre)
 
 ### Phase 1.3 — Secrets & Identite (S3-S4)
 
@@ -101,10 +101,10 @@
 
 - [x] OpenBao infra + app (2 instances Helm separees)
 - [x] PKI Terraform (Root CA + Intermediate CA, pure TLS provider)
-- [x] cert-manager v1.19.4 + ClusterIssuer internal-ca
+- [x] cert-manager v1.21.0 + ClusterIssuer internal-ca
 - [x] Ory Kratos + Hydra (TLS public, OIDC kubernetes client auto-enregistre) + Pomerium
 - [x] Secrets auto-generes (Terraform entropy resources, zero intervention manuelle)
-- [x] OIDC K8s (Hydra → apiServer, `make scaleway-oidc` pour appliquer le patch talosctl)
+- [x] OIDC K8s (Hydra → apiServer, `make oidc-register` pour appliquer le patch talosctl)
 
 ### Phase 1.4 — Observabilite & Dashboard (S4-S5)
 
@@ -138,9 +138,9 @@
 
 **Livrable** : observabilite complete (metriques, logs, alertes, dashboards, UI live).
 
-- [x] victoria-metrics-k8s-stack 0.72.4 (VMSingle + VMAgent + VMAlert + Alertmanager + Grafana + kube-state-metrics + node-exporter)
+- [x] victoria-metrics-k8s-stack 0.86.0 (VMSingle + VMAgent + VMAlert + Alertmanager + Grafana + kube-state-metrics + node-exporter)
 - [x] VictoriaLogs single 0.14.3 + collector 0.14.3 (remplace Loki + Alloy)
-- [x] Headlamp 0.40.0 (auto-open dans `make scaleway-up`)
+- [x] Headlamp 0.43.0 (auto-open dans `make scaleway-up`)
 - [x] Platform Overview dashboard (ConfigMap sidecar)
 
 ### Phase 1.5 — Securite & Scanning (S5-S6)
@@ -171,9 +171,9 @@
 
 **Livrable** : supply chain securisee, detection runtime, policies appliquees.
 
-- [x] Trivy Operator 0.32.0 (node-collector desactive — ADR-011 : `scanNodeCollectorLimit: 0`)
-- [x] Tetragon 1.6.0 (avec fix Talos tracefs)
-- [x] Kyverno 3.7.1
+- [x] Trivy Operator 0.34.0 (node-collector desactive — ADR-011 : `scanNodeCollectorLimit: 0`)
+- [x] Tetragon 1.7.0 (avec fix Talos tracefs)
+- [x] Kyverno 3.8.2
 - [x] Cosign verifyImages policy (Kyverno ClusterPolicy, mode audit, pret pour enforce)
 
 ### Phase 1.6 — Stockage & Backup (S6-S7)
@@ -203,9 +203,9 @@
 
 **Livrable** : stockage objet S3 + backups automatises.
 
-- [x] Garage v2.2.0 (3 pods, S3-compatible, PVCs local-path, cluster layout configure)
+- [x] Garage v2.3.0 (3 pods, S3-compatible, PVCs local-path, cluster layout configure)
 - [x] Velero 11.4.0 (backup → Garage S3, BackupStorageLocation available, backup/restore teste)
-- [x] Harbor 1.16.2 (registry conteneurs, S3 Garage backend, Trivy scan integre)
+- [x] Harbor 1.19.1 (registry conteneurs, S3 Garage backend, Trivy scan integre)
 
 ### Phase 1.7 — Workload Clusters via CAPI (S7-S8)
 
@@ -238,7 +238,7 @@
 - [x] OIDC K8s fonctionnel (Hydra TLS + client auto-enregistre + patch talosctl)
 - [x] Cosign (Kyverno verifyImages ClusterPolicy, mode audit)
 - [x] Velero backup/restore teste (`make velero-test` — backup + restore namespace)
-- [x] 1 workload cluster cree/detruit via CAPI (demo Scaleway: `make capi-init && make capi-create && make capi-delete`)
+- [x] 1 workload cluster cree/detruit via CAPI (demo Scaleway: `make k8s-capi-init && make k8s-capi-apply && make managed-cluster-apply`)
 
 
 ---
@@ -895,7 +895,7 @@ make k8s-up (~15 minutes end-to-end, sequentiel strict)
 └── 7. flux-bootstrap-apply (~30s)   — Flux SSH + GitRepository
 
 Post-deploy (optionnel) :
-├── make scaleway-oidc       — Configure apiServer OIDC (Hydra, talosctl patch)
+├── make oidc-register       — Configure apiServer OIDC (Hydra, talosctl patch)
 ├── make velero-test         — Valide backup/restore end-to-end
 ├── make scaleway-harbor     — Ouvre Harbor UI (password dans clipboard)
 └── make scaleway-grafana    — Ouvre Grafana UI

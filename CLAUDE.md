@@ -42,7 +42,7 @@ talos/
 │   ├── security/                       # Trivy + Tetragon + Kyverno
 │   ├── storage/                        # Garage + Velero + Harbor
 │   ├── flux-bootstrap/                 # Flux v2 + GitRepository + root Kustomization
-│   ├── external-secrets/               # ESO + ClusterSecretStore (Tofu day-1 + Flux day-2)
+│   ├── external-secrets/               # ClusterSecretStore Flux config (ESO chart: stacks/pki, ADR-033)
 │   │  ─── KaaS / Phase A (deployed by `make kaas-up`) ─────────────
 │   ├── capi/                           # Cluster API + CABPT + Talos infra provider
 │   ├── kamaji/                         # Hosted control planes for tenant clusters
@@ -55,7 +55,7 @@ talos/
 │                                       #   registry-mirror, kubelet-nodeip-vpc, …)
 ├── scripts/                            # Day-2 + validation + brigade helpers
 ├── docs/
-│   ├── adr/                            # 30 ADRs (architecture decisions)
+│   ├── adr/                            # ADRs (architecture decisions)
 │   ├── reviews/                        # cli-cycle audit reports per pass
 │   └── …
 └── tests/
@@ -151,9 +151,10 @@ make preflight ENV=dev INSTANCE=alice REGION=fr-par
 make upgrade   ENV=dev INSTANCE=alice REGION=fr-par
 make bootstrap-update
 
-# Arbor (staging tree — pre-pull all artifacts)
-make arbor                          # Pull images + Helm charts → arbor/manifest.json
-make arbor-verify                   # Verify all artifacts present (SHA256 check)
+# Hauler (artifact store — ADR-034; arbor = deprecated aliases)
+make hauler-manifest                # Regenerate hauler-manifest.yaml from the version registry
+make hauler-sync                    # Pull images + charts + files into the haul/ store
+make hauler-verify                  # List store contents (digest-addressed)
 
 # State management
 make state-snapshot                 # Raft snapshot (backup all states)
@@ -177,7 +178,7 @@ bootstrap (once, podman)
     │ → tfstate backend :8080 (via vault-backend → OpenBao KV v2)
     │
 env-apply (scaleway/local)
-    │ → kubeconfig → ~/.kube/talos-$(ENV)
+    │ → kubeconfig → ~/.kube/$(CTX_ID)
     │
 cni              ← Cilium + local-path-provisioner MUST be first (~30s)
     │
@@ -199,7 +200,7 @@ flux-bootstrap   ← Flux SSH + GitRepository (~30s)
     ▼
 Day-2 (optional)
 ├── Flux GitOps reconciliation (HelmReleases, Kustomize overlays)
-└── scaleway-oidc ← Configure apiServer OIDC (Hydra → K8s)
+└── oidc-register ← Configure apiServer OIDC (Hydra → K8s)
 ```
 
 Note: pipeline was initially parallel (make -j2) but race conditions
@@ -216,7 +217,7 @@ Note: pipeline was initially parallel (make -j2) but race conditions
 | security | Trivy, Tetragon, Kyverno, Cosign policy | security namespace |
 | storage | Garage (tofu — chart owner since 2026-04-29 #12), Velero, Harbor | storage + garage namespaces |
 | flux-bootstrap | Flux v2, GitRepository, root Kustomization | flux-system namespace |
-| external-secrets | ESO, ClusterSecretStore | external-secrets namespace |
+| external-secrets | ClusterSecretStore (ESO chart lives in pki, ADR-033) | external-secrets namespace |
 
 ## State Storage (vault-backend + OpenBao KV v2)
 
@@ -286,7 +287,7 @@ No SOPS. No secrets in Git.
 - Cilium MUST be destroyed LAST (removing it breaks pod eviction)
 - pki MUST be deployed before identity (ClusterIssuer dependency)
 - In-cluster OpenBao uses Helm + static seal; bootstrap jobs must be explicit Flux/Kustomize jobs or real Helm hooks (see ADR-033)
-- storage is self-contained (generates its own harbor_admin_password)
+- harbor_admin_password is generated and seeded by pki (secrets.tf); storage reads it from OpenBao
 - Stacks are provider-agnostic: they only need a kubeconfig path
 - vault-backend (podman) must be running for any tofu command
 - Platform pod does NOT auto-stop — use `make bootstrap-stop`

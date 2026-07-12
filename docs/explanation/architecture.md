@@ -222,14 +222,16 @@ Apres le deploiement initial, Flux reconcilie depuis `clusters/management/` :
 
 ```
 clusters/management/
-    kustomization.yaml          # Root : reference toutes les stacks
-    k8s-cni/                    # HelmRelease Cilium
-    k8s-monitoring/             # HelmReleases monitoring
-    k8s-pki/                    # HelmReleases PKI
-    k8s-identity/               # HelmReleases identity
-    k8s-security/               # HelmReleases security
-    k8s-storage/                # HelmReleases storage
+    kustomization.yaml          # Root : reference stacks/*/flux* + fichiers ci-dessous
+    versions-configmap.yaml     # Registre de versions (postBuild.substituteFrom)
+    monitoring-vm.yaml          # Two-phase : vm-k8s-stack -> VMRule flux-alerts
+    security-kyverno.yaml       # Two-phase : HelmRelease -> ClusterPolicies
+    security-openclarity.yaml   # Two-phase : ESO -> HelmRelease
+    storage-harbor.yaml         # Two-phase : ESO -> HelmRelease
 ```
+
+Les HelmReleases eux-memes vivent dans `stacks/*/flux*/` (co-localises avec
+le code tofu de chaque stack) et sont references par le kustomization root.
 
 ## Workload Clusters (CAPI)
 

@@ -67,12 +67,12 @@ resource "random_password" "grafana_admin" {
   }
 }
 
-# NOTE: Helm releases for monitoring (vm-k8s-stack, victoria-logs,
-# victoria-logs-collector, headlamp) are owned by Flux — see
-# stacks/monitoring/flux/helmrelease-*.yaml. Tofu only manages the
-# bootstrap pieces below (namespace, grafana-admin Secret pre-seeded
-# so the chart can mount it on first apply, OpenBao seed, dashboard
-# ConfigMap, VMRule for Flux alerts).
+# NOTE: Helm releases for monitoring are owned by Flux — vm-k8s-stack
+# in flux-vm/ (phase 1 of the two-phase split), the rest in flux/.
+# The VMRule flux-alerts is Flux-owned too (flux-alerts/, phase 2).
+# Tofu only manages the bootstrap pieces below (namespace,
+# grafana-admin Secret pre-seeded so the chart can mount it on first
+# apply, OpenBao seed, dashboard ConfigMap).
 #
 # ADR-028 — Flux is owner par défaut for app-level helm releases;
 # tofu only manages what must exist BEFORE Flux can reconcile.

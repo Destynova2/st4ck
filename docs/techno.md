@@ -9,8 +9,8 @@
 
 | Composant | Version | Role | Notes |
 |---|---|---|---|
-| Talos Linux | v1.12.6 | OS immutable Kubernetes | Pas de SSH, pas de shell, pas de systemd |
-| Kubernetes | 1.35.4 | Orchestrateur conteneurs | 3 control planes + 3 workers |
+| Talos Linux | v1.12.9 | OS immutable Kubernetes | Pas de SSH, pas de shell, pas de systemd |
+| Kubernetes | 1.35.6 | Orchestrateur conteneurs | 3 control planes + 3 workers |
 | Cilium | 1.17.13 | CNI + Network Policies + Service Mesh | eBPF, remplace kube-proxy, mTLS, Hubble |
 | CoreDNS | (integre K8s) | DNS cluster | Forwarding vers DNS externe |
 
@@ -20,7 +20,7 @@
 |---|---|---|---|
 | Woodpecker CI | v3 | Pipeline CI/CD push-based | 13 stages sequentiels (validate -> image -> bootstrap -> cluster -> wait-api -> stacks) |
 | Gitea | 1.x | Serveur Git | VM CI Scaleway, Podman Quadlet + systemd |
-| Harbor | 1.16.2 | Registry conteneurs | S3 Garage backend, Trivy scan integre |
+| Harbor | 1.19.1 | Registry conteneurs | S3 Garage backend, Trivy scan integre |
 
 ### VM CI (Scaleway DEV1-M)
 
@@ -43,25 +43,25 @@ Cloud-init : installe podman, clone le repo, cree admin Gitea, OAuth Woodpecker,
 | Composant | Chart Version | Role | Notes |
 |---|---|---|---|
 | Cilium | 1.17.13 | CNI + Network Policies + Service Mesh | eBPF, remplace kube-proxy, mTLS, Hubble |
-| local-path-provisioner | 0.0.35 | StorageClass par defaut | Chart containeroo, namespace local-path-storage |
+| local-path-provisioner | 0.0.37 | StorageClass par defaut | Chart containeroo, namespace local-path-storage |
 
 ## Observabilite (stack k8s-monitoring)
 
 | Composant | Chart Version | Role | Notes |
 |---|---|---|---|
-| victoria-metrics-k8s-stack | 0.72.4 | Metriques + alertes + dashboards (chart consolide) | VMSingle, VMAgent, VMAlert, Alertmanager, Grafana, kube-state-metrics, node-exporter |
-| victoria-logs-single | 0.11.28 | Stockage logs (remplace Loki) | Retention 30d |
-| victoria-logs-collector | 0.2.11 | Collecte logs (DaemonSet) | Remplace Alloy |
-| Headlamp | 0.40.0 | UI Kubernetes | kubernetes-sigs, healthmap cluster |
+| victoria-metrics-k8s-stack | 0.86.0 | Metriques + alertes + dashboards (chart consolide) | VMSingle, VMAgent, VMAlert, Alertmanager, Grafana, kube-state-metrics, node-exporter |
+| victoria-logs-single | 0.13.8 | Stockage logs (remplace Loki) | Retention 30d |
+| victoria-logs-collector | 0.3.6 | Collecte logs (DaemonSet) | Remplace Alloy |
+| Headlamp | 0.43.0 | UI Kubernetes | kubernetes-sigs, healthmap cluster |
 
 ## PKI & Secrets (stack k8s-pki)
 
 | Composant | Chart Version | Role | Notes |
 |---|---|---|---|
 | OpenBao KMS bootstrap | 2.5.1 | State backend + racine PKI | Podman hors cluster, single-node Raft |
-| OpenBao (infra) | 0.25.6 | PKI intermediaire, secrets infra, source ESO, SSH CA | In-cluster, Helm, HA Raft apres bootstrap |
-| OpenBao (app) | 0.25.6 | Frontiere secrets applicatifs | In-cluster, reserve tant qu'aucun ClusterSecretStore app n'est cable |
-| cert-manager | v1.19.4 | Gestion certificats TLS | ClusterIssuer internal-ca |
+| OpenBao (infra) | 0.28.4 | PKI intermediaire, secrets infra, source ESO, SSH CA | In-cluster, Helm, HA Raft apres bootstrap |
+| OpenBao (app) | 0.28.4 | Frontiere secrets applicatifs | In-cluster, reserve tant qu'aucun ClusterSecretStore app n'est cable |
+| cert-manager | v1.21.0 | Gestion certificats TLS | ClusterIssuer internal-ca |
 
 ### OpenBao KMS / Infra / App — roles
 
@@ -112,17 +112,17 @@ OpenBao KMS bootstrap (single-node Raft, Podman)
 
 | Composant | Chart Version | Role | Notes |
 |---|---|---|---|
-| Kratos | 0.60.1 | Gestion identite | Ory Stack |
-| Hydra | 0.60.1 | Serveur OIDC/OAuth2 | TLS public, client K8s auto-enregistre |
+| Kratos | 0.62.1 | Gestion identite | Ory Stack |
+| Hydra | 0.62.1 | Serveur OIDC/OAuth2 | TLS public, client K8s auto-enregistre |
 | Pomerium | 34.0.1 | Proxy authentifiant zero-trust | SSO tous composants |
 
 ## Securite (stack k8s-security)
 
 | Composant | Chart Version | Role | Notes |
 |---|---|---|---|
-| Trivy Operator | 0.32.0 | Scan vulnerabilites images + SBOM | Mode Standalone, node-collector desactive (Talos) |
-| Tetragon | 1.6.0 | Detection menaces runtime (eBPF) | Requiert hostMount /sys/kernel/tracing (Talos) |
-| Kyverno | 3.7.1 | Policy engine admission/mutation | failurePolicy: Ignore, verifyImages Cosign |
+| Trivy Operator | 0.34.0 | Scan vulnerabilites images + SBOM | Mode Standalone, node-collector desactive (Talos) |
+| Tetragon | 1.7.0 | Detection menaces runtime (eBPF) | Requiert hostMount /sys/kernel/tracing (Talos) |
+| Kyverno | 3.8.2 | Policy engine admission/mutation | failurePolicy: Ignore, verifyImages Cosign |
 
 ### Policies Kyverno
 
@@ -133,9 +133,9 @@ OpenBao KMS bootstrap (single-node Raft, Podman)
 
 | Composant | Chart Version | Role | Notes |
 |---|---|---|---|
-| Garage | v2.2.0 (app) | Stockage objet S3 | 3 pods StatefulSet, replication factor 3, ~300 MB RAM |
+| Garage | v2.3.0 (app) | Stockage objet S3 | 3 pods StatefulSet, replication factor 3, ~300 MB RAM |
 | Velero | 11.4.0 | Backup/restore | Target: Garage S3, BSL Available |
-| Harbor | 1.16.2 | Registry conteneurs | S3 Garage backend, Trivy scan integre |
+| Harbor | 1.19.1 | Registry conteneurs | S3 Garage backend, Trivy scan integre |
 
 ### Garage Post-Deploy (K8s Job)
 
@@ -153,7 +153,7 @@ kubernetes_job_v1.garage_setup :
 
 | Composant | Chart Version | Role | Notes |
 |---|---|---|---|
-| Flux v2 | 2.14.1 | GitOps controller | source, kustomize, helm, image, notification controllers |
+| Flux v2 | 2.18.4 | GitOps controller | source, kustomize, helm, image, notification controllers |
 
 ### Flux → Gitea (SSH)
 
@@ -177,7 +177,7 @@ stacks/
 ├── security/       # Trivy, Tetragon, Kyverno (3 helm releases + policy + flux/)
 ├── storage/        # Garage, Velero, Harbor (3 helm releases + K8s Job setup + flux/)
 ├── flux-bootstrap/ # Flux v2, SSH key, GitRepository, Kustomization
-└── external-secrets/ # ESO + ClusterSecretStore (Tofu day-1 + Flux day-2)
+└── external-secrets/ # ESO + ClusterSecretStore (chart ESO tofu-owned dans stacks/pki (ADR-033) ; le dossier external-secrets ne porte que le ClusterSecretStore)
 
 envs/scaleway/
 ├── iam/            # Projet, API keys (image-builder, cluster, ci), buckets

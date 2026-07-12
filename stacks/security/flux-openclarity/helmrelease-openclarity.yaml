@@ -1,7 +1,7 @@
 ---
 # OpenClarity is published as an OCI Helm chart. Flux uses OCIRepository
 # (not HelmRepository) to pull from registries that don't expose an
-# index.yaml. Tag is pinned to match var.openclarity_version in tofu.
+# index.yaml. Tag pinned via the platform version registry.
 apiVersion: source.toolkit.fluxcd.io/v1beta2
 kind: OCIRepository
 metadata:

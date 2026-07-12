@@ -52,29 +52,40 @@ Le flag `--replace` :
 - Re-cree le pod avec les nouvelles specs
 - Reattache les PVC existants (pas de perte de donnees)
 
-## Arbor / staging tree (pre-staging)
+## Hauler / staging d'artefacts (pre-staging, ADR-034)
 
-Pour les environnements a bande passante limitee ou les deploiements reproductibles,
-l'arbor pre-telecharge toutes les dependances :
+Pour les environnements a bande passante limitee, les deploiements
+reproductibles et l'air-gap, hauler pre-telecharge toutes les dependances
+dans un store OCI adresse par digest. Les versions viennent du registre
+unique (`clusters/management/versions-configmap.yaml`) :
 
 ```bash
-# 1. Pre-telecharger images + charts + git
-make arbor
+# 1. Regenerer le manifest depuis le registre de versions
+make hauler-manifest
 
-# 2. Verifier que tout est present
-make arbor-verify
+# 2. Synchroniser le store (delta uniquement — store adresse par digest)
+make hauler-sync
 
-# 3. Deployer normalement (les images sont deja en cache local)
+# 3. Verifier le contenu du store
+make hauler-verify
+
+# 4. Deployer normalement
 make upgrade
 ```
 
-L'arbor genere un fichier `arbor/manifest.json` listant tous les artefacts avec
-leurs SHA256. Le dossier `arbor/` est dans `.gitignore`.
+Air-gap : `make hauler-save` exporte le store en tarball zstd (chunkable),
+`hauler store load` le reimporte cote isole et `make hauler-serve` expose
+un registre OCI local (port 5000) pour Flux/containerd.
 
-Contenu du staging tree :
-- `arbor/charts/` -- tous les charts Helm (`.tgz`) avec les versions exactes
-- `arbor/manifest.json` -- inventaire complet (images + charts + SHA256)
-- Cache podman local -- toutes les images de `platform-pod.yaml`
+Contenu du store :
+- `hauler-manifest.yaml` -- inventaire declaratif (images + charts + files),
+  versionne dans Git, genere par `scripts/hauler-manifest-gen.py`
+- `haul/` -- store OCI local (gitignore), digests verifies au pull (cosign)
+- Images control-plane (`kube-*`) retaguees automatiquement sur le
+  `k8s_version` des contexts
+
+Les cibles `make arbor` / `arbor-verify` sont des alias deprecies qui
+deleguent aux cibles hauler.
 
 ## Rollback
 

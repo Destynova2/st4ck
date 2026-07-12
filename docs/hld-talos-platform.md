@@ -150,10 +150,10 @@ graph TB
 | vault-backend | gherynos/vault-backend | HTTP proxy for `tofu` backend -> OpenBao KV v2 | Podman pod |
 | Gitea | Gitea 1.22 (rootless) | Git forge, CI webhook | Podman pod |
 | Woodpecker | Woodpecker v3 | CI/CD pipeline | Podman pod |
-| OpenBao Infra | OpenBao (Helm 0.25.6) | Platform KV v2, PKI, Transit, SSH CA, ESO source | K8s StatefulSet (ns: secrets) |
-| OpenBao App | OpenBao (Helm 0.25.6) | Application-secret boundary, reserved until `ClusterSecretStore openbao-app` is wired | K8s StatefulSet (ns: secrets) |
+| OpenBao Infra | OpenBao (Helm 0.28.4) | Platform KV v2, PKI, Transit, SSH CA, ESO source | K8s StatefulSet (ns: secrets) |
+| OpenBao App | OpenBao (Helm 0.28.4) | Application-secret boundary, reserved until `ClusterSecretStore openbao-app` is wired | K8s StatefulSet (ns: secrets) |
 | Cilium | Cilium 1.17.13 | CNI, kube-proxy replacement (eBPF) | K8s DaemonSet |
-| cert-manager | cert-manager v1.19.4 | Automatic TLS issuance/renewal | K8s Deployment |
+| cert-manager | cert-manager v1.21.0 | Automatic TLS issuance/renewal | K8s Deployment |
 | vm-k8s-stack | VictoriaMetrics stack | Metrics, Grafana dashboards | K8s Helm release |
 | Flux v2 | FluxCD | GitOps Day-2 reconciliation | K8s Deployment |
 | ESO | External Secrets Operator | Sync OpenBao -> K8s Secrets | K8s Deployment |
@@ -277,7 +277,7 @@ sequenceDiagram
 ```mermaid
 graph TD
     B["make bootstrap<br/>(podman, one-time)"] --> |"kms-output/<br/>certs + tokens"| ENV
-    ENV["make scaleway-apply<br/>(provision infra)"] --> |"kubeconfig<br/>~/.kube/talos-scaleway"| CNI
+    ENV["make scaleway-apply<br/>(provision infra)"] --> |"kubeconfig<br/>~/.kube/$(CTX_ID)"| CNI
     CNI["k8s-cni (Cilium + local-path)<br/>~30s"] --> PKI["k8s-pki<br/>(OpenBao x2 + cert-manager)<br/>~2min"]
     PKI --> MON["k8s-monitoring<br/>(vm-k8s-stack + VictoriaLogs)<br/>~2min"]
     MON --> IDENT["k8s-identity<br/>(Kratos + Hydra + Pomerium)<br/>~1min"]
@@ -417,8 +417,8 @@ graph TB
 
 All K8s stacks are **identical** regardless of provider. Only the `kubeconfig_path` variable changes:
 ```
-~/.kube/talos-scaleway
-~/.kube/talos-local
+~/.kube/$(CTX_ID)
+~/.kube/$(CTX_ID)
 ```
 
 ---
@@ -429,7 +429,7 @@ All K8s stacks are **identical** regardless of provider. Only the `kubeconfig_pa
 
 | Pillar | Tool | Namespace | Retention |
 |--------|------|-----------|-----------|
-| **Metrics** | VictoriaMetrics (vm-k8s-stack v0.72.4) | monitoring | Configurable |
+| **Metrics** | VictoriaMetrics (vm-k8s-stack v0.86.0) | monitoring | Configurable |
 | **Logs** | VictoriaLogs + Collector | monitoring | Configurable |
 | **Dashboards** | Grafana (bundled with vm-k8s-stack) | monitoring | N/A |
 | **Cluster UI** | Headlamp | monitoring | N/A |
@@ -637,12 +637,12 @@ Flux v2 with a root Kustomization pointing to `clusters/management/`. OpenTofu p
 
 | Component | Version |
 |-----------|---------|
-| Talos Linux | v1.12.6 |
-| Kubernetes | 1.35.4 |
+| Talos Linux | v1.12.9 |
+| Kubernetes | 1.35.6 |
 | Cilium | 1.17.13 |
 | OpenBao (bootstrap) | 2.5.1 |
-| OpenBao Helm chart | 0.25.6 |
-| cert-manager | v1.19.4 |
+| OpenBao Helm chart | 0.28.4 |
+| cert-manager | v1.21.0 |
 | OpenTofu | 1.9 |
 | Gitea | 1.22 |
 | Woodpecker CI | v3 |

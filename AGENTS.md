@@ -4,8 +4,8 @@ Sovereign air-gapped Kubernetes platform built on Talos Linux v1.12, deploying a
 
 ## Stack
 
-- **OS**: Talos Linux v1.12.6 (immutable, no SSH, no shell, no systemd)
-- **Kubernetes**: v1.35.4 (3 control planes + 3 workers)
+- **OS**: Talos Linux v1.12.9 (immutable, no SSH, no shell, no systemd)
+- **Kubernetes**: v1.35.6 (3 control planes + 3 workers)
 - **IaC**: OpenTofu (Terraform fork), HCL, Makefile orchestration
 - **CNI**: Cilium 1.17.13 (eBPF, replaces kube-proxy)
 - **State backend**: vault-backend -> bootstrap OpenBao KMS KV v2 (podman, single-node Raft)
@@ -44,7 +44,7 @@ Bootstrap uses a single Terraform module (`bootstrap/`) that generates a podman 
 - Destroy order is the reverse of create order. Cilium must be destroyed last (it is the CNI). Kyverno webhooks must be deleted before other resources.
 - Secrets are generated via Terraform (`random_password`, `random_bytes`, `tls_private_key`) and synced through OpenBao Infra + ESO -- no manual `secret.tfvars` for application secrets.
 - Scaleway credentials flow through IAM stage outputs (`tofu -chdir=iam output -raw ...`).
-- Helm values are co-located in each stack folder (e.g., `stacks/cni/values.yaml`). Terraform references them via `file("${path.module}/...")`.
+- Helm values are co-located in each stack folder (e.g., `stacks/cni/flux/values.yaml`). Terraform references them via `file("${path.module}/...")`.
 - ADRs are numbered sequentially in `docs/adr/` and written in French.
 - Bootstrap is a single TF module (`bootstrap/main.tf`) that works for both local and remote (CI VM) deployments.
 
@@ -92,7 +92,7 @@ make scaleway-harbor            # Harbor UI (password in clipboard)
 - **vault-backend must be running** for any `tofu` command. If `tofu init` fails with "connection refused", run `make bootstrap` or restart: `podman pod start platform`.
 - **Cilium must deploy before anything else**. Without CNI, no pods can schedule. The `k8s-up` target handles this automatically.
 - **Scaleway uses 4 stages**: IAM (admin creds) -> image (builder VM) -> cluster (VMs + LB) -> CI (Gitea + Woodpecker). Credentials chain between stages.
-- **ADRs are in French** -- 30 ADRs in `docs/adr/` covering all major architectural decisions (including ADR-033 OpenBao/ESO ownership).
+- **ADRs are in French** -- 30+ ADRs in `docs/adr/` covering all major architectural decisions (including ADR-033 OpenBao/ESO ownership).
 - **Bootstrap has 5 chicken-and-egg problems** resolved by design -- see `docs/explanation/bootstrap.md`.
 - **Talos has no shell access** -- you cannot SSH into nodes. Use `talosctl` for node operations.
 - **Kyverno webhooks block deletion** -- `k8s-down` deletes webhooks first to prevent cascading failures.
@@ -101,4 +101,4 @@ make scaleway-harbor            # Harbor UI (password in clipboard)
 - **Bootstrap is now a single TF module** (`bootstrap/`) -- old references to `scripts/openbao-kms-bootstrap.sh` or `configs/openbao/` are stale.
 - **Cosign signing pipeline** exists at `scripts/cosign-sign.sh` for image signing (triggered via Woodpecker CI).
 - **Upgrade workflow** (`make upgrade`) runs preflight checks, Raft snapshot, bootstrap update, provider apply, and k8s-up in sequence.
-- **Arbor staging** (`make arbor`) pre-pulls all images and Helm charts for bandwidth-limited or reproducible deployments.
+- **Arbor staging** (`make hauler-sync`) pre-pulls all images and Helm charts for bandwidth-limited or reproducible deployments.
