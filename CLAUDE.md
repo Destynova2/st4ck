@@ -5,7 +5,8 @@
 ```
 talos/
 ├── Makefile                            # Root orchestration (make help)
-├── vars.mk                            # Shared version variables
+├── vars.mk                            # OUT_DIR only — version pins live in
+│                                       #   clusters/management/versions-configmap.yaml
 │
 ├── bootstrap/                          # Platform pod (podman) — runs BEFORE cluster
 │   ├── main.tf                         # Bootstrap Terraform module (generates pod + configmap)

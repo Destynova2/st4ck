@@ -1,0 +1,50 @@
+# Platform version registry — SINGLE SOURCE OF TRUTH for chart and
+# provider version pins (ADR-033 ownership boundary, ADR-034 staging).
+# Consumers:
+#   - OpenTofu stacks: yamldecode(file(...)).data (local.platform_versions)
+#   - Flux: postBuild.substituteFrom on the root Kustomization
+#     (stacks/flux-bootstrap/main.tf) — ${key} placeholders in
+#     HelmRelease/OCIRepository manifests resolve against this map.
+#   - scripts/hauler-manifest-gen.py (artifact staging, ADR-034)
+# Day-1 the ConfigMap is applied by tofu (flux-bootstrap stack); day-2
+# Flux reconciles it from git like any other manifest.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-versions
+  namespace: flux-system
+data:
+  capi_bootstrap_talos_version: "v0.6.12"
+  capi_controlplane_kamaji_version: "v0.14.2"
+  capi_core_version: "v1.10.10"
+  capi_infrastructure_scaleway_version: "v0.2.2"
+  capi_operator_version: "0.27.0"
+  cert_manager_version: "v1.21.0"
+  cilium_version: "1.17.13"
+  cnpg_version: "0.29.0"
+  etcd_operator_version: "0.4.5"
+  external_secrets_version: "0.20.4"
+  flux_version: "2.18.4"
+  garage_chart_version: "v2.3.0"
+  gateway_api_version: "v1.2.0"
+  harbor_version: "1.19.1"
+  headlamp_version: "0.43.0"
+  hydra_version: "0.62.1"
+  kamaji_version: "26.7.2-edge"
+  karpenter_capi_provider_version: "0.2.0"
+  karpenter_version: "1.14.0"
+  keda_version: "2.20.1"
+  kratos_version: "0.62.1"
+  kyverno_version: "3.8.2"
+  local_path_provisioner_version: "0.0.37"
+  openbao_version: "0.28.4"
+  openclarity_version: "1.1.3"
+  pomerium_version: "34.0.1"
+  prometheus_adapter_version: "4.11.0"
+  tetragon_version: "1.7.0"
+  trivy_operator_version: "0.34.0"
+  velero_version: "11.4.0"
+  victoria_logs_collector_version: "0.3.6"
+  victoria_logs_version: "0.13.8"
+  vm_k8s_stack_version: "0.86.0"
+  vpa_version: "9.10.0"

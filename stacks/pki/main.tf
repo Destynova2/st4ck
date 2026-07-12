@@ -49,6 +49,14 @@ provider "kubectl" {
 # Prerequisites: make kms-bootstrap (generates certs in kms-output/)
 # ═══════════════════════════════════════════════════════════════════════
 
+# Version pins come from the platform version registry (single source of
+# truth shared with Flux postBuild.substituteFrom and the Hauler manifest):
+# clusters/management/versions-configmap.yaml. Variables stay as optional
+# overrides (default null).
+locals {
+  platform_versions = yamldecode(file("${path.module}/../../clusters/management/versions-configmap.yaml")).data
+}
+
 locals {
   kms = var.kms_output_dir
 
@@ -179,7 +187,7 @@ resource "helm_release" "openbao_infra" {
   name             = "openbao-infra"
   repository       = "https://openbao.github.io/openbao-helm"
   chart            = "openbao"
-  version          = var.openbao_version
+  version          = coalesce(var.openbao_version, local.platform_versions.openbao_version)
   namespace        = "secrets"
   create_namespace = false
 
@@ -363,7 +371,7 @@ resource "helm_release" "openbao_app" {
   name             = "openbao-app"
   repository       = "https://openbao.github.io/openbao-helm"
   chart            = "openbao"
-  version          = var.openbao_version
+  version          = coalesce(var.openbao_version, local.platform_versions.openbao_version)
   namespace        = "secrets"
   create_namespace = false
 
@@ -538,7 +546,7 @@ resource "helm_release" "cert_manager" {
   name             = "cert-manager"
   repository       = "https://charts.jetstack.io"
   chart            = "cert-manager"
-  version          = var.cert_manager_version
+  version          = coalesce(var.cert_manager_version, local.platform_versions.cert_manager_version)
   namespace        = "cert-manager"
   create_namespace = false
 
@@ -572,7 +580,7 @@ resource "helm_release" "external_secrets" {
   name             = "external-secrets"
   repository       = "https://charts.external-secrets.io"
   chart            = "external-secrets"
-  version          = var.external_secrets_version
+  version          = coalesce(var.external_secrets_version, local.platform_versions.external_secrets_version)
   namespace        = "external-secrets"
   create_namespace = false
 

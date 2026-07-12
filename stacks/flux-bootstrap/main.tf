@@ -53,6 +53,14 @@ provider "gitea" {
 # which doesn't support SSH CA certs — that's why this is a per-key
 # trust, not a CA-signed cert.
 
+# Version pins come from the platform version registry (single source of
+# truth shared with Flux postBuild.substituteFrom and the Hauler manifest):
+# clusters/management/versions-configmap.yaml. Variables stay as optional
+# overrides (default null).
+locals {
+  platform_versions = yamldecode(file("${path.module}/../../clusters/management/versions-configmap.yaml")).data
+}
+
 resource "tls_private_key" "flux_ssh" {
   algorithm = "ED25519"
 
@@ -256,7 +264,7 @@ resource "helm_release" "flux" {
   name             = "flux2"
   repository       = "https://fluxcd-community.github.io/helm-charts"
   chart            = "flux2"
-  version          = var.flux_version
+  version          = coalesce(var.flux_version, local.platform_versions.flux_version)
   namespace        = "flux-system"
   create_namespace = false
 
@@ -403,7 +411,26 @@ resource "kubectl_manifest" "flux_root_kustomization" {
           velero_bucket: "velero-backups"
           harbor_bucket: "harbor-registry"
           cnpg_bucket: "cnpg-backups"
+        # Chart/provider version pins ($${x_version} placeholders in
+        # HelmRelease/OCIRepository manifests) resolve against the
+        # platform version registry — single source of truth shared with
+        # tofu (local.platform_versions) and the Hauler manifest.
+        substituteFrom:
+          - kind: ConfigMap
+            name: platform-versions
   YAML
 
-  depends_on = [kubectl_manifest.flux_git_repo]
+  depends_on = [
+    kubectl_manifest.flux_git_repo,
+    kubectl_manifest.platform_versions,
+  ]
+}
+
+# Day-1 seed of the version registry (same file Flux reconciles day-2 from
+# git via clusters/management/kustomization.yaml). Without it, the first
+# root-Kustomization reconcile would fail substituteFrom (ConfigMap absent).
+resource "kubectl_manifest" "platform_versions" {
+  yaml_body = file("${path.module}/../../clusters/management/versions-configmap.yaml")
+
+  depends_on = [kubernetes_namespace.flux_system]
 }

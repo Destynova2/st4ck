@@ -38,6 +38,14 @@ provider "helm" {
 
 # ─── Autoscaling Namespace ───────────────────────────────────────────────
 
+# Version pins come from the platform version registry (single source of
+# truth shared with Flux postBuild.substituteFrom and the Hauler manifest):
+# clusters/management/versions-configmap.yaml. Variables stay as optional
+# overrides (default null).
+locals {
+  platform_versions = yamldecode(file("${path.module}/../../clusters/management/versions-configmap.yaml")).data
+}
+
 resource "kubernetes_namespace" "autoscaling" {
   metadata {
     name = "autoscaling"
@@ -55,7 +63,7 @@ resource "helm_release" "karpenter" {
   name             = "karpenter"
   repository       = "oci://public.ecr.aws/karpenter"
   chart            = "karpenter"
-  version          = var.karpenter_version
+  version          = coalesce(var.karpenter_version, local.platform_versions.karpenter_version)
   namespace        = "autoscaling"
   create_namespace = false
   timeout          = 600
@@ -79,7 +87,7 @@ resource "helm_release" "karpenter_capi_provider" {
   name             = "karpenter-provider-cluster-api"
   repository       = "https://kubernetes-sigs.github.io/karpenter-provider-cluster-api"
   chart            = "karpenter-provider-cluster-api"
-  version          = var.karpenter_capi_provider_version
+  version          = coalesce(var.karpenter_capi_provider_version, local.platform_versions.karpenter_capi_provider_version)
   namespace        = "autoscaling"
   create_namespace = false
   timeout          = 600
@@ -108,7 +116,7 @@ resource "helm_release" "prometheus_adapter" {
   name             = "prometheus-adapter"
   repository       = "https://prometheus-community.github.io/helm-charts"
   chart            = "prometheus-adapter"
-  version          = var.prometheus_adapter_version
+  version          = coalesce(var.prometheus_adapter_version, local.platform_versions.prometheus_adapter_version)
   namespace        = "autoscaling"
   create_namespace = false
   timeout          = 600
@@ -143,7 +151,7 @@ resource "helm_release" "vpa" {
   name             = "vertical-pod-autoscaler"
   repository       = "https://cowboysysop.github.io/charts"
   chart            = "vertical-pod-autoscaler"
-  version          = var.vpa_version
+  version          = coalesce(var.vpa_version, local.platform_versions.vpa_version)
   namespace        = "autoscaling"
   create_namespace = false
   timeout          = 600
@@ -179,7 +187,7 @@ resource "helm_release" "keda" {
   name             = "keda"
   repository       = "https://kedacore.github.io/charts"
   chart            = "keda"
-  version          = var.keda_version
+  version          = coalesce(var.keda_version, local.platform_versions.keda_version)
   namespace        = "autoscaling"
   create_namespace = false
   timeout          = 600

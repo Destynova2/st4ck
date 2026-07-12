@@ -6,7 +6,7 @@ variable "kubeconfig_path" {
 variable "flux_version" {
   description = "Flux2 Helm chart version"
   type        = string
-  default     = "2.14.1"
+  default     = null
 }
 
 variable "gitea_external_host" {

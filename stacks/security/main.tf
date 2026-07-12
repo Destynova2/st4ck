@@ -35,6 +35,14 @@ provider "kubectl" {
 
 # ─── Security Namespace ──────────────────────────────────────────────
 
+# Version pins come from the platform version registry (single source of
+# truth shared with Flux postBuild.substituteFrom and the Hauler manifest):
+# clusters/management/versions-configmap.yaml. Variables stay as optional
+# overrides (default null).
+locals {
+  platform_versions = yamldecode(file("${path.module}/../../clusters/management/versions-configmap.yaml")).data
+}
+
 resource "kubernetes_namespace" "security" {
   metadata {
     name = "security"

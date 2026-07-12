@@ -8,7 +8,7 @@ spec:
   chart:
     spec:
       chart: headlamp
-      version: "0.40.0"
+      version: "${headlamp_version}"
       sourceRef:
         kind: HelmRepository
         name: headlamp

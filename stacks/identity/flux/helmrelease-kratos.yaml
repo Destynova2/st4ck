@@ -8,7 +8,7 @@ spec:
   chart:
     spec:
       chart: kratos
-      version: "0.60.1"
+      version: "${kratos_version}"
       sourceRef:
         kind: HelmRepository
         name: ory

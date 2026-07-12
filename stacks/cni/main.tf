@@ -25,11 +25,19 @@ provider "kubernetes" {
 # MUST be deployed first: without CNI, no pods can be scheduled.
 # Fast deploy (~30s) — separated from monitoring to unblock k8s-pki early.
 
+# Version pins come from the platform version registry (single source of
+# truth shared with Flux postBuild.substituteFrom and the Hauler manifest):
+# clusters/management/versions-configmap.yaml. Variables stay as optional
+# overrides (default null).
+locals {
+  platform_versions = yamldecode(file("${path.module}/../../clusters/management/versions-configmap.yaml")).data
+}
+
 resource "helm_release" "cilium" {
   name       = "cilium"
   repository = "https://helm.cilium.io"
   chart      = "cilium"
-  version    = var.cilium_version
+  version    = coalesce(var.cilium_version, local.platform_versions.cilium_version)
   namespace  = "kube-system"
 
   values = [file("${path.module}/flux/values.yaml")]
@@ -59,7 +67,7 @@ resource "helm_release" "local_path_provisioner" {
   name       = "local-path-provisioner"
   repository = "https://charts.containeroo.ch"
   chart      = "local-path-provisioner"
-  version    = var.local_path_provisioner_version
+  version    = coalesce(var.local_path_provisioner_version, local.platform_versions.local_path_provisioner_version)
   namespace  = kubernetes_namespace.local_path_storage.metadata[0].name
 
   create_namespace = false

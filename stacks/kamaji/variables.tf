@@ -8,7 +8,7 @@ variable "kubeconfig_path" {
 variable "kamaji_version" {
   description = "Kamaji Helm chart version (OCI tag in ghcr.io/clastix/charts/kamaji)"
   type        = string
-  default     = "26.4.4-edge"
+  default     = null
 }
 
 variable "namespace_kamaji" {
@@ -22,7 +22,7 @@ variable "namespace_kamaji" {
 variable "etcd_operator_version" {
   description = "Ænix etcd-operator Helm chart version (OCI tag in ghcr.io/aenix-io/charts/etcd-operator)"
   type        = string
-  default     = "0.4.2"
+  default     = null
 }
 
 variable "namespace_etcd_operator" {

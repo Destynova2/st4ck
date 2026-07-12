@@ -6,11 +6,11 @@ variable "kubeconfig_path" {
 variable "cilium_version" {
   description = "Cilium Helm chart version"
   type        = string
-  default     = "1.17.13"
+  default     = null
 }
 
 variable "local_path_provisioner_version" {
   description = "local-path-provisioner Helm chart version (containeroo repo)"
   type        = string
-  default     = "0.0.35"
+  default     = null
 }

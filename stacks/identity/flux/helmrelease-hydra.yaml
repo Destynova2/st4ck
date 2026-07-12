@@ -10,7 +10,7 @@ spec:
   chart:
     spec:
       chart: hydra
-      version: "0.60.1"
+      version: "${hydra_version}"
       sourceRef:
         kind: HelmRepository
         name: ory

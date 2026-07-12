@@ -52,6 +52,14 @@ provider "kubectl" {
   load_config_file = true
 }
 
+# Version pins come from the platform version registry (single source of
+# truth shared with Flux postBuild.substituteFrom and the Hauler manifest):
+# clusters/management/versions-configmap.yaml. Variables stay as optional
+# overrides (default null).
+locals {
+  platform_versions = yamldecode(file("${path.module}/../../clusters/management/versions-configmap.yaml")).data
+}
+
 locals {
   capi_namespace = "capi-system"
 
@@ -110,7 +118,7 @@ resource "kubernetes_namespace" "caps_system" {
 resource "helm_release" "capi_operator" {
   name             = "capi-operator"
   chart            = var.capi_operator_chart
-  version          = var.capi_operator_version
+  version          = coalesce(var.capi_operator_version, local.platform_versions.capi_operator_version)
   namespace        = local.capi_namespace
   create_namespace = false
 
@@ -152,7 +160,7 @@ resource "kubectl_manifest" "core_provider" {
       name: cluster-api
       namespace: ${local.ns_core}
     spec:
-      version: ${var.capi_core_version}
+      version: ${coalesce(var.capi_core_version, local.platform_versions.capi_core_version)}
   YAML
 
   depends_on = [helm_release.capi_operator]
@@ -166,9 +174,9 @@ resource "kubectl_manifest" "bootstrap_talos" {
       name: talos
       namespace: ${local.ns_bootstrap_talos}
     spec:
-      version: ${var.capi_bootstrap_talos_version}
+      version: ${coalesce(var.capi_bootstrap_talos_version, local.platform_versions.capi_bootstrap_talos_version)}
       fetchConfig:
-        url: https://github.com/siderolabs/cluster-api-bootstrap-provider-talos/releases/${var.capi_bootstrap_talos_version}/bootstrap-components.yaml
+        url: https://github.com/siderolabs/cluster-api-bootstrap-provider-talos/releases/${coalesce(var.capi_bootstrap_talos_version, local.platform_versions.capi_bootstrap_talos_version)}/bootstrap-components.yaml
   YAML
 
   depends_on = [
@@ -186,9 +194,9 @@ resource "kubectl_manifest" "controlplane_kamaji" {
       name: kamaji
       namespace: ${local.ns_controlplane_kamaji}
     spec:
-      version: ${var.capi_controlplane_kamaji_version}
+      version: ${coalesce(var.capi_controlplane_kamaji_version, local.platform_versions.capi_controlplane_kamaji_version)}
       fetchConfig:
-        url: https://github.com/clastix/cluster-api-control-plane-provider-kamaji/releases/${var.capi_controlplane_kamaji_version}/control-plane-components.yaml
+        url: https://github.com/clastix/cluster-api-control-plane-provider-kamaji/releases/${coalesce(var.capi_controlplane_kamaji_version, local.platform_versions.capi_controlplane_kamaji_version)}/control-plane-components.yaml
   YAML
 
   depends_on = [
@@ -206,11 +214,11 @@ resource "kubectl_manifest" "infrastructure_scaleway" {
       name: scaleway
       namespace: ${local.ns_infrastructure_scaleway}
     spec:
-      version: ${var.capi_infrastructure_scaleway_version}
+      version: ${coalesce(var.capi_infrastructure_scaleway_version, local.platform_versions.capi_infrastructure_scaleway_version)}
       configSecret:
         name: ${local.scaleway_secret_name}
       fetchConfig:
-        url: https://github.com/scaleway/cluster-api-provider-scaleway/releases/${var.capi_infrastructure_scaleway_version}/infrastructure-components.yaml
+        url: https://github.com/scaleway/cluster-api-provider-scaleway/releases/${coalesce(var.capi_infrastructure_scaleway_version, local.platform_versions.capi_infrastructure_scaleway_version)}/infrastructure-components.yaml
   YAML
 
   depends_on = [

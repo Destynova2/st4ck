@@ -29,13 +29,13 @@ variable "pki_state_password" {
 variable "kratos_version" {
   description = "Ory Kratos Helm chart version"
   type        = string
-  default     = "0.60.1"
+  default     = null
 }
 
 variable "hydra_version" {
   description = "Ory Hydra Helm chart version"
   type        = string
-  default     = "0.60.1"
+  default     = null
 }
 
 # ─── CloudNativePG ─────────────────────────────────────────────────
@@ -43,7 +43,7 @@ variable "hydra_version" {
 variable "cnpg_version" {
   description = "CloudNativePG operator Helm chart version"
   type        = string
-  default     = "0.25.0"
+  default     = null
 }
 
 # ─── CNPG Backup ──────────────────────────────────────────────────────
@@ -65,5 +65,5 @@ variable "cnpg_s3_url" {
 variable "pomerium_version" {
   description = "Pomerium Helm chart version"
   type        = string
-  default     = "34.0.1"
+  default     = null
 }

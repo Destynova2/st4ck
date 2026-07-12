@@ -6,6 +6,10 @@ kind: Kustomization
 # ClusterSecretStore in external-secrets/flux-config applies without
 # dry-run failures.
 resources:
+  # Platform version registry — day-2 owner (day-1 applied by tofu in
+  # stacks/flux-bootstrap so postBuild.substituteFrom resolves on the
+  # very first reconcile). Version bumps = edit this one file.
+  - versions-configmap.yaml
   - ../../stacks/external-secrets/flux-config   # ClusterSecretStore (depends on ESO CRD)
   - ../../stacks/cni/flux
   - ../../stacks/monitoring/flux

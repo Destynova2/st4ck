@@ -8,7 +8,7 @@ spec:
   chart:
     spec:
       chart: trivy-operator
-      version: "0.32.0"
+      version: "${trivy_operator_version}"
       sourceRef:
         kind: HelmRepository
         name: aquasecurity

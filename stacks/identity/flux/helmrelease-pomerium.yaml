@@ -10,7 +10,7 @@ spec:
   chart:
     spec:
       chart: pomerium
-      version: "34.0.1"
+      version: "${pomerium_version}"
       sourceRef:
         kind: HelmRepository
         name: pomerium

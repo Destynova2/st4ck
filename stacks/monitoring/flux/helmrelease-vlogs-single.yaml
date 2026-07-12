@@ -8,9 +8,9 @@ spec:
   chart:
     spec:
       chart: victoria-logs-single
-      # Pin matches stacks/monitoring/variables.tf
-      # variable.victoria_logs_version.default — keep them in sync.
-      version: "0.11.28"
+      # Pin resolved from clusters/management/versions-configmap.yaml
+      # via postBuild.substituteFrom on the root Kustomization.
+      version: "${victoria_logs_version}"
       sourceRef:
         kind: HelmRepository
         name: victoriametrics

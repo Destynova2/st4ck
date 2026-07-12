@@ -38,6 +38,14 @@ provider "helm" {
 # under ./templates/.
 # ═══════════════════════════════════════════════════════════════════════
 
+# Version pins come from the platform version registry (single source of
+# truth shared with Flux postBuild.substituteFrom and the Hauler manifest):
+# clusters/management/versions-configmap.yaml. Variables stay as optional
+# overrides (default null).
+locals {
+  platform_versions = yamldecode(file("${path.module}/../../clusters/management/versions-configmap.yaml")).data
+}
+
 locals {
   labels_common = {
     "app.kubernetes.io/part-of"    = "st4ck"
@@ -65,7 +73,7 @@ resource "helm_release" "kamaji" {
   name             = "kamaji"
   repository       = "oci://ghcr.io/clastix/charts"
   chart            = "kamaji"
-  version          = var.kamaji_version
+  version          = coalesce(var.kamaji_version, local.platform_versions.kamaji_version)
   namespace        = kubernetes_namespace.kamaji.metadata[0].name
   create_namespace = false
 
@@ -93,7 +101,7 @@ resource "helm_release" "etcd_operator" {
   name             = "etcd-operator"
   repository       = "oci://ghcr.io/aenix-io/charts"
   chart            = "etcd-operator"
-  version          = var.etcd_operator_version
+  version          = coalesce(var.etcd_operator_version, local.platform_versions.etcd_operator_version)
   namespace        = kubernetes_namespace.etcd_operator.metadata[0].name
   create_namespace = false
 

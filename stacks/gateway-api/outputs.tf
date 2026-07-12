@@ -15,7 +15,7 @@ output "gateway_class_name" {
 
 output "gateway_api_version" {
   description = "Pinned kubernetes-sigs/gateway-api release tag used for CRDs"
-  value       = var.gateway_api_version
+  value       = coalesce(var.gateway_api_version, local.platform_versions.gateway_api_version)
 }
 
 output "base_domain" {

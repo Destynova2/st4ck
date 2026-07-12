@@ -9,31 +9,31 @@ variable "kubeconfig_path" {
 variable "karpenter_version" {
   description = "Karpenter core Helm chart version (oci://public.ecr.aws/karpenter/karpenter)"
   type        = string
-  default     = "1.3.3"
+  default     = null
 }
 
 variable "karpenter_capi_provider_version" {
   description = "Karpenter provider Cluster-API Helm chart version (EXPERIMENTAL, v0.2.0)"
   type        = string
-  default     = "0.2.0"
+  default     = null
 }
 
 variable "prometheus_adapter_version" {
   description = "prometheus-community/prometheus-adapter Helm chart version"
   type        = string
-  default     = "4.11.0"
+  default     = null
 }
 
 variable "vpa_version" {
   description = "cowboysysop/vertical-pod-autoscaler Helm chart version"
   type        = string
-  default     = "9.10.0"
+  default     = null
 }
 
 variable "keda_version" {
   description = "kedacore/keda Helm chart version (2.17.x line)"
   type        = string
-  default     = "2.17.1"
+  default     = null
 }
 
 # ─── Wiring ───────────────────────────────────────────────────────────────

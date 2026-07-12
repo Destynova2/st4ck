@@ -19,6 +19,14 @@ terraform {
 # Secrets from k8s-pki stack (generated + seeded into OpenBao Infra)
 # ═══════════════════════════════════════════════════════════════════════
 
+# Version pins come from the platform version registry (single source of
+# truth shared with Flux postBuild.substituteFrom and the Hauler manifest):
+# clusters/management/versions-configmap.yaml. Variables stay as optional
+# overrides (default null).
+locals {
+  platform_versions = yamldecode(file("${path.module}/../../clusters/management/versions-configmap.yaml")).data
+}
+
 data "terraform_remote_state" "pki" {
   backend = "http"
   config = {
@@ -69,7 +77,7 @@ resource "helm_release" "cnpg_operator" {
   name             = "cnpg"
   repository       = "https://cloudnative-pg.github.io/charts"
   chart            = "cloudnative-pg"
-  version          = var.cnpg_version
+  version          = coalesce(var.cnpg_version, local.platform_versions.cnpg_version)
   namespace        = "identity"
   create_namespace = false
 

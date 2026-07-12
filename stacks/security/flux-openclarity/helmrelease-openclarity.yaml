@@ -13,7 +13,7 @@ spec:
   ref:
     # Pin matches stacks/security/variables.tf var.openclarity_version
     # default — keep them in sync.
-    tag: "1.1.3"
+    tag: "${openclarity_version}"
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease

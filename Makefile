@@ -233,11 +233,16 @@ k8s-security-destroy: k8s-security-init
 
 .PHONY: k8s-storage-init k8s-storage-apply k8s-storage-destroy garage-chart
 
-garage-chart: ## Fetch Garage Helm chart (v2.2.0) from upstream
+# Pin read from the platform version registry (hanoi 2026-07-12 #3 — was
+# hardcoded here, invisible to the registry and to hauler).
+GARAGE_CHART_VERSION := $(shell sed -n 's/^ *garage_chart_version: "\(.*\)"/\1/p' clusters/management/versions-configmap.yaml)
+
+garage-chart: ## Fetch Garage Helm chart (pin: versions-configmap.yaml) from upstream
+	@test -n "$(GARAGE_CHART_VERSION)" || { echo "Error: garage_chart_version missing from clusters/management/versions-configmap.yaml"; exit 1; }
 	@mkdir -p $(GARAGE_CHART)
-	@curl -sL "https://git.deuxfleurs.fr/Deuxfleurs/garage/archive/v2.2.0.tar.gz" | \
+	@curl -sL "https://git.deuxfleurs.fr/Deuxfleurs/garage/archive/$(GARAGE_CHART_VERSION).tar.gz" | \
 		tar -xz --strip-components=4 -C $(GARAGE_CHART) "garage/script/helm/garage/"
-	@echo "Garage Helm chart fetched to $(GARAGE_CHART)/"
+	@echo "Garage Helm chart $(GARAGE_CHART_VERSION) fetched to $(GARAGE_CHART)/"
 
 k8s-storage-init: garage-chart
 	$(call tf_init,$(TF_STORAGE),$(STATE_STORAGE))

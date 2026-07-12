@@ -8,7 +8,7 @@ spec:
   chart:
     spec:
       chart: victoria-metrics-k8s-stack
-      version: "0.72.4"
+      version: "${vm_k8s_stack_version}"
       sourceRef:
         kind: HelmRepository
         name: victoriametrics

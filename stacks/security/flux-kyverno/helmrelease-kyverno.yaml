@@ -8,7 +8,7 @@ spec:
   chart:
     spec:
       chart: kyverno
-      version: "3.7.1"
+      version: "${kyverno_version}"
       sourceRef:
         kind: HelmRepository
         name: kyverno
