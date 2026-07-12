@@ -2,11 +2,15 @@ package cloudprovider
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
+	clocktesting "k8s.io/utils/clock/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -53,8 +57,12 @@ func testServer(id string, serverStatus pool.Status) pool.Server {
 }
 
 func testNodeClaim() *karpv1.NodeClaim {
+	return namedNodeClaim("metal-claim")
+}
+
+func namedNodeClaim(name string) *karpv1.NodeClaim {
 	return &karpv1.NodeClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "metal-claim"},
+		ObjectMeta: metav1.ObjectMeta{Name: name, UID: types.UID("uid-" + name)},
 		Spec: karpv1.NodeClaimSpec{
 			NodeClassRef: &karpv1.NodeClassReference{
 				Group: v1alpha1.Group,
@@ -145,20 +153,128 @@ func TestCreatePoolExhaustedReturnsICE(t *testing.T) {
 }
 
 func TestCreateLastServerRaceReturnsICE(t *testing.T) {
-	// Two Create calls race on the last stopped server while the API still
-	// reports it stopped: the in-flight claim guard must yield an ICE, not a
-	// double power-on.
+	// Two NodeClaims race on the last stopped server while the API still
+	// reports it stopped: the claim guard must yield an ICE for the second,
+	// not a double power-on.
 	backend := newTestBackend()
 	backend.AddServer(testServer("aaa", pool.StatusStopped))
 	provider := newTestProvider(t, backend, testNodeClass(true))
 
 	nodeClass := testNodeClass(true)
-	if _, err := provider.claimStoppedServer(context.Background(), nodeClass); err != nil {
+	if _, err := provider.claimStoppedServer(context.Background(), nodeClass, namedNodeClaim("claim-a")); err != nil {
 		t.Fatalf("first claim returned error: %v", err)
 	}
-	_, err := provider.claimStoppedServer(context.Background(), nodeClass)
+	_, err := provider.claimStoppedServer(context.Background(), nodeClass, namedNodeClaim("claim-b"))
 	if !cloudprovider.IsInsufficientCapacityError(err) {
 		t.Fatalf("second claim = %v, want InsufficientCapacityError", err)
+	}
+}
+
+func TestStartedClaimSurvivesStaleStoppedBeyondTTL(t *testing.T) {
+	// Codex Critical #1 proof: StartServer succeeds but Scaleway keeps
+	// reporting `stopped` well past the pending-claim TTL. A later Create
+	// for another NodeClaim must neither return the same providerID nor
+	// call StartServer on the same server — it gets a clean ICE.
+	backend := newTestBackend()
+	backend.StartKeepsStopped = true
+	backend.AddServer(testServer("aaa", pool.StatusStopped))
+	provider := newTestProvider(t, backend, testNodeClass(true))
+	fakeClock := clocktesting.NewFakeClock(time.Now())
+	provider.clock = fakeClock
+
+	created, err := provider.Create(context.Background(), namedNodeClaim("claim-a"))
+	if err != nil {
+		t.Fatalf("Create(A) returned error: %v", err)
+	}
+	if backend.StartCalls != 1 {
+		t.Fatalf("StartServer called %d times, want 1", backend.StartCalls)
+	}
+
+	fakeClock.Step(3 * pendingClaimTTL)
+	if got := backend.ServerStatus("aaa"); got != pool.StatusStopped {
+		t.Fatalf("precondition failed: server should still report stopped, got %s", got)
+	}
+
+	dup, err := provider.Create(context.Background(), namedNodeClaim("claim-b"))
+	if !cloudprovider.IsInsufficientCapacityError(err) {
+		t.Fatalf("Create(B) = %v, want InsufficientCapacityError", err)
+	}
+	if dup != nil && dup.Status.ProviderID == created.Status.ProviderID {
+		t.Fatalf("Create(B) returned the same providerID %q as Create(A)", dup.Status.ProviderID)
+	}
+	if backend.StartCalls != 1 {
+		t.Fatalf("StartServer called %d times after the race, want still 1", backend.StartCalls)
+	}
+}
+
+func TestCreateResumesOwnClaim(t *testing.T) {
+	// A retried Create for the SAME NodeClaim must converge on the same
+	// server and providerID instead of consuming a second pool member.
+	backend := newTestBackend()
+	backend.StartKeepsStopped = true
+	backend.AddServer(testServer("aaa", pool.StatusStopped))
+	backend.AddServer(testServer("bbb", pool.StatusStopped))
+	provider := newTestProvider(t, backend, testNodeClass(true))
+
+	first, err := provider.Create(context.Background(), namedNodeClaim("claim-a"))
+	if err != nil {
+		t.Fatalf("first Create returned error: %v", err)
+	}
+	second, err := provider.Create(context.Background(), namedNodeClaim("claim-a"))
+	if err != nil {
+		t.Fatalf("retried Create returned error: %v", err)
+	}
+	if first.Status.ProviderID != second.Status.ProviderID {
+		t.Fatalf("retried Create switched server: %q then %q", first.Status.ProviderID, second.Status.ProviderID)
+	}
+}
+
+func TestCreateAmbiguousStartErrorSucceedsWhenStartTookEffect(t *testing.T) {
+	// StartServer errors but the power-on actually took effect (e.g.
+	// timeout after acceptance): the re-read disambiguates and Create
+	// succeeds instead of leaking a started server.
+	backend := newTestBackend()
+	backend.StartErr = errors.New("gateway timeout")
+	backend.StartErrButStarts = true
+	backend.AddServer(testServer("aaa", pool.StatusStopped))
+	provider := newTestProvider(t, backend, testNodeClass(true))
+
+	created, err := provider.Create(context.Background(), namedNodeClaim("claim-a"))
+	if err != nil {
+		t.Fatalf("Create = %v, want success (start took effect)", err)
+	}
+	if created.Status.ProviderID != pool.FormatProviderID(testZone, "aaa") {
+		t.Fatalf("ProviderID = %q, want the started server", created.Status.ProviderID)
+	}
+}
+
+func TestCreateStartRejectedLastServerReturnsICE(t *testing.T) {
+	// Post-claim start rejection with no other startable candidate must be
+	// a clean capacity signal (Codex Major #5), not a generic launch error.
+	backend := newTestBackend()
+	backend.StartErr = errors.New("409 conflict: cannot start")
+	backend.AddServer(testServer("aaa", pool.StatusStopped))
+	provider := newTestProvider(t, backend, testNodeClass(true))
+
+	_, err := provider.Create(context.Background(), namedNodeClaim("claim-a"))
+	if !cloudprovider.IsInsufficientCapacityError(err) {
+		t.Fatalf("Create = %v, want InsufficientCapacityError", err)
+	}
+}
+
+func TestCreateStartRejectedWithOtherCandidateIsRetryable(t *testing.T) {
+	backend := newTestBackend()
+	backend.StartErr = errors.New("409 conflict: cannot start")
+	backend.AddServer(testServer("aaa", pool.StatusStopped))
+	backend.AddServer(testServer("bbb", pool.StatusStopped))
+	provider := newTestProvider(t, backend, testNodeClass(true))
+
+	_, err := provider.Create(context.Background(), namedNodeClaim("claim-a"))
+	if err == nil {
+		t.Fatalf("Create should have failed")
+	}
+	if cloudprovider.IsInsufficientCapacityError(err) {
+		t.Fatalf("Create = ICE, want a plain retryable error (another stopped server remains)")
 	}
 }
 

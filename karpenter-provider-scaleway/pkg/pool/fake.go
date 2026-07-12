@@ -19,6 +19,16 @@ type FakeBackend struct {
 	// the final status, letting tests observe intermediate states.
 	Transitional bool
 
+	// StartKeepsStopped simulates Scaleway eventual consistency: StartServer
+	// succeeds but the server keeps reporting `stopped` until a test flips
+	// it with SetStatus.
+	StartKeepsStopped bool
+
+	// StartErrButStarts simulates an ambiguous StartServer failure: the
+	// power-on takes effect (status transitions) but the call returns
+	// StartErr anyway (e.g. timeout after the action was accepted).
+	StartErrButStarts bool
+
 	// Error injection: when set, the matching call returns the error.
 	ListErr  error
 	GetErr   error
@@ -117,9 +127,6 @@ func (f *FakeBackend) StartServer(_ context.Context, zone, serverID string) erro
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.StartCalls++
-	if f.StartErr != nil {
-		return f.StartErr
-	}
 	s, ok := f.servers[serverID]
 	if !ok || s.Zone != zone {
 		return fmt.Errorf("server %s/%s: %w", zone, serverID, ErrServerNotFound)
@@ -127,10 +134,22 @@ func (f *FakeBackend) StartServer(_ context.Context, zone, serverID string) erro
 	if s.Status != StatusStopped {
 		return fmt.Errorf("server %s is %s, cannot start", serverID, s.Status)
 	}
-	if f.Transitional {
-		s.Status = StatusStarting
-	} else {
-		s.Status = StatusReady
+	transition := func() {
+		if f.Transitional {
+			s.Status = StatusStarting
+		} else {
+			s.Status = StatusReady
+		}
+	}
+	if f.StartErrButStarts {
+		transition()
+		return f.StartErr
+	}
+	if f.StartErr != nil {
+		return f.StartErr
+	}
+	if !f.StartKeepsStopped {
+		transition()
 	}
 	return nil
 }
