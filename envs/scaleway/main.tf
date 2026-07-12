@@ -85,7 +85,6 @@ locals {
 
   # ─── Patches ──────────────────────────────────────────────────────────
   cilium_patch              = file("${path.module}/../../patches/cilium-cni.yaml")
-  registry_mirror_scr_patch = file("${path.module}/../../patches/registry-mirror-scr.yaml")
   registry_mirror_patch     = file("${path.module}/../../patches/registry-mirror.yaml")
   kubelet_nodeip_patch      = file("${path.module}/../../patches/kubelet-nodeip-vpc.yaml")
   etcd_vpc_patch            = file("${path.module}/../../patches/etcd-vpc-cp-only.yaml")
@@ -128,9 +127,10 @@ module "talos" {
 
   common_config_patches = [
     local.cilium_patch,
-    # SCR mirror patch FIRST — Talos tries endpoints in declared order.
-    # Falls back to mirror.gcr.io / registry-1.docker.io if SCR unreachable.
-    local.registry_mirror_scr_patch,
+    # SCR mirror branch removed 2026-07-12 (hanoi pass 2 #6): the machine
+    # config depended on a stack no pipeline step ever applied, region
+    # hardcoded, measured benefit marginal (roadmap Phase E correction).
+    # Hauler serve (ADR-034 phase 2) will own the mirror story.
     local.registry_mirror_patch,
     local.kubelet_nodeip_patch,
     local.volume_config_patch,

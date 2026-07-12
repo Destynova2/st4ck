@@ -1,5 +1,6 @@
-# Curated upstream container images mirrored to Scaleway Container Registry
-# (rg.fr-par.scw.cloud/st4ck-mirror).
+# Curated upstream container images consumed by the hauler manifest
+# generator (scripts/hauler-manifest-gen.py — Images section, ADR-034).
+# The SCR mirror branch was removed 2026-07-12 (hanoi pass 2 #6).
 #
 # Format: one image reference per line, ignoring blank lines and lines
 # starting with `#`. Use full upstream coordinates including registry host
@@ -15,7 +16,7 @@
 #        kubectl get pods -A -o jsonpath='{range .items[*]}{range .spec.initContainers[*]}{.image}{"\n"}{end}{range .spec.containers[*]}{.image}{"\n"}{end}{end}' \
 #          | sort -u > /tmp/live-images.txt
 #   2. Diff against this file and add anything new.
-#   3. Re-run scripts/mirror-images-to-scr.sh to push new entries.
+#   3. Re-run `make hauler-manifest && make hauler-sync` to stage new entries.
 
 # ─── Cilium (CNI) ──────────────────────────────────────────────────────
 quay.io/cilium/cilium:v1.17.13
