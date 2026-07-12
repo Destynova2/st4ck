@@ -289,13 +289,18 @@ func TestCreateNodeClassNotReady(t *testing.T) {
 	}
 }
 
-func TestCreateMissingNodeClassReturnsICE(t *testing.T) {
+func TestCreateMissingNodeClassIsNotCapacity(t *testing.T) {
+	// A missing NodeClass is a configuration failure: NodeClassNotReady,
+	// never InsufficientCapacity (Codex Major #6).
 	backend := newTestBackend()
 	provider := newTestProvider(t, backend) // no node class stored
 
 	_, err := provider.Create(context.Background(), testNodeClaim())
-	if !cloudprovider.IsInsufficientCapacityError(err) {
-		t.Fatalf("Create = %v, want InsufficientCapacityError", err)
+	if cloudprovider.IsInsufficientCapacityError(err) {
+		t.Fatalf("Create = ICE, want NodeClassNotReadyError")
+	}
+	if !cloudprovider.IsNodeClassNotReadyError(err) {
+		t.Fatalf("Create = %v, want NodeClassNotReadyError", err)
 	}
 }
 

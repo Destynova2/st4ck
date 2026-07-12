@@ -88,9 +88,12 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	nodeClass, err := c.resolveNodeClassFromNodeClaim(ctx, nodeClaim)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			return nil, cloudprovider.NewInsufficientCapacityError(fmt.Errorf("resolving node class from nodeclaim, %w", err))
+			// Missing NodeClass is a configuration/readiness failure, not a
+			// capacity shortage: ICE would delete the NodeClaim and record
+			// misleading insufficient-capacity events (Codex Major #6).
+			return nil, cloudprovider.NewNodeClassNotReadyError(err)
 		}
-		return nil, fmt.Errorf("resolving node class from nodeclaim, %w", err)
+		return nil, err
 	}
 	if ready := nodeClass.StatusConditions().Get(status.ConditionReady); ready.IsFalse() {
 		return nil, cloudprovider.NewNodeClassNotReadyError(stderrors.New(ready.Message))
@@ -449,8 +452,10 @@ func (c *CloudProvider) resolveNodeClassFromNodeClaim(ctx context.Context, nodeC
 		return nil, fmt.Errorf("nodeclaim has no node class reference")
 	}
 	nodeClass := &v1alpha1.ScalewayEMNodeClass{}
+	// Wrapping is safe for callers checking apierrors.IsNotFound: it
+	// unwraps through %w (audit F6 — both resolvers wrap uniformly).
 	if err := c.kubeClient.Get(ctx, types.NamespacedName{Name: nodeClaim.Spec.NodeClassRef.Name}, nodeClass); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("getting node class %q for nodeclaim %q, %w", nodeClaim.Spec.NodeClassRef.Name, nodeClaim.Name, err)
 	}
 	return nodeClass, nil
 }
