@@ -5,10 +5,11 @@
 revues : `CODEX-REVIEW.md`, `docs/reviews/2026-07-12-audit-code-karpenter.md`,
 `…-audit-xray-karpenter.md`, `…-premortem-metal.md`.
 **État global** : critère de sortie n°3 (squelette compilant + fake + tests)
-**atteint** — 57 tests, CI Woodpecker en gate. Les bloquants de revue
-code/architecture sont levés (statut détaillé §5). Critères n°1, 2 et 4
-(validations matérielles / bout en bout) **non exécutés** — ils exigent un
-serveur EM réel ; runbook ci-dessous.
+**atteint** — 62 tests Go (`-race`) + 2 runs `tofu test` golden, CI
+Woodpecker en gate. Les bloquants des deux passes de revue sont levés
+(statut détaillé §5, re-revue §5.5). Critères n°1, 2 et 4 (validations
+matérielles / bout en bout) **non exécutés** — ils exigent un serveur EM
+réel ; runbook ci-dessous.
 
 ## 1. État des livrables code
 
@@ -17,7 +18,7 @@ serveur EM réel ; runbook ci-dessous.
 | Module Go compilable (`go build ./...`), layout LLD §8 | ✅ Go 1.26, karpenter-core pinné **v1.14.0** (dernier tag ; signature `NewControllers` 9 args + variadic vérifiée sur le tag), scaleway-sdk-go v1.0.0-beta.36, controller-runtime v0.23.1, operatorpkg (version du go.mod karpenter) |
 | Interface CloudProvider complète | ✅ 9 méthodes, sémantiques LLD §3 (voir tests) |
 | Backend derrière `pool.Backend` + fake in-memory | ✅ `ScalewayBackend` (baremetal v1, auth `scw.WithEnv`, cache d'offres, `scw.WithAllPages`) ; `FakeBackend` thread-safe avec injection d'erreurs et transitions contrôlables |
-| Tests unitaires verts, zéro réseau | ✅ 26 tests : create/delete nominal, pool épuisé → ICE, course dernier serveur (claim guard), Delete idempotent (absent/`stopped`/`stopping`), List = allumés seulement + power-off hors bande (GC), mapping providerID, flip `Offering.Available`, conditions Ready du NodeClass |
+| Tests unitaires verts, zéro réseau | ✅ 62 tests Go (`-race`) : create/delete nominal, pool épuisé → ICE, course dernier serveur + claim ownership (horloge fake, owner-deleted/alive), Delete contrat core (nil sur `stopping`/transitoire, NotFound sur `stopped`/absent, erreur sur blocked/failed), matrice des 13 statuts × 5 méthodes, garde d'appartenance, progression après rejet de start, classification ICE vs retryable, GC hors bande, interleaving inventaire, caches d'offres (négatif + transitoire), mapping providerID strict, flip `Offering.Available`, conditions Ready du NodeClass — plus 2 runs `tofu test` golden `provider_id` (offline) |
 | CRD `ScalewayEMNodeClass` v1alpha1 + contrôleur Ready | ✅ types + deepcopy + CRD YAML (`config/crd/`), contrôleur statut (`poolSize`, `available`, `PoolReady` → `Ready` dérivée operatorpkg), requeue 1 min |
 | README + Makefile | ✅ build/test/lint (gofmt + vet + golangci-lint opportuniste) |
 | Chart Helm | ⬜ hors périmètre M0 (M1, conforme LLD §8) |
@@ -198,7 +199,22 @@ deux côtés.
 | G2 dérive version Talos du module | **fixed** `fd02d1e` | Défaut `talos_image_url` v1.10.4 → **v1.12.9** (aligné plateforme) |
 | P7 `spec.replicas` / feature gate | **documenté** | Champ **alpha** dans core v1.14.0, derrière `StaticCapacity` (défaut `false` — vérifié dans `options.go` du tag) ; prérequis README + à re-vérifier au T2 (§3.3) |
 
-### 5.5 Hors périmètre M0-FIX (rappel)
+### 5.5 Re-revue Codex (`CODEX-REREVIEW.md`, 2026-07-12) — passe 2
+
+| Finding | Statut | Commit / argument |
+|---|---|---|
+| Critical — un claim `started` survit à la suppression de son NodeClaim et gèle la capacité `stopped` | **fixed** `73292fd` | `Delete` libère tous les claims du propriétaire sur chaque chemin `NodeClaimNotFoundError` (stopped, absent, non-membre, sans providerID) + power-off réussi. Libération scoped au owner : les claims d'autres NodeClaims vivants sur le même serveur sont préservés. Paire de preuves owner-deleted (Create(B) réutilise le serveur) / owner-alive (Create(B) → ICE) + cas sans providerID |
+| Major — un resume de claim `started` peut rappeler `StartServer` sur lecture périmée | **fixed** `388619a` | `claimStoppedServer` retourne l'état `started` du claim ; `startClaimedServer` s'y fie même si l'API dit encore `stopped`. Preuves : `StartCalls == 1` sur retry same-NodeClaim et sur retry post-erreur ambiguë |
+| Major — classification start trop large, pas de progression après rejet | **fixed** `76307ce` | `pool.ErrNotStartable` (scw PreconditionFailed/Locked/OutOfStock/TransientState) ; erreurs inconnues (auth/API/config) = retryable, **jamais** ICE ; boucle d'exclusion : le même Create progresse vers le candidat suivant, ICE seulement quand plus aucun candidat startable. Preuves : aaa rejette + bbb démarre dans le même Create ; 403 sur dernier serveur ≠ ICE |
+| Major — preuve providerID absente, smoke sur Talos v1.10.4 | **fixed (part codable)** `771be8b` | Dérivation extraite en sous-module pur consommé par le module (source unique) ; `tofu test` golden **exécuté et vert** (OpenTofu 1.9.1, offline) sur le littéral exact du golden Go ; smoke aligné v1.12.9 ; CI test-tftest étendu au module. Ce qui reste est exactement la part matérielle (T2, runbook §3.1) |
+| Minor — compte de tests périmé dans ce rapport | **fixed** (ce commit) | Ligne livrables passée de 26 à l'état courant (62 Go + 2 tftest) |
+
+Conditions d'approbation de la re-revue : les trois premières sont prouvées
+par tests unitaires ; la quatrième (byte equality) est prouvée côté rendu
+(`tofu test` golden = littéral Go) — la moitié matérielle (smoke EM réel)
+reste le critère T2, inexécutable sans serveur.
+
+### 5.6 Hors périmètre M0-FIX (rappel)
 
 Wipe multi-disques + checksum SHA512 (B2/B3), métriques/alertes érosion
 (P1/O6), apply-config via PN (S2), IAM dédiée (S3), cadence upgrade pool
