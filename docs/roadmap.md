@@ -91,12 +91,11 @@
     └── SSO tous composants
 ```
 
-**Decision** : Secrets auto-generes via `random_id` Terraform. Voir ADR-008.
+**Decision** : Secrets auto-generes via Terraform. Voir ADR-008 et ADR-033.
 - Plus de `secret.tfvars` manuels — chaque deploy genere des secrets uniques
-- `random_id.*.hex` (64 chars) pour tokens/secrets generiques
-- `random_id.*.b64_std` (base64, 32 raw bytes) pour Pomerium shared/cookie secrets
-- Secrets injectes via `templatefile()` dans les Helm values
-- Stockes dans le state Terraform (chiffre), jamais en clair sur disque
+- `random_password`, `random_bytes`, `tls_private_key` selon le format attendu
+- Secrets stockes dans le state chiffre via OpenBao KMS
+- Secrets plateforme seedes dans OpenBao Infra puis synchronises par ESO
 
 **Livrable** : zero secret en clair, authentification centralisee, PKI automatisee, secrets auto-generes.
 
@@ -104,7 +103,7 @@
 - [x] PKI Terraform (Root CA + Intermediate CA, pure TLS provider)
 - [x] cert-manager v1.19.4 + ClusterIssuer internal-ca
 - [x] Ory Kratos + Hydra (TLS public, OIDC kubernetes client auto-enregistre) + Pomerium
-- [x] Secrets auto-generes (`random_id` Terraform, zero intervention manuelle)
+- [x] Secrets auto-generes (Terraform entropy resources, zero intervention manuelle)
 - [x] OIDC K8s (Hydra → apiServer, `make scaleway-oidc` pour appliquer le patch talosctl)
 
 ### Phase 1.4 — Observabilite & Dashboard (S4-S5)
@@ -752,7 +751,7 @@ bao-operator community) trop risque (projet jeune, pas de support officiel).
 **Insight 2026-04-30 (idee user)** : decoupler Root et Sub-CAs.
 - Root CA reste sur VM (DEJA present : `bootstrap/tofu/pki.tf`, ECDSA P-384,
   10 yr, idempotent via `lifecycle.ignore_changes = all`).
-- Sub-CAs crees dans cluster OpenBao via Helm post-install Job au lieu de
+- Sub-CAs configurees dans cluster OpenBao via Job Flux/Kustomize au lieu de
   `terraform_data.bootstrap_openbao_pki` (~180 LOC bash inline fragile).
 
 **Architecture cible** :
@@ -764,7 +763,7 @@ CI VM (bootstrap/tofu/pki.tf)
   └── Distribution      : K8s Secret pki-root-ca (ns secrets) via tofu
        │
        ▼
-Cluster (Helm post-install Job)
+Cluster (Flux/Kustomize Job)
   └── stacks/pki/flux/job-bootstrap-openbao-pki.yaml
       ├── ServiceAccount + Role + RoleBinding (RBAC scoped)
       ├── Wait OpenBao API (300s budget)
@@ -795,15 +794,15 @@ Cluster (Helm post-install Job)
 
 **Impact estime** :
 - -180 LOC bash dans Tofu (provisioner inline supprime)
-- +280 LOC YAML Helm Job (artefact K8s standard, lisible/auditable)
-- Pattern K8s-natif (Job + Helm hook + RBAC scoped)
+- +280 LOC YAML Kubernetes Job (artefact K8s standard, lisible/auditable)
+- Pattern K8s-natif (Job Flux/Kustomize + RBAC scoped)
 - RBAC scope reduit : Job lit 2 secrets + exec sur openbao-infra-0 only
   (vs Tofu kubeconfig full)
 - Failure visibility : `kubectl logs` au lieu de Tofu output tronque
-- Idempotence Helm-native : si Helm release inchangee, Job ne re-tourne pas
+- Idempotence K8s-native : probes `bao`, re-run safe si Flux recrée le Job
 
-**ADR-032** : "PKI hierarchy — Root CA on VM, sub-CAs in cluster via Helm Job"
-(creee 2026-04-30).
+**ADR-032** : "PKI hierarchy — Root CA on VM, sub-CAs in cluster via Flux/Kustomize Job"
+(creee 2026-04-30, amendee par ADR-033 le 2026-06-14).
 
 **Sequencement** : Source-only OK pendant Agent #10 rebuild (ne touche pas
 `stacks/pki/main.tf`). Deploy + validation post-demo.
@@ -852,8 +851,8 @@ stacks). Merger sans rebase = regressions Phase D.
 | GitOps/CD | FluxCD | Woodpecker + OpenTofu (ADR-004) | Flux = chicken-and-egg avec Cilium, 2 systemes de deploiement |
 | VM CI runtime | Docker Compose | Podman Quadlet (ADR-005) | systemd natif, daemonless, un seul runtime |
 | Flux auth Gitea | HTTPS basic auth | SSH ed25519 (ADR-006) | SSH CA OpenBao pret mais go-git incompatible certs |
-| Secrets manager | Vault BSL | OpenBao (ADR-007) | Apache 2.0, Linux Foundation, ESO et step-ca retires |
-| Gestion secrets | `secret.tfvars` manuels | `random_id` Terraform (ADR-008) | Zero intervention manuelle, secrets dans state chiffre |
+| Secrets manager | Vault BSL | OpenBao + ESO (ADR-007/033) | MPL-2.0, Linux Foundation, OpenBao Helm officiel, ESO pour la sync K8s |
+| Gestion secrets | `secret.tfvars` manuels | Terraform entropy resources (ADR-008) | Zero intervention manuelle, secrets dans state chiffre puis OpenBao Infra |
 | State backend | Local tfstate | HTTP -> OpenBao KV v2 (ADR-009) | Chiffre Transit, locking, zero dependance cloud |
 | Observabilite | Prometheus + Loki + Alloy | vm-k8s-stack + VictoriaLogs (ADR-010) | Chart consolide, collecteurs natifs VM |
 | Trivy node-collector | Active | Desactive (ADR-011) | Incompatible Talos (no shell, no systemd). Talos durci par design |
@@ -890,7 +889,7 @@ make k8s-up (~15 minutes end-to-end, sequentiel strict)
 ├── 2. k8s-pki-apply        (~1 min) — PKI + OpenBao x2 + cert-manager
 ├── 3. k8s-monitoring-apply (~2 min) — vm-k8s-stack + VictoriaLogs + Headlamp
 ├── 4. k8s-identity-apply   (~1 min) — Kratos + Hydra + Pomerium
-│       └── Secrets auto-generes via random_id (zero tfvars)
+│       └── Secrets synchronises via OpenBao Infra + ESO (zero tfvars)
 ├── 5. k8s-security-apply   (~2 min) — Trivy + Tetragon + Kyverno + Cosign
 ├── 6. k8s-storage-apply    (~2 min) — Garage + Velero + Harbor
 └── 7. flux-bootstrap-apply (~30s)   — Flux SSH + GitRepository

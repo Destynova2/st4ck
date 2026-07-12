@@ -8,7 +8,7 @@ de la plateforme et comment chacune est resolue.
 ```mermaid
 graph TB
     subgraph "Phase 0 — Local (poste operateur)"
-        KMS[make kms-bootstrap<br/>OpenBao local Podman]
+        KMS[make bootstrap<br/>OpenBao KMS Podman]
         KMS --> CA[Root CA + 2 Sub-CAs<br/>infra + app]
         KMS --> VB[vault-backend<br/>:8080]
         KMS --> TRANSIT[Transit engine<br/>aes256-gcm96]
@@ -92,7 +92,7 @@ dans OpenBao KV v2, tournant en Podman sur le poste operateur.
 
 ```mermaid
 graph LR
-    KMS[make kms-bootstrap] --> BAO[OpenBao local<br/>Podman 3 noeuds Raft]
+    KMS[make bootstrap] --> BAO[OpenBao KMS<br/>Podman single-node Raft]
     BAO --> KV[KV v2<br/>state/stack-name]
     BAO --> TR[Transit<br/>chiffrement state]
     KMS --> VB[vault-backend<br/>:8080]
@@ -128,7 +128,7 @@ Terraform `kubernetes_secret`.
 
 ```mermaid
 graph TB
-    subgraph "Local (kms-bootstrap)"
+    subgraph "Local (bootstrap OpenBao KMS)"
         ROOT[Root CA<br/>EC P-256, 10 ans]
         ROOT --> INFRA[Sub-CA infra<br/>5 ans]
         ROOT --> APP[Sub-CA app<br/>5 ans]
@@ -220,8 +220,8 @@ sequenceDiagram
     participant CI as VM CI
 
     Note over OP: Phase 0 — Prerequisites locaux
-    OP->>KMS: make kms-bootstrap
-    KMS-->>KMS: OpenBao Raft (3 noeuds)
+    OP->>KMS: make bootstrap + bootstrap-export
+    KMS-->>KMS: OpenBao KMS Raft (single-node)
     KMS-->>KMS: Root CA + 2 Sub-CAs
     KMS-->>KMS: vault-backend :8080
 
@@ -254,7 +254,7 @@ sequenceDiagram
 | Probleme oeuf/poule | Solution |
 |---|---|
 | CNI avant Flux | OpenTofu deploie Cilium directement, Flux en dernier |
-| State backend avant S3 | vault-backend local (Podman) → OpenBao KV v2 |
+| State backend avant S3 | vault-backend local (Podman) → OpenBao KMS KV v2 |
 | CAs avant cluster | KMS local genere Root + Sub-CAs, injectees via K8s secrets |
 | Gitea avant pipeline | VM CI separee (cloud-init), hors du cluster |
 | Flux SSH avant Gitea | Cle statique ed25519 + placeholder known_hosts |

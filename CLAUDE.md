@@ -9,7 +9,7 @@ talos/
 │
 ├── bootstrap/                          # Platform pod (podman) — runs BEFORE cluster
 │   ├── main.tf                         # Bootstrap Terraform module (generates pod + configmap)
-│   ├── platform-pod.yaml               # Single pod: OpenBao 3-node + vault-backend + Gitea + WP
+│   ├── platform-pod.yaml               # Single pod: OpenBao KMS + vault-backend + Gitea + WP
 │   └── tofu/                           # Setup sidecar TF: KMS init, CI setup, repo push, secrets
 │
 ├── contexts/                           # 1 YAML per (env, instance, region) cluster
@@ -25,7 +25,7 @@ talos/
 │   │   ├── image/                      # Stage 1: Talos image (semver + schematic-sha7, per region)
 │   │   ├── main.tf                     # Stage 2: cluster (consumes var.context_file)
 │   │   └── ci/                         # Stage 3: CI VM (one per env/instance/region)
-│   └── vmware-airgap/                  # Non-Terraform: shell scripts pipeline
+│   └── vmware-airgap/                  # Legacy/manual non-Terraform shell scripts pipeline
 │
 ├── modules/
 │   ├── naming/                         # Enforced naming + tags (plan-time validation)
@@ -41,7 +41,7 @@ talos/
 │   ├── security/                       # Trivy + Tetragon + Kyverno
 │   ├── storage/                        # Garage + Velero + Harbor
 │   ├── flux-bootstrap/                 # Flux v2 + GitRepository + root Kustomization
-│   ├── external-secrets/               # Flux only (ESO + ClusterSecretStore)
+│   ├── external-secrets/               # ESO + ClusterSecretStore (Tofu day-1 + Flux day-2)
 │   │  ─── KaaS / Phase A (deployed by `make kaas-up`) ─────────────
 │   ├── capi/                           # Cluster API + CABPT + Talos infra provider
 │   ├── kamaji/                         # Hosted control planes for tenant clusters
@@ -54,7 +54,7 @@ talos/
 │                                       #   registry-mirror, kubelet-nodeip-vpc, …)
 ├── scripts/                            # Day-2 + validation + brigade helpers
 ├── docs/
-│   ├── adr/                            # 26 ADRs (architecture decisions)
+│   ├── adr/                            # 30 ADRs (architecture decisions)
 │   ├── reviews/                        # cli-cycle audit reports per pass
 │   └── …
 └── tests/
@@ -92,9 +92,10 @@ talos/
   path injected by Makefile at `tofu init` via `-backend-config`.
 - **Day-2 management**: Flux reconciles all stacks after initial bootstrap.
   OpenTofu handles first deploy, then hands off to Flux via `tofu state rm`.
-- **Secrets**: auto-generated via `random_id` Terraform, stored in encrypted state.
-  No SOPS, no secrets in Git.
-- **VMware airgap**: no Terraform. Shell scripts build OVA + generate per-node configs.
+- **Secrets**: auto-generated via Terraform (`random_password`, `random_bytes`,
+  `tls_private_key`), stored in encrypted state, seeded to OpenBao Infra, then
+  synchronized to Kubernetes by ESO. No SOPS, no secrets in Git.
+- **VMware airgap**: legacy/manual path, not part of the current tested golden path. No Terraform; shell scripts build OVA + generate per-node configs.
 
 ## Key Conventions
 
@@ -170,7 +171,7 @@ make scaleway-nuke
 
 ```
 bootstrap (once, podman)
-    │ → Platform pod: OpenBao 3-node Raft + vault-backend + Gitea + Woodpecker
+    │ → Platform pod: OpenBao KMS (single-node Raft) + vault-backend + Gitea + Woodpecker
     │ → PKI Root CA + Sub-CAs (kms-output/)
     │ → tfstate backend :8080 (via vault-backend → OpenBao KV v2)
     │
@@ -187,7 +188,7 @@ pki              ← OpenBao in-cluster + cert-manager + auto-init (~3-4min real
 monitoring       ← VictoriaMetrics + Headlamp (~2min)
     │
 identity         ← Kratos + Hydra + Pomerium (~1min)
-    │                 (all secrets: random_id Terraform)
+    │                 (secrets sourced from OpenBao Infra via ESO)
 security         ← Trivy + Tetragon + Kyverno (~2min)
     │
 storage          ← Garage + Velero + Harbor (~2min)
@@ -218,8 +219,9 @@ Note: pipeline was initially parallel (make -j2) but race conditions
 
 ## State Storage (vault-backend + OpenBao KV v2)
 
-All OpenTofu states stored in OpenBao KMS (podman, 3-node Raft).
-vault-backend provides HTTP backend with locking + KV v2 versioning.
+All OpenTofu states are stored in the bootstrap OpenBao KMS (podman,
+single-node Raft) through vault-backend. vault-backend provides HTTP backend
+locking + KV v2 versioning.
 
 ```
 OpenTofu ──HTTP──→ vault-backend (:8080) ──→ OpenBao KV v2 (:8200)
@@ -241,13 +243,15 @@ OpenTofu ──HTTP──→ vault-backend (:8080) ──→ OpenBao KV v2 (:820
 
 ## Secrets Management
 
-### Initial deploy (random_id)
-All secrets are auto-generated via `random_id` Terraform resources.
-Stored in encrypted tfstate (via vault-backend → OpenBao KV v2). Zero manual input.
+### Initial deploy (Terraform-generated secrets)
+Secrets are auto-generated via Terraform resources (`random_password`,
+`random_bytes`, `tls_private_key`) and stored in encrypted tfstate through
+vault-backend → OpenBao KMS. Platform/app secrets are then seeded into
+in-cluster OpenBao Infra for ESO consumption. Zero manual input.
 
 ### Day-2 (ESO + in-cluster OpenBao)
-After pki deploys (auto-init Job), ESO can sync secrets from in-cluster OpenBao:
-OpenBao KV v2 → ESO ClusterSecretStore → ExternalSecret → K8s Secret
+After pki deploys, ESO syncs secrets from OpenBao Infra:
+OpenBao Infra KV v2 → ESO ClusterSecretStore → ExternalSecret → K8s Secret
 
 | Secret | OpenBao path | K8s Secret | Namespace |
 |--------|-------------|------------|-----------|
@@ -280,7 +284,7 @@ No SOPS. No secrets in Git.
 - Cilium MUST be deployed before any other k8s stack (it's the CNI)
 - Cilium MUST be destroyed LAST (removing it breaks pod eviction)
 - pki MUST be deployed before identity (ClusterIssuer dependency)
-- In-cluster OpenBao uses self-init + static seal (no Job, no scripts)
+- In-cluster OpenBao uses Helm + static seal; bootstrap jobs must be explicit Flux/Kustomize jobs or real Helm hooks (see ADR-033)
 - storage is self-contained (generates its own harbor_admin_password)
 - Stacks are provider-agnostic: they only need a kubeconfig path
 - vault-backend (podman) must be running for any tofu command

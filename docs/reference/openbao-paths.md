@@ -18,10 +18,10 @@ on `openbao-infra-0`, or wire an `ExternalSecret` with
 | `secret/scaleway/<env>/<role>` | `access_key`, `secret_key` | platform | `make scaleway-seed-iam` (post-`k8s-pki-apply`) |
 | `secret/identity/db/postgres` | DSN | identity | CNPG `identity-pg` PushSecret |
 | `secret/security/db/openclarity` | DSN | security | CNPG `openclarity-pg` PushSecret |
-| `secret/security/cosign` | `cosign.pub`, `cosign.key` | security | `stacks/pki/secrets.tf` (random_id seed) |
+| `secret/security/cosign` | `cosign.pub`, `cosign.key` | security | `stacks/pki/secrets.tf` (`tls_private_key.cosign`) |
 | `secret/flux/ssh` | private SSH key + `known_hosts` | flux-system | `stacks/flux-bootstrap` PushSecret |
-| `secret/monitoring/grafana` | `admin_password` | monitoring | `stacks/pki/secrets.tf` (Phase 1a-4) |
-| `secret/identity/hydra` | `system_secret` | identity | `stacks/pki/secrets.tf` |
+| `secret/monitoring/grafana` | `admin_password` | monitoring | `stacks/monitoring/main.tf` (`seed_grafana_to_openbao`) |
+| `secret/identity/hydra` | `system_secret`, `client_secret` | identity | `stacks/pki/secrets.tf` |
 | `secret/identity/pomerium` | `shared_secret`, `cookie_secret`, `client_secret` | identity | `stacks/pki/secrets.tf` |
 | `secret/storage/garage` | `rpc_secret`, `admin_token` | storage | `stacks/pki/secrets.tf` |
 | `secret/storage/harbor` | `admin_password` | storage | `stacks/pki/secrets.tf` |

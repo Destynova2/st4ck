@@ -109,8 +109,9 @@ Files: `values-openbao-infra.yaml`, `values-openbao-app.yaml`, `values-cert-mana
 
 | Setting | File | Purpose |
 |---------|------|---------|
-| `server.standalone.enabled` | values-openbao-*.yaml | OpenBao runs in standalone mode |
-| `injector.enabled` | values-openbao-infra.yaml | Agent Injector for secret injection |
+| `server.ha.enabled` | values-openbao-*.yaml | OpenBao runs in HA/Raft mode |
+| `server.ha.replicas` | values-openbao-*.yaml | Infra targets 3 replicas; App bootstraps at 1 then scales after quorum is safe |
+| `injector.enabled` | values-openbao-infra.yaml | Agent Injector state; ESO is the canonical secret-sync path |
 | `installCRDs` | values-cert-manager.yaml | Install cert-manager CRDs |
 
 ### Identity (stacks/identity/)

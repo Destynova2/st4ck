@@ -20,7 +20,7 @@ Tout est detruit. Vous clonez le depot Git et reconstruisez la plateforme a part
 | Images Harbor | Garage bucket `harbor-registry/` | Partiellement (rebuild CI) | Moyenne |
 | Backups Velero | Garage bucket `velero-backups/` | Non | Haute |
 | Donnees Gitea | PVC bootstrap pod | Rebuild depuis Git upstream | Moyenne |
-| Secrets applicatifs (Hydra, Pomerium...) | tfstate (random_id dans state) | Oui si tfstate restaure | Critique |
+| Secrets applicatifs (Hydra, Pomerium...) | tfstate + OpenBao Infra (Terraform entropy, sync ESO) | Oui si tfstate/OpenBao restaure | Critique |
 | Configs Kubernetes (manifests) | Depot Git | Oui (deterministe) | Faible |
 | Machine secrets Talos | tfstate env | Oui si tfstate restaure | Critique |
 
@@ -174,7 +174,7 @@ make bootstrap
 # Re-initialiser tous les backends
 make k8s-init
 
-# Les stacks vont creer de nouveaux secrets (random_id)
+# Les stacks vont creer de nouveaux secrets (Terraform entropy resources)
 # Les anciennes donnees CNPG ne seront PAS recuperables
 # (nouvelles cles CA = anciens certificats invalides)
 ```

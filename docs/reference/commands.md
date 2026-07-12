@@ -6,9 +6,12 @@ All commands are Makefile targets. Run `make help` for the full list.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ENV` | `scaleway` | Provider selection: `scaleway`, `local` |
+| `ENV` | `dev` | Environment class: `dev`, `staging`, `prod` |
+| `INSTANCE` | `shared` | Context instance name; use `mgmt` for the target management cluster examples |
+| `REGION` | `fr-par` | Scaleway/local region identifier |
+| `PROVIDER` | `scaleway` | Provider implementation: `scaleway`, `local` |
 | `TF` | `tofu` | Terraform binary (OpenTofu) |
-| `KC_FILE` | `~/.kube/talos-$(ENV)` | Kubeconfig file path |
+| `KC_FILE` | `~/.kube/$(NAMESPACE)-$(ENV)-$(INSTANCE)-$(REGION)` | Context-scoped kubeconfig file path |
 | `TF_HTTP_PASSWORD` | (from kms-output) | vault-backend token for state backend |
 
 ## Version Variables (vars.mk)
@@ -24,8 +27,10 @@ All commands are Makefile targets. Run `make help` for the full list.
 
 | Command | Description |
 |---------|-------------|
-| `make kms-bootstrap` | Generate PKI CA chain + start vault-backend (state storage). Requires podman. |
-| `make kms-stop` | Stop the local OpenBao KMS cluster + vault-backend |
+| `make bootstrap` | Start the platform pod: OpenBao KMS, vault-backend, Gitea, Woodpecker. Requires podman. |
+| `make bootstrap-export` | Export AppRole credentials, tokens, and CA material to `kms-output/`. |
+| `make kms-bootstrap` | Compatibility alias for `make bootstrap`. |
+| `make kms-stop` | Compatibility alias for `make bootstrap-stop`. |
 | `make state-snapshot` | Backup all OpenTofu states via Raft snapshot |
 | `make state-restore SNAPSHOT=path` | Restore from a Raft snapshot file |
 
@@ -47,7 +52,7 @@ Each stack has `-init`, `-apply`, and `-destroy` targets:
 |-------|--------------|--------------|
 | CNI (Cilium) | `make k8s-cni-apply` | None (must be first) |
 | Monitoring | `make k8s-monitoring-apply` | CNI |
-| PKI | `make k8s-pki-apply` | CNI + kms-bootstrap |
+| PKI | `make k8s-pki-apply` | CNI + bootstrap/kms-output |
 | Identity | `make k8s-identity-apply` | PKI |
 | Security | `make k8s-security-apply` | Identity |
 | Storage | `make k8s-storage-apply` | Identity |
@@ -76,8 +81,9 @@ Each stack has `-init`, `-apply`, and `-destroy` targets:
 | `make scaleway-apply` | Create cluster infrastructure |
 | `make scaleway-destroy` | Destroy cluster |
 | `make scaleway-wait` | Wait for K8s API server (up to 5 min) |
-| `make scaleway-kubeconfig` | Export kubeconfig to ~/.kube/talos-scaleway |
-| `make scaleway-up` | Full deployment: cluster + all K8s stacks |
+| `make scaleway-kubeconfig` | Export kubeconfig to the context path (`$(KC_FILE)`) |
+| `make scaleway-bootstrap-vm` | Deploy the shared CI VM/private network required before cluster creation |
+| `make scaleway-up` | Full deployment for the current context: cluster + K8s stacks |
 | `make scaleway-down` | Full teardown: K8s stacks + cluster |
 | `make scaleway-teardown` | Down + destroy CI (keeps IAM + image) |
 | `make scaleway-nuke` | Destroy EVERYTHING (requires confirmation) |
@@ -105,7 +111,7 @@ Each stack has `-init`, `-apply`, and `-destroy` targets:
 | `make local-up` | Full deployment: VMs + K8s stacks |
 | `make local-down` | Full teardown |
 
-## VMware Air-Gap
+## VMware Air-Gap (legacy/manual)
 
 | Command | Description |
 |---------|-------------|
@@ -133,8 +139,8 @@ Each stack has `-init`, `-apply`, and `-destroy` targets:
 | Command | Description |
 |---------|-------------|
 | `make validate` | Validate all generated machine configs + tofu validate every stack |
-| `make test` | Run validation + e2e tests (`validate` + e2e) |
-| `make velero-test` | Run Velero backup/restore validation |
+| `make test` | Run validation + OpenTofu tests (`validate` + `scaleway-test`) |
+| `make velero-test` | Run Velero backup/restore E2E validation (requires running cluster) |
 
 ## Utilities
 

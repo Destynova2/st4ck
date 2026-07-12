@@ -31,10 +31,10 @@ cd st4ck
 
 ## Step 2: Bootstrap the platform pod
 
-The platform pod is a local podman pod containing: 3-node OpenBao Raft cluster, vault-backend, Gitea, and a tofu-setup sidecar. It generates:
-- Root CA + intermediate CA
+The platform pod is a local podman pod containing: bootstrap OpenBao KMS (single-node Raft), vault-backend, Gitea, Woodpecker, and a tofu-setup sidecar. It generates:
+- Root CA + intermediate CAs
 - Static seal key for in-cluster OpenBao
-- vault-backend token for Terraform state storage
+- vault-backend AppRole credentials for Terraform state storage
 
 ```bash
 make bootstrap
@@ -65,9 +65,9 @@ Create the IAM secret file:
 
 ```bash
 cat > envs/scaleway/iam/secret.tfvars << 'EOF'
-organization_id = "your-org-id"
-access_key      = "your-admin-access-key"
-secret_key      = "your-admin-secret-key"
+scw_access_key      = "your-admin-access-key"
+scw_secret_key      = "your-admin-secret-key"
+scw_organization_id = "your-org-id"
 EOF
 ```
 
@@ -83,19 +83,21 @@ make scaleway-iam-apply
 ### Option A: Scaleway (cloud)
 
 ```bash
-make scaleway-up
+make scaleway-image-apply REGION=fr-par
+make scaleway-bootstrap-vm ENV=dev INSTANCE=shared REGION=fr-par
+make scaleway-up ENV=dev INSTANCE=mgmt REGION=fr-par
 ```
 
 This runs the full pipeline:
 1. `scaleway-apply` -- Creates VMs, load balancer, private network
 2. `scaleway-wait` -- Waits for Kubernetes API server (up to 5 minutes)
-3. `scaleway-kubeconfig` -- Writes kubeconfig to `~/.kube/talos-scaleway`
-4. `k8s-up` -- Deploys all 7 stacks sequentially (~15 minutes)
+3. `scaleway-kubeconfig` -- Writes kubeconfig to the context path (`~/.kube/st4ck-dev-mgmt-fr-par` in this example)
+4. `k8s-up` -- Deploys all 7 day-1 stacks sequentially (duration depends on image pulls and PKI readiness)
 
 ### Option B: Local (libvirt/KVM)
 
 ```bash
-make ENV=local local-up
+make local-up
 ```
 
 ## Step 5: Verify the deployment
@@ -103,7 +105,7 @@ make ENV=local local-up
 Check that all pods are running:
 
 ```bash
-export KUBECONFIG=~/.kube/talos-scaleway  # or talos-local
+export KUBECONFIG=~/.kube/st4ck-dev-mgmt-fr-par  # or the path printed by make local-up
 kubectl get pods -A | grep -v Running | grep -v Completed
 ```
 

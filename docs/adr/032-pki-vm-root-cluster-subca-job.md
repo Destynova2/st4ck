@@ -1,7 +1,7 @@
-# ADR-032 : PKI hierarchy — Root CA on VM, sub-CAs in cluster via Helm Job
+# ADR-032 : PKI hierarchy — Root CA on VM, sub-CAs in cluster via Flux/Kustomize Job
 
 **Date** : 2026-04-30
-**Statut** : Proposé (source-only, pas encore deployé)
+**Statut** : Proposé (source présente, séquencement Flux/Kustomize à finaliser)
 **Décideurs** : Équipe plateforme
 **Reliés à** : ADR-007 (OpenBao secrets manager), ADR-026 (static seal accepted risk), ADR-028 (Flux owner-by-default), Phase F-bis-2 v1/v2 (échec, voir roadmap)
 
@@ -58,7 +58,7 @@ inline dans `stacks/pki/secrets.tf`) gérait l'intégralité de la PKI in-cluste
 ### Insight 2026-04-30 (idée user)
 
 > "Pourquoi ne pas garder le root sur la VM (déjà présent), et bootstrap
-> les sub-CAs dans le cluster via un Helm Job au lieu d'un terraform_data ?
+> les sub-CAs dans le cluster via un Job Kubernetes reconcilié par Flux/Kustomize au lieu d'un terraform_data ?
 > Ça enlève la duplication et le pattern devient K8s-natif."
 
 C'est cette décomposition que codifie ADR-032.
@@ -85,10 +85,10 @@ C'est cette décomposition que codifie ADR-032.
                             │
                             ▼ (distribués comme K8s Secrets, ns: secrets)
 ┌─────────────────────────────────────────────────────────────────┐
-│  Cluster (Helm post-install Job — pas de terraform_data)        │
+│  Cluster (Flux/Kustomize Job — pas de terraform_data)           │
 │    ├── Job: bootstrap-openbao-pki                                │
-│    │   ├── Hook: post-install,post-upgrade (weight: 10)         │
-│    │   ├── Delete-policy: before-hook-creation,hook-succeeded   │
+│    │   ├── Séquence: Kustomization dependsOn/wait à câbler      │
+│    │   ├── Re-run: delete/recreate Job ou Kustomization dédiée  │
 │    │   ├── ServiceAccount + Role + RoleBinding (RBAC scoped)    │
 │    │   └── Container :                                           │
 │    │       ├── Wait OpenBao Infra API ready (300s budget)       │
@@ -111,11 +111,11 @@ C'est cette décomposition que codifie ADR-032.
 | Aspect | Avant | Après |
 |--------|-------|-------|
 | Root CA location | VM + cluster (duplication) | VM uniquement |
-| Bootstrap mechanism | terraform_data inline ~180 LOC | Helm Job + RBAC ~280 LOC |
-| Trigger | `tofu apply` depuis opérateur | Helm hook post-install/upgrade |
+| Bootstrap mechanism | terraform_data inline ~180 LOC | Flux/Kustomize Job + RBAC ~280 LOC |
+| Trigger | `tofu apply` depuis opérateur | Flux Kustomization `dependsOn` + Job idempotent |
 | Idempotence | bao probes guard | bao probes guard (identique) |
 | Failure visibility | Tofu output (parfois opaque) | `kubectl logs job/bootstrap-openbao-pki` |
-| Re-run cost | ~30s polling à chaque apply | 0 si Helm release inchangée |
+| Re-run cost | ~30s polling à chaque apply | ~30s seulement si le Job est relancé ; probes idempotentes |
 | RBAC scope | Tofu admin (kubeconfig full) | SA scoped : 2 secrets read + exec sur openbao-infra-0 |
 | Pattern alignment | Tofu-as-K8s-controller | K8s-native (Job + Helm) |
 
@@ -132,12 +132,12 @@ C'est cette décomposition que codifie ADR-032.
 
 ### Migration step-by-step
 
-1. **Source-only commit** (cette ADR + Helm Job + secrets.tf no-op shim).
-   PAS de `tofu apply`, PAS de redéploiement. Agent #10 est en cours de
-   rebuild — on respecte sa territoriality sur main.tf.
+1. **Source commit** (cette ADR + Job Flux/Kustomize + secrets.tf no-op shim).
+   PAS de redéploiement automatique. Agent #10 est en cours de rebuild — on
+   respecte sa territoriality sur main.tf.
 2. **Validation post-demo** (2026-05-01+) :
-   - `tofu apply stacks/pki` → pour observer que le Helm Job se déclenche
-     bien après `helm install`.
+   - `tofu apply stacks/pki` → pour observer que le Job Kubernetes est appliqué
+     après OpenBao Infra.
    - `kubectl logs -n secrets job/bootstrap-openbao-pki` → vérifier
      idempotence sur re-apply.
 3. **Intermediate CA loading** (follow-up) :
@@ -158,8 +158,8 @@ C'est cette décomposition que codifie ADR-032.
 ### Positives
 
 - **-180 LOC bash dans Tofu** (provisioner inline supprimé). +280 LOC YAML
-  Helm Job (mais Job est un artefact K8s standard, lisible/auditable).
-- **Pattern K8s-natif** : Helm hook + Job + RBAC scoped, plus aucune
+  Kubernetes Job (artefact K8s standard, lisible/auditable).
+- **Pattern K8s-natif** : Flux/Kustomize Job + RBAC scoped, plus aucune
   dépendance à `local-exec` ou à la machine de l'opérateur.
 - **Pas de duplication root CA** : la chaîne de confiance est cohérente
   end-to-end (VM root → VM intermediate → cluster pki_int signé par
@@ -169,9 +169,8 @@ C'est cette décomposition que codifie ADR-032.
 - **RBAC scoped** : le Job lit 2 secrets (admin password + root CA cert)
   + peut `exec` uniquement sur `openbao-infra-0`. Tofu auparavant avait
   full kubeconfig.
-- **Idempotence Helm-native** : si la Helm release n'a pas changé, le Job
-  ne re-tourne pas. Si elle change (upgrade), le Job re-tourne avec les
-  bao probes pour skip si déjà configuré.
+- **Idempotence K8s-native** : le Job est idempotent via probes `bao`; une
+  réconciliation Flux peut le relancer sans reconfigurer ce qui existe déjà.
 
 ### Négatives
 
@@ -184,21 +183,21 @@ C'est cette décomposition que codifie ADR-032.
   role peut être appelé mais retournera "no CA available" jusqu'à
   intermediate loading.
 - **Job vs terraform_data — séquencement Tofu** : la migration définitive
-  (v4) doit gérer le fait que Tofu ne sait pas attendre un Helm Job.
-  Soit `kubernetes_job` data source (avec wait_for_completion), soit
-  `time_sleep`, soit accepter que cluster-issuer Vault ClusterIssuer
-  apply en parallèle et que cert-manager retry en boucle pendant 1-2min.
-- **Helm Job re-run sur upgrade** : si on change `values-openbao-infra.yaml`
-  pour faire un upgrade Helm, le Job re-tourne. Idempotent mais consomme
-  ~30s à chaque upgrade. Acceptable.
+  (v4) doit gérer le fait que Tofu ne sait pas attendre un Job Flux/Kustomize.
+  Soit une Kustomization Flux dédiée avec `dependsOn`/`wait`, soit un
+  `kubernetes_job` avec `wait_for_completion`, soit accepter que le
+  ClusterIssuer Vault applique en parallèle et que cert-manager retry pendant
+  1-2min.
+- **Job re-run sur reconciliation** : si le manifest change, le Job peut être
+  recréé. Il reste idempotent mais consomme ~30s. Acceptable.
 
 ### Risques
 
-- **Cluster fresh bootstrap** : si pour une raison quelconque le Helm Job
+- **Cluster fresh bootstrap** : si pour une raison quelconque le Job
   échoue (network blip, OpenBao not ready après 300s), cert-manager se
   retrouve sans backend Vault et bloque tous les Certificate CRs. La
-  recovery : `kubectl delete job/bootstrap-openbao-pki && helm upgrade`
-  re-fire le hook.
+  recovery : `kubectl delete job/bootstrap-openbao-pki` puis `flux reconcile`
+  sur la Kustomization qui porte le Job.
 - **Migration v3 → v4 sur cluster existant** : nécessite un `tofu state
   rm` sur chaque cluster pour évacuer le shim. À documenter dans le
   runbook de migration.
@@ -238,14 +237,15 @@ C'est cette décomposition que codifie ADR-032.
 - Contre : Vault uniquement (pas OpenBao). Pas une option pour st4ck
   (ADR-007).
 
-### E — Helm Job (cette ADR)
+### E — Flux/Kustomize Job (cette ADR)
 
-- Pour : K8s-native, pattern standard, RBAC scoped, pas de duplication.
-- Contre : nécessite une migration en deux phases (v3 shim → v4 removal).
+- Pour : K8s-native, pattern standard, RBAC scoped, pas de duplication, aligné avec ADR-033.
+- Contre : nécessite une migration en deux phases (v3 shim → v4 removal) et une Kustomization avec `dependsOn`/`wait` explicite.
 - Décision : retenu.
 
 ## Status flag
 
-- 2026-04-30 : ADR créée (Phase F-bis-2 v3, source-only).
-- TBD : déploiement post-demo + validation Job.
+- 2026-04-30 : ADR créée (Phase F-bis-2 v3, source présente).
+- 2026-06-14 : amendement ADR-033 — le Job est traité comme Flux/Kustomize, pas comme hook Helm implicite.
+- TBD : validation Job + intermediate CA loading.
 - TBD : Phase F-bis-2 v4 (removal définitif du shim).

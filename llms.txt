@@ -1,6 +1,6 @@
 # Talos Linux Multi-Environment Deployment Platform
 
-> Sovereign air-gapped Kubernetes platform built on Talos Linux v1.12. Deploys a management cluster with full observability, PKI, identity (OIDC), security scanning, S3 storage, and GitOps across Scaleway, libvirt/KVM, and VMware airgap environments. Uses OpenTofu for infrastructure, Flux v2 for day-2 GitOps, and OpenBao for secrets and state storage.
+> Sovereign Kubernetes platform built on Talos Linux v1.12. Deploys a management cluster with full observability, PKI, identity (OIDC), security scanning, S3 storage, and GitOps across maintained Scaleway and libvirt/KVM environments; VMware airgap remains a legacy/manual shell workflow. Uses OpenTofu for infrastructure, Flux v2 for day-2 GitOps, and OpenBao for secrets and state storage.
 
 ## Project Context
 - [README.md](README.md): Project overview and quick start
@@ -20,6 +20,7 @@
 - [ADR-007: OpenBao](docs/adr/007-openbao-secrets-manager.md): OpenBao as secrets manager
 - [ADR-008: Random Secrets](docs/adr/008-random-id-secrets.md): Auto-generated secrets
 - [ADR-009: State Backend](docs/adr/009-state-backend-openbao.md): HTTP state backend via OpenBao
+- [ADR-033: OpenBao/ESO Ownership](docs/adr/033-openbao-eso-flux-ownership.md): Bootstrap KMS, OpenBao Infra/App, ESO, and Flux boundary
 - [ADR-010: VictoriaMetrics](docs/adr/010-victoriametrics-observability.md): Observability stack choice
 - [ADR-011: Trivy](docs/adr/011-trivy-node-collector-disabled.md): Node collector disabled for Talos
 - [ADR-012: Garage Job](docs/adr/012-garage-k8s-job.md): Post-deploy setup via K8s Job
@@ -33,6 +34,9 @@
 - [ADR-020: Kamaji](docs/adr/020-kamaji-kaas.md): KaaS alternative to Cozystack
 - [ADR-021: Security Hardening](docs/adr/021-security-hardening.md): Consolidated security audit findings and remediations
 - [ADR-022: Production Readiness](docs/adr/022-production-readiness-checklist.md): Production readiness checklist
+- [ADR-034: Hauler Artifact Store](docs/adr/034-hauler-artifact-store.md): Hauler replaces arbor staging; Zarf rejected
+- [ADR-035: Elastic Metal Static Pool](docs/adr/035-elastic-metal-static-pool.md): Static EM pool pending CAPS support (amends ADR-024)
+- [ADR-036: Karpenter Scaleway Provider](docs/adr/036-karpenter-scaleway-provider.md): Where to invest dev effort to unblock Scaleway autoscaling
 
 ## Documentation (Diataxis)
 - [Landing Page](docs/index.md): What this is and where to go
@@ -81,6 +85,7 @@
 
 ## Design
 - [HLD/LLD System Design](docs/design/001-hld-lld.md): Complete high-level and low-level design
+- [LLD Karpenter Scaleway EM](docs/design/002-karpenter-scaleway-em.md): CloudProvider design for the Elastic Metal power-on/off pool
 - [HLD Talos Platform](docs/hld-talos-platform.md): High-Level Design document (English)
 
 ## Scripts

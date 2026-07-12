@@ -35,7 +35,7 @@
 
 The Talos Sovereign Kubernetes Platform is a multi-environment, infrastructure-as-code system that deploys hardened Kubernetes clusters on Talos Linux v1.12 across multiple providers (Scaleway, local KVM/libvirt, VMware airgap). It provides a complete platform stack covering networking (Cilium eBPF), PKI (OpenBao + cert-manager), identity (Kratos/Hydra/Pomerium), security (Trivy/Tetragon/Kyverno), storage (Garage S3/Harbor/Velero), monitoring (VictoriaMetrics/VictoriaLogs/Headlamp), and GitOps (Flux v2).
 
-The design prioritizes sovereign operation: all secrets are auto-generated (zero manual input), state is stored in OpenBao KMS with Raft consensus (no external cloud state backends), PKI uses a private three-tier CA hierarchy, and the system supports fully air-gapped deployments on VMware. OpenTofu handles initial deployment; Flux v2 manages day-2 reconciliation. A single podman pod bootstraps the entire platform (OpenBao 3-node, vault-backend, Gitea, Woodpecker CI) before any cluster exists.
+The design prioritizes sovereign operation: all secrets are auto-generated (zero manual input), state is stored in the bootstrap OpenBao KMS (no external cloud state backends), PKI uses a private three-tier CA hierarchy, and the system supports fully air-gapped deployments on VMware. OpenTofu handles initial deployment; Flux v2 manages day-2 reconciliation. A single podman pod bootstraps the platform (OpenBao KMS, vault-backend, Gitea, Woodpecker CI) before any cluster exists.
 
 Key tradeoffs: sequential deployment over parallel (reliability over speed), OpenBao over HashiCorp Vault (open-source sovereignty), Talos Linux over traditional distributions (immutability over flexibility), and self-hosted CI/Git over SaaS (data sovereignty over convenience).
 
@@ -46,7 +46,7 @@ Key tradeoffs: sequential deployment over parallel (reliability over speed), Ope
 ### Goals
 
 - **G1:** Deploy a production-grade Kubernetes cluster (3 CP + 3 workers) on any supported provider with a single `make` command
-- **G2:** Zero manual secret management -- all secrets auto-generated via `random_id`/`random_password` and stored in encrypted OpenBao KMS
+- **G2:** Zero manual secret management -- all secrets auto-generated via Terraform entropy resources, stored in encrypted state, seeded into OpenBao Infra, then reconciled by ESO
 - **G3:** Private PKI with three-tier CA hierarchy (Root CA > Infra CA / App CA) for all internal TLS
 - **G4:** Full observability stack (metrics, logs, dashboards) deployed automatically
 - **G5:** OIDC-based identity with zero-trust access proxy (Pomerium) for service access
@@ -287,7 +287,7 @@ graph LR
     end
 
     subgraph "Secret Generation"
-        SETUP["tofu-setup"] -->|random_id / random_password| BAO
+        SETUP["tofu-setup"] -->|Terraform entropy resources| BAO
         SETUP -->|TLS provider| PKI_FILES["kms-output/<br/>root-ca.pem<br/>infra-ca-*.pem<br/>app-ca-*.pem"]
     end
 
@@ -1036,12 +1036,11 @@ graph TD
 | Hydra TLS cert | Certificate CRD | N/A | identity |
 | OIDC client registration | K8s Job | N/A | identity |
 
-**Secret injection flow:**
-1. `identity` stack reads `secret/cluster/identity` from bootstrap OpenBao via vault provider
-2. Secrets injected into Helm values via `templatefile()`:
-   - Hydra: `system_secret` from vault
-   - Pomerium: `client_secret`, `shared_secret`, `cookie_secret` from vault
-3. OIDC client registration Job runs after Hydra is ready, creates `kubernetes` OAuth client
+**Secret flow:**
+1. `stacks/pki/secrets.tf` generates identity secrets and seeds them into OpenBao Infra.
+2. ESO reconciles `ExternalSecret` manifests from OpenBao Infra to Kubernetes Secrets.
+3. Helm values reference those Kubernetes Secrets; Flux owns day-2 reconciliation.
+4. OIDC client registration Job runs after Hydra is ready, creates `kubernetes` OAuth client.
 
 ### Stack: Security (stacks/security/)
 

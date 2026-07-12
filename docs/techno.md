@@ -58,26 +58,28 @@ Cloud-init : installe podman, clone le repo, cree admin Gitea, OAuth Woodpecker,
 
 | Composant | Chart Version | Role | Notes |
 |---|---|---|---|
-| OpenBao (infra) | 0.25.6 | PKI intermediaire, secrets infra, Transit engine, SSH CA | Agent Injector active |
-| OpenBao (app) | 0.25.6 | Secrets applicatifs | Instance separee |
+| OpenBao KMS bootstrap | 2.5.1 | State backend + racine PKI | Podman hors cluster, single-node Raft |
+| OpenBao (infra) | 0.25.6 | PKI intermediaire, secrets infra, source ESO, SSH CA | In-cluster, Helm, HA Raft apres bootstrap |
+| OpenBao (app) | 0.25.6 | Frontiere secrets applicatifs | In-cluster, reserve tant qu'aucun ClusterSecretStore app n'est cable |
 | cert-manager | v1.19.4 | Gestion certificats TLS | ClusterIssuer internal-ca |
 
-### OpenBao Infra — Engines & Auth
+### OpenBao KMS / Infra / App — roles
 
 ```
-Secret Engines :
-├── transit/              — Chiffrement state OpenTofu (cle aes256-gcm96 "state-encryption")
+Bootstrap KMS (Podman) :
+├── secret/               — KV v2 pour tfstate via vault-backend
+├── PKI root/sub-CAs      — exportees dans kms-output/
+└── AppRole               — auth vault-backend
+
+OpenBao Infra (cluster) :
+├── secret/               — KV v2 source ESO (identity, storage, security, monitoring)
+├── pki_int/              — backend PKI pour cert-manager
+├── transit/              — chiffrement et primitives infra
 ├── ssh-client-signer/    — SSH CA pour signature certs (role "flux", TTL 2h, max 24h)
-└── cubbyhole/            — Per-token storage
+└── auth/kubernetes       — auth ESO/cert-manager/pods via ServiceAccount
 
-Auth Methods :
-├── kubernetes/           — Auth pods via ServiceAccount
-│   └── role "flux-ssh"   — bound SA flux2-source-controller/flux-system, policy "flux-ssh"
-└── token/                — Auth par token
-
-Policies :
-├── flux-ssh              — create/update sur ssh-client-signer/sign/flux
-└── default/root
+OpenBao App (cluster) :
+└── secret/               — reserve aux secrets applicatifs, futur ClusterSecretStore openbao-app
 ```
 
 ### PKI
@@ -91,15 +93,16 @@ Root CA (Terraform TLS provider, auto-genere)
 
 ### Secrets
 
-Tous auto-generes via `random_id` Terraform :
-- `.hex` (64 chars) : tokens OpenBao, admin passwords
-- `.b64_std` (base64, 32 bytes) : Pomerium shared/cookie secrets
-- Stockes dans state Terraform (chiffre via Transit OpenBao), jamais en clair sur disque
+Tous auto-generes via Terraform :
+- `random_password` : mots de passe et client secrets
+- `random_bytes` : secrets binaires stricts (Pomerium, Garage RPC, seal keys)
+- `tls_private_key` : cles CA, Flux SSH, Cosign
+- Stockes dans le state chiffre via OpenBao KMS, puis seedes dans OpenBao Infra pour ESO
 
 ### State Backend
 
 ```
-OpenBao KMS local (3 noeuds Raft, Podman)
+OpenBao KMS bootstrap (single-node Raft, Podman)
 └── vault-backend (HTTP proxy → OpenBao KV v2)
     └── http://localhost:8080/state/{stack-name}
         └── TF_HTTP_PASSWORD = token vault-backend
@@ -174,7 +177,7 @@ stacks/
 ├── security/       # Trivy, Tetragon, Kyverno (3 helm releases + policy + flux/)
 ├── storage/        # Garage, Velero, Harbor (3 helm releases + K8s Job setup + flux/)
 ├── flux-bootstrap/ # Flux v2, SSH key, GitRepository, Kustomization
-└── external-secrets/ # ESO + ClusterSecretStore (flux only)
+└── external-secrets/ # ESO + ClusterSecretStore (Tofu day-1 + Flux day-2)
 
 envs/scaleway/
 ├── iam/            # Projet, API keys (image-builder, cluster, ci), buckets
