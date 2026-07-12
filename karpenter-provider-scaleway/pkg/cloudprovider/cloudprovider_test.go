@@ -212,7 +212,10 @@ func TestDeleteNominalThenIdempotent(t *testing.T) {
 	}
 }
 
-func TestDeleteStoppingServerIsNotFound(t *testing.T) {
+func TestDeleteWhileStoppingRetriesUntilStopped(t *testing.T) {
+	// Karpenter contract: NodeClaimNotFoundError means "already terminated".
+	// `stopping` is transitional — Delete must return nil so the core keeps
+	// retrying, and NotFound only once the server reaches `stopped`.
 	backend := newTestBackend()
 	backend.Transitional = true
 	backend.AddServer(testServer("aaa", pool.StatusReady))
@@ -227,9 +230,92 @@ func TestDeleteStoppingServerIsNotFound(t *testing.T) {
 	if got := backend.ServerStatus("aaa"); got != pool.StatusStopping {
 		t.Fatalf("server status = %s, want stopping", got)
 	}
+	if err := provider.Delete(context.Background(), nodeClaim); err != nil {
+		t.Fatalf("Delete during stopping = %v, want nil (retry until stopped)", err)
+	}
+	if backend.StopCalls != 1 {
+		t.Fatalf("StopServer called %d times, want 1 (no double stop while stopping)", backend.StopCalls)
+	}
+
+	backend.SetStatus("aaa", pool.StatusStopped)
 	err := provider.Delete(context.Background(), nodeClaim)
 	if !cloudprovider.IsNodeClaimNotFoundError(err) {
-		t.Fatalf("Delete during stopping = %v, want NodeClaimNotFoundError", err)
+		t.Fatalf("Delete once stopped = %v, want NodeClaimNotFoundError", err)
+	}
+}
+
+func TestDeleteBlockedOrFailedServerErrors(t *testing.T) {
+	// Fail closed: locked/out_of_stock/error/unknown must return neither
+	// nil nor NodeClaimNotFoundError — the finalizer stays until an
+	// operator intervenes, and no power action is attempted.
+	for _, st := range []pool.Status{pool.StatusLocked, pool.StatusOutOfStock, pool.StatusError, pool.Status("brand-new-sdk-status")} {
+		backend := newTestBackend()
+		server := testServer("aaa", st)
+		backend.AddServer(server)
+		provider := newTestProvider(t, backend, testNodeClass(true))
+
+		nodeClaim := testNodeClaim()
+		nodeClaim.Status.ProviderID = pool.FormatProviderID(testZone, "aaa")
+		err := provider.Delete(context.Background(), nodeClaim)
+		if err == nil || cloudprovider.IsNodeClaimNotFoundError(err) {
+			t.Errorf("Delete(%s) = %v, want explicit non-NotFound error", st, err)
+		}
+		if backend.StopCalls != 0 {
+			t.Errorf("Delete(%s) called StopServer %d times, want 0", st, backend.StopCalls)
+		}
+	}
+}
+
+func TestDeleteTransientServerReturnsNil(t *testing.T) {
+	for _, st := range []pool.Status{pool.StatusResetting, pool.StatusMigrating, pool.StatusDelivering, pool.StatusDeleting} {
+		backend := newTestBackend()
+		backend.AddServer(testServer("aaa", st))
+		provider := newTestProvider(t, backend, testNodeClass(true))
+
+		nodeClaim := testNodeClaim()
+		nodeClaim.Status.ProviderID = pool.FormatProviderID(testZone, "aaa")
+		if err := provider.Delete(context.Background(), nodeClaim); err != nil {
+			t.Errorf("Delete(%s) = %v, want nil (provider-side operation in progress)", st, err)
+		}
+		if backend.StopCalls != 0 {
+			t.Errorf("Delete(%s) called StopServer %d times, want 0", st, backend.StopCalls)
+		}
+	}
+}
+
+func TestDeleteRefusesServerOutsideEveryPool(t *testing.T) {
+	// Membership guard (pre-mortem S1): a provider ID pointing at an EM
+	// server that carries no declared pool tag must never reach StopServer.
+	backend := newTestBackend()
+	outsider := testServer("prod-server", pool.StatusReady)
+	outsider.Tags = []string{"env=prod", "critical=true"}
+	backend.AddServer(outsider)
+	provider := newTestProvider(t, backend, testNodeClass(true))
+
+	nodeClaim := testNodeClaim()
+	nodeClaim.Status.ProviderID = pool.FormatProviderID(testZone, "prod-server")
+	err := provider.Delete(context.Background(), nodeClaim)
+	if !cloudprovider.IsNodeClaimNotFoundError(err) {
+		t.Fatalf("Delete = %v, want NodeClaimNotFoundError (refused, no action)", err)
+	}
+	if backend.StopCalls != 0 {
+		t.Fatalf("StopServer called %d times on a non-member server, want 0", backend.StopCalls)
+	}
+	if got := backend.ServerStatus("prod-server"); got != pool.StatusReady {
+		t.Fatalf("non-member server status = %s, want untouched ready", got)
+	}
+}
+
+func TestGetRefusesServerOutsideEveryPool(t *testing.T) {
+	backend := newTestBackend()
+	outsider := testServer("prod-server", pool.StatusReady)
+	outsider.Tags = []string{"env=prod"}
+	backend.AddServer(outsider)
+	provider := newTestProvider(t, backend, testNodeClass(true))
+
+	_, err := provider.Get(context.Background(), pool.FormatProviderID(testZone, "prod-server"))
+	if !cloudprovider.IsNodeClaimNotFoundError(err) {
+		t.Fatalf("Get = %v, want NodeClaimNotFoundError", err)
 	}
 }
 
@@ -284,13 +370,19 @@ func TestGetStoppedServerIsNotFound(t *testing.T) {
 	}
 }
 
-func TestListOnlyPoweredOnPoolMembers(t *testing.T) {
+func TestListVisibilityOnlyStoppedIsGone(t *testing.T) {
+	// Fail closed: only a deliberately powered-off server (`stopped`)
+	// leaves List(). Terminating, blocked, failed and transient statuses
+	// stay visible so the GC never mistakes a maintenance/error state for
+	// a terminated instance.
 	backend := newTestBackend()
 	backend.AddServer(testServer("aaa", pool.StatusReady))
 	backend.AddServer(testServer("bbb", pool.StatusStarting))
 	backend.AddServer(testServer("ccc", pool.StatusStopping))
 	backend.AddServer(testServer("ddd", pool.StatusStopped))
-	outsider := testServer("eee", pool.StatusReady)
+	backend.AddServer(testServer("eee", pool.StatusLocked))
+	backend.AddServer(testServer("fff", pool.StatusError))
+	outsider := testServer("ggg", pool.StatusReady)
 	outsider.Tags = []string{"unrelated=tag"}
 	backend.AddServer(outsider)
 	provider := newTestProvider(t, backend, testNodeClass(true))
@@ -306,6 +398,9 @@ func TestListOnlyPoweredOnPoolMembers(t *testing.T) {
 	want := []string{
 		pool.FormatProviderID(testZone, "aaa"),
 		pool.FormatProviderID(testZone, "bbb"),
+		pool.FormatProviderID(testZone, "ccc"),
+		pool.FormatProviderID(testZone, "eee"),
+		pool.FormatProviderID(testZone, "fff"),
 	}
 	if len(nodeClaims) != len(want) {
 		t.Fatalf("List returned %d claims (%v), want %d", len(nodeClaims), got, len(want))
@@ -314,6 +409,111 @@ func TestListOnlyPoweredOnPoolMembers(t *testing.T) {
 		if !got[providerID] {
 			t.Errorf("List is missing %q", providerID)
 		}
+	}
+}
+
+// TestStatusMatrix pins the behavior of every SDK status class across the
+// CloudProvider surface (Codex Major #3 proof).
+func TestStatusMatrix(t *testing.T) {
+	type expectation struct {
+		visibleInList bool
+		getNotFound   bool
+		deleteOutcome string // "notfound", "nil-noop", "stopped", "error"
+		available     bool   // GetInstanceTypes Offering.Available with only this server
+	}
+	matrix := map[pool.Status]expectation{
+		pool.StatusStopped:               {visibleInList: false, getNotFound: true, deleteOutcome: "notfound", available: true},
+		pool.StatusReady:                 {visibleInList: true, getNotFound: false, deleteOutcome: "stopped", available: false},
+		pool.StatusStarting:              {visibleInList: true, getNotFound: false, deleteOutcome: "stopped", available: false},
+		pool.StatusStopping:              {visibleInList: true, getNotFound: false, deleteOutcome: "nil-noop", available: false},
+		pool.StatusDelivering:            {visibleInList: true, getNotFound: false, deleteOutcome: "nil-noop", available: false},
+		pool.StatusOrdered:               {visibleInList: true, getNotFound: false, deleteOutcome: "nil-noop", available: false},
+		pool.StatusResetting:             {visibleInList: true, getNotFound: false, deleteOutcome: "nil-noop", available: false},
+		pool.StatusMigrating:             {visibleInList: true, getNotFound: false, deleteOutcome: "nil-noop", available: false},
+		pool.StatusDeleting:              {visibleInList: true, getNotFound: false, deleteOutcome: "nil-noop", available: false},
+		pool.StatusLocked:                {visibleInList: true, getNotFound: false, deleteOutcome: "error", available: false},
+		pool.StatusOutOfStock:            {visibleInList: true, getNotFound: false, deleteOutcome: "error", available: false},
+		pool.StatusError:                 {visibleInList: true, getNotFound: false, deleteOutcome: "error", available: false},
+		pool.Status("future-sdk-status"): {visibleInList: true, getNotFound: false, deleteOutcome: "error", available: false},
+	}
+	for st, want := range matrix {
+		t.Run(string(st), func(t *testing.T) {
+			backend := newTestBackend()
+			backend.AddServer(testServer("aaa", st))
+			provider := newTestProvider(t, backend, testNodeClass(true))
+			providerID := pool.FormatProviderID(testZone, "aaa")
+
+			// List
+			nodeClaims, err := provider.List(context.Background())
+			if err != nil {
+				t.Fatalf("List returned error: %v", err)
+			}
+			if got := len(nodeClaims) == 1; got != want.visibleInList {
+				t.Errorf("List visibility = %v, want %v", got, want.visibleInList)
+			}
+
+			// Get
+			_, err = provider.Get(context.Background(), providerID)
+			if got := cloudprovider.IsNodeClaimNotFoundError(err); got != want.getNotFound {
+				t.Errorf("Get NotFound = %v (err=%v), want %v", got, err, want.getNotFound)
+			}
+			if !want.getNotFound && err != nil {
+				t.Errorf("Get returned unexpected error: %v", err)
+			}
+
+			// GetInstanceTypes availability
+			its, err := provider.GetInstanceTypes(context.Background(), testNodePool())
+			if err != nil {
+				t.Fatalf("GetInstanceTypes returned error: %v", err)
+			}
+			if got := its[0].Offerings[0].Available; got != want.available {
+				t.Errorf("Offering.Available = %v, want %v", got, want.available)
+			}
+
+			// Create: only `stopped` is claimable capacity.
+			_, err = provider.Create(context.Background(), testNodeClaim())
+			if st == pool.StatusStopped {
+				if err != nil {
+					t.Errorf("Create = %v, want success on a stopped server", err)
+				}
+				// Restore for the Delete leg below.
+				backend.SetStatus("aaa", pool.StatusStopped)
+			} else if !cloudprovider.IsInsufficientCapacityError(err) {
+				t.Errorf("Create = %v, want InsufficientCapacityError (no startable server)", err)
+			}
+
+			// Delete
+			nodeClaim := testNodeClaim()
+			nodeClaim.Status.ProviderID = providerID
+			err = provider.Delete(context.Background(), nodeClaim)
+			switch want.deleteOutcome {
+			case "notfound":
+				if !cloudprovider.IsNodeClaimNotFoundError(err) {
+					t.Errorf("Delete = %v, want NodeClaimNotFoundError", err)
+				}
+			case "nil-noop":
+				if err != nil {
+					t.Errorf("Delete = %v, want nil (retry later)", err)
+				}
+				if backend.StopCalls != 0 {
+					t.Errorf("Delete called StopServer %d times, want 0", backend.StopCalls)
+				}
+			case "stopped":
+				if err != nil {
+					t.Errorf("Delete = %v, want nil (power-off issued)", err)
+				}
+				if backend.StopCalls != 1 {
+					t.Errorf("Delete called StopServer %d times, want 1", backend.StopCalls)
+				}
+			case "error":
+				if err == nil || cloudprovider.IsNodeClaimNotFoundError(err) {
+					t.Errorf("Delete = %v, want explicit non-NotFound error", err)
+				}
+				if backend.StopCalls != 0 {
+					t.Errorf("Delete called StopServer %d times, want 0", backend.StopCalls)
+				}
+			}
+		})
 	}
 }
 

@@ -146,7 +146,7 @@ func (f *FakeBackend) StopServer(_ context.Context, zone, serverID string) error
 	if !ok || s.Zone != zone {
 		return fmt.Errorf("server %s/%s: %w", zone, serverID, ErrServerNotFound)
 	}
-	if !s.Status.PoweredOn() {
+	if s.Status.Class() != ClassLive {
 		return fmt.Errorf("server %s is %s, cannot stop", serverID, s.Status)
 	}
 	if f.Transitional {

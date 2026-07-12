@@ -8,6 +8,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	karpv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
@@ -98,65 +100,117 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 	return c.toNodeClaim(server, nodeClass.Spec.Zone, instanceType, nodeClaim.Labels, nodeClaim.Annotations), nil
 }
 
-// Delete powers off the server behind the NodeClaim. Idempotent: a server
-// already powered off (or gone) returns a NodeClaimNotFoundError so that
-// karpenter-core removes the finalizer.
+// Delete powers off the server behind the NodeClaim, respecting the
+// karpenter-core contract: nil while termination (or any provider-side
+// operation) is in progress — the core keeps retrying — and
+// NodeClaimNotFoundError only once the server is `stopped` or truly absent.
+// Blocked/failed statuses return an explicit error (fail closed): the
+// finalizer stays until an operator intervenes.
 func (c *CloudProvider) Delete(ctx context.Context, nodeClaim *karpv1.NodeClaim) error {
 	if nodeClaim.Status.ProviderID == "" {
 		return cloudprovider.NewNodeClaimNotFoundError(fmt.Errorf("nodeclaim %q has no provider ID, nothing was launched", nodeClaim.Name))
 	}
-	zone, serverID, err := pool.ParseProviderID(nodeClaim.Status.ProviderID)
+	server, zone, err := c.serverFromProviderID(ctx, nodeClaim.Status.ProviderID)
 	if err != nil {
-		return fmt.Errorf("parsing provider ID, %w", err)
+		return err
 	}
-	server, err := c.backend.GetServer(ctx, zone, serverID)
-	if err != nil {
-		if stderrors.Is(err, pool.ErrServerNotFound) {
-			return cloudprovider.NewNodeClaimNotFoundError(err)
+	switch server.Status.Class() {
+	case pool.ClassStartable:
+		// Deliberately powered off: the instance is terminated.
+		return cloudprovider.NewNodeClaimNotFoundError(fmt.Errorf("server %q is %s", server.ID, server.Status))
+	case pool.ClassLive:
+		if err := c.backend.StopServer(ctx, zone, server.ID); err != nil {
+			return fmt.Errorf("stopping server %q, %w", server.ID, err)
 		}
-		return fmt.Errorf("getting server %q, %w", serverID, err)
+		c.unclaim(server.ID)
+		c.invalidateInventoryFor(ctx, zone, server)
+		return nil
+	case pool.ClassTerminating, pool.ClassTransient:
+		// Power-off (or another provider-side operation) in progress: not
+		// terminated yet. The core retries Delete until `stopped`.
+		return nil
+	default: // ClassBlocked, ClassFailed
+		return fmt.Errorf("server %q is %s (%s): cannot power off, manual intervention required", server.ID, server.Status, server.Status.Class())
 	}
-	if !server.Status.PoweredOn() {
-		// Already stopped, stopping or in error: from Karpenter's point of
-		// view the instance is terminated.
-		return cloudprovider.NewNodeClaimNotFoundError(fmt.Errorf("server %q is %s", serverID, server.Status))
-	}
-	if err := c.backend.StopServer(ctx, zone, serverID); err != nil {
-		return fmt.Errorf("stopping server %q, %w", serverID, err)
-	}
-	c.unclaim(serverID)
-	c.invalidateInventoryFor(ctx, zone, server)
-	return nil
 }
 
-// Get maps a provider ID back to a NodeClaim. Powered-off servers are
-// reported as not found (they left List() semantics too).
+// Get maps a provider ID back to a NodeClaim. Only a `stopped` (or absent)
+// server is reported as not found; every other status — including blocked
+// and failed ones — keeps the NodeClaim visible (fail closed).
 func (c *CloudProvider) Get(ctx context.Context, providerID string) (*karpv1.NodeClaim, error) {
-	zone, serverID, err := pool.ParseProviderID(providerID)
+	server, zone, err := c.serverFromProviderID(ctx, providerID)
 	if err != nil {
-		return nil, fmt.Errorf("parsing provider ID, %w", err)
+		return nil, err
 	}
-	server, err := c.backend.GetServer(ctx, zone, serverID)
-	if err != nil {
-		if stderrors.Is(err, pool.ErrServerNotFound) {
-			return nil, cloudprovider.NewNodeClaimNotFoundError(err)
-		}
-		return nil, fmt.Errorf("getting server %q, %w", serverID, err)
-	}
-	if !server.Status.PoweredOn() {
-		return nil, cloudprovider.NewNodeClaimNotFoundError(fmt.Errorf("server %q is %s", serverID, server.Status))
+	if server.Status.Class() == pool.ClassStartable {
+		return nil, cloudprovider.NewNodeClaimNotFoundError(fmt.Errorf("server %q is %s", server.ID, server.Status))
 	}
 	it, err := c.instanceTypeForServer(ctx, zone, server)
 	if err != nil {
-		return nil, fmt.Errorf("resolving instance type for server %q, %w", serverID, err)
+		return nil, fmt.Errorf("resolving instance type for server %q, %w", server.ID, err)
 	}
 	return c.toNodeClaim(server, zone, it, nil, nil), nil
 }
 
-// List returns only the powered-on servers of every declared pool. Assumed
-// gotcha (LLD §3): an out-of-band power-off makes the server disappear from
-// List(), so the ~2 min GC deletes the NodeClaim — wanted, it reflects
-// reality.
+// serverFromProviderID parses a provider ID, fetches the server and enforces
+// pool membership. An absent server maps to NodeClaimNotFoundError; a server
+// that carries no declared pool tag is refused (also NotFound, without any
+// power action): the single Scaleway project is shared across envs and the
+// controller IAM is ElasticMetalFullAccess, so a forged or stale provider ID
+// must never reach StopServer (pre-mortem S1). NotFound (rather than an
+// error) also keeps the legit maintenance flow converging: de-tagging a
+// server releases its NodeClaim finalizer without touching the hardware.
+func (c *CloudProvider) serverFromProviderID(ctx context.Context, providerID string) (pool.Server, string, error) {
+	zone, serverID, err := pool.ParseProviderID(providerID)
+	if err != nil {
+		return pool.Server{}, "", fmt.Errorf("parsing provider ID, %w", err)
+	}
+	server, err := c.backend.GetServer(ctx, zone, serverID)
+	if err != nil {
+		if stderrors.Is(err, pool.ErrServerNotFound) {
+			return pool.Server{}, "", cloudprovider.NewNodeClaimNotFoundError(err)
+		}
+		return pool.Server{}, "", fmt.Errorf("getting server %q, %w", serverID, err)
+	}
+	member, err := c.isPoolMember(ctx, zone, server)
+	if err != nil {
+		// Cannot verify membership: fail closed, do not act on the server.
+		return pool.Server{}, "", fmt.Errorf("verifying pool membership of server %q, %w", serverID, err)
+	}
+	if !member {
+		log.FromContext(ctx).Info("refusing to manage server outside every declared pool",
+			"server", serverID, "zone", zone, "tags", server.Tags)
+		return pool.Server{}, "", cloudprovider.NewNodeClaimNotFoundError(
+			fmt.Errorf("server %q carries no declared pool tag", serverID))
+	}
+	return server, zone, nil
+}
+
+// isPoolMember reports whether the server carries the pool tag of at least
+// one declared ScalewayEMNodeClass of its zone.
+func (c *CloudProvider) isPoolMember(ctx context.Context, zone string, server pool.Server) (bool, error) {
+	nodeClassList := &v1alpha1.ScalewayEMNodeClassList{}
+	if err := c.kubeClient.List(ctx, nodeClassList); err != nil {
+		return false, fmt.Errorf("listing node classes, %w", err)
+	}
+	for i := range nodeClassList.Items {
+		nc := &nodeClassList.Items[i]
+		if nc.Spec.Zone == zone && slices.Contains(server.Tags, nc.Spec.PoolTag) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// List returns every pool server except the deliberately powered-off ones
+// (`stopped`). Assumed gotcha (LLD §3): an out-of-band power-off makes the
+// server disappear from List(), so the ~2 min GC deletes the NodeClaim —
+// wanted, it reflects reality. Everything else — including blocked, failed
+// or transient statuses — stays visible (fail closed): a maintenance or
+// error state must never make the GC believe a live node's instance is
+// gone. Servers that never hosted a node (e.g. `delivering`) are harmless
+// here: the core GC only removes NodeClaims absent from this list, it never
+// acts on unmatched instances.
 func (c *CloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
 	nodeClassList := &v1alpha1.ScalewayEMNodeClassList{}
 	if err := c.kubeClient.List(ctx, nodeClassList); err != nil {
@@ -172,7 +226,7 @@ func (c *CloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
 		}
 		it, itErr := c.buildInstanceType(ctx, nodeClass, servers)
 		for _, server := range servers {
-			if !server.Status.PoweredOn() {
+			if server.Status.Class() == pool.ClassStartable {
 				continue
 			}
 			providerID := pool.FormatProviderID(nodeClass.Spec.Zone, server.ID)
@@ -246,7 +300,7 @@ func (c *CloudProvider) claimStoppedServer(ctx context.Context, nodeClass *v1alp
 	defer c.mu.Unlock()
 	now := time.Now()
 	for _, server := range servers {
-		if server.Status != pool.StatusStopped {
+		if server.Status.Class() != pool.ClassStartable {
 			delete(c.claimed, server.ID)
 			continue
 		}

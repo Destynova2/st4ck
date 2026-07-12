@@ -10,23 +10,69 @@ import (
 )
 
 // Status is the operational status of an Elastic Metal server, mirroring
-// baremetal.ServerStatus. The operational "running" state is `ready`.
+// the 13 baremetal.ServerStatus values. The operational "running" state is
+// `ready`.
 type Status string
 
 const (
-	StatusReady    Status = "ready"
-	StatusStarting Status = "starting"
-	StatusStopping Status = "stopping"
-	StatusStopped  Status = "stopped"
-	StatusError    Status = "error"
-	StatusUnknown  Status = "unknown"
+	StatusUnknown    Status = "unknown"
+	StatusDelivering Status = "delivering"
+	StatusReady      Status = "ready"
+	StatusStopping   Status = "stopping"
+	StatusStopped    Status = "stopped"
+	StatusStarting   Status = "starting"
+	StatusError      Status = "error"
+	StatusDeleting   Status = "deleting"
+	StatusLocked     Status = "locked"
+	StatusOutOfStock Status = "out_of_stock"
+	StatusOrdered    Status = "ordered"
+	StatusResetting  Status = "resetting"
+	StatusMigrating  Status = "migrating"
 )
 
-// PoweredOn reports whether the server counts as a live pool member from
-// Karpenter's perspective: List() only returns powered-on servers so that an
-// out-of-band power-off makes the NodeClaim disappear and get GC'd.
-func (s Status) PoweredOn() bool {
-	return s == StatusReady || s == StatusStarting
+// Class buckets server statuses by how the provider must react to them.
+// Anything the provider does not explicitly know is ClassFailed: fail
+// closed — a weird status must never be mistaken for "the instance is
+// gone" (NodeClaimNotFound) nor for startable capacity.
+type Class string
+
+const (
+	// ClassStartable — `stopped`: the only status Create() may power on,
+	// and the only status that makes a server invisible to Get/List
+	// (deliberate power-off = the instance is gone from Karpenter's view).
+	ClassStartable Class = "startable"
+	// ClassLive — `ready`, `starting`: a (future) node backing a NodeClaim.
+	ClassLive Class = "live"
+	// ClassTerminating — `stopping`: power-off in progress. Delete returns
+	// nil so karpenter-core keeps retrying until `stopped`.
+	ClassTerminating Class = "terminating"
+	// ClassTransient — `delivering`, `ordered`, `resetting`, `migrating`,
+	// `deleting`: provider-side operation in progress; wait it out.
+	ClassTransient Class = "transient"
+	// ClassBlocked — `locked`, `out_of_stock`: the server exists but is not
+	// actionable; requires operator intervention. Never NotFound.
+	ClassBlocked Class = "blocked"
+	// ClassFailed — `error`, `unknown` and any status introduced by the SDK
+	// after this code was written. Never NotFound.
+	ClassFailed Class = "failed"
+)
+
+// Class maps a status to its behavior class (fail closed by default).
+func (s Status) Class() Class {
+	switch s {
+	case StatusStopped:
+		return ClassStartable
+	case StatusReady, StatusStarting:
+		return ClassLive
+	case StatusStopping:
+		return ClassTerminating
+	case StatusDelivering, StatusOrdered, StatusResetting, StatusMigrating, StatusDeleting:
+		return ClassTransient
+	case StatusLocked, StatusOutOfStock:
+		return ClassBlocked
+	default:
+		return ClassFailed
+	}
 }
 
 // Server is the subset of the Elastic Metal server the provider needs.
