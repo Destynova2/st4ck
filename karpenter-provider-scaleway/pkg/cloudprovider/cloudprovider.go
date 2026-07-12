@@ -104,12 +104,28 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		return nil, fmt.Errorf("resolving instance type for node class %q, %w", nodeClass.Name, err)
 	}
 
-	claimed, err := c.claimStoppedServer(ctx, nodeClass, nodeClaim)
-	if err != nil {
-		return nil, err
-	}
-	server := claimed.server
-	if err := c.startClaimedServer(ctx, nodeClass, claimed); err != nil {
+	// One rejected server must not starve another startable candidate
+	// (re-review Major): a definitive per-server power-on rejection
+	// (ErrNotStartable) quarantines that server for this call and the loop
+	// progresses to the next candidate. When none remains,
+	// claimStoppedServer returns the clean InsufficientCapacityError.
+	// Bounded: each iteration excludes one more server.
+	var server pool.Server
+	excluded := map[string]struct{}{}
+	for {
+		claimed, err := c.claimStoppedServer(ctx, nodeClass, nodeClaim, excluded)
+		if err != nil {
+			return nil, err
+		}
+		server = claimed.server
+		err = c.startClaimedServer(ctx, nodeClass, claimed)
+		if err == nil {
+			break
+		}
+		if stderrors.Is(err, pool.ErrNotStartable) {
+			excluded[server.ID] = struct{}{}
+			continue
+		}
 		return nil, err
 	}
 	// Flip Offering.Available on the next scheduling loop if this was the
@@ -120,14 +136,16 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 }
 
 // startClaimedServer powers on a claimed server and disambiguates
-// StartServer failures (Codex Major #5): an error does NOT mean the start
-// did not happen. The server is re-read; if it left `stopped` the start took
-// effect and Create succeeds. If it is definitively still stopped, the claim
-// is released and the failure is classified: no other startable candidate →
-// InsufficientCapacityError (clean pool-exhausted signal), otherwise a
-// retryable error. If the re-read itself fails, the claim is kept as
-// started (fail closed against a double power-on) and the core retries
-// Create, which resumes the claim.
+// StartServer failures (Codex Major #5, narrowed by the re-review): an
+// error does NOT mean the start did not happen. The server is re-read; if
+// it left `stopped` the start took effect and Create succeeds. If it is
+// definitively still stopped, the claim is released and the error is
+// classified: a per-server rejection (pool.ErrNotStartable — wrong state,
+// locked, out of stock) propagates as-is so the caller can progress to the
+// next candidate; anything else (auth, API, config) is a plain retryable
+// error that must never become a capacity signal. If the re-read itself
+// fails, the claim is kept as started (fail closed against a double
+// power-on) and the core retries Create, which resumes the claim.
 func (c *CloudProvider) startClaimedServer(ctx context.Context, nodeClass *v1alpha1.ScalewayEMNodeClass, claimed claimedServer) error {
 	server := claimed.server
 	if claimed.started {
@@ -158,24 +176,17 @@ func (c *CloudProvider) startClaimedServer(ctx context.Context, nodeClass *v1alp
 		c.markClaimStarted(server.ID)
 		return nil
 	}
-	// Definitive rejection (conflict, lock race, …): release the claim and
-	// classify against the remaining pool state.
+	// Definitively still stopped: the start was refused. Release the claim
+	// and classify the cause.
 	c.unclaim(server.ID)
-	remaining, lerr := c.backend.ListServers(ctx, nodeClass.Spec.Zone, nodeClass.Spec.PoolTag)
-	if lerr != nil {
-		return fmt.Errorf("starting server %q, %w", server.ID, startErr)
+	if stderrors.Is(startErr, pool.ErrNotStartable) {
+		// Per-server rejection: the caller quarantines this server and
+		// tries the next candidate; ICE only comes from claimStoppedServer
+		// once no startable candidate remains.
+		return fmt.Errorf("server %q rejected power-on, %w", server.ID, startErr)
 	}
-	others := 0
-	for _, s := range remaining {
-		if s.ID != server.ID && s.Status.Class() == pool.ClassStartable {
-			others++
-		}
-	}
-	if others == 0 {
-		return cloudprovider.NewInsufficientCapacityError(
-			fmt.Errorf("server %q refused to start and no other stopped server remains in pool %q, %w", server.ID, nodeClass.Spec.PoolTag, startErr))
-	}
-	return fmt.Errorf("starting server %q (another stopped server remains, retry will pick it), %w", server.ID, startErr)
+	// Unknown cause (auth/API/config): retryable, never a capacity outcome.
+	return fmt.Errorf("starting server %q, %w", server.ID, startErr)
 }
 
 // Delete powers off the server behind the NodeClaim, respecting the
@@ -393,14 +404,16 @@ type claimedServer struct {
 //  1. resume — a claim already owned by this NodeClaim (UID) is returned
 //     as-is, whatever the server status: a retried Create must converge on
 //     the same server (and the same providerID), never consume a second one;
-//  2. otherwise the lowest-ID stopped server without an active claim.
+//  2. otherwise the lowest-ID stopped server without an active claim, and
+//     not excluded by the caller (servers that rejected power-on earlier in
+//     the same Create call).
 //
 // A claim is active while its StartServer succeeded (started, no wall-clock
 // expiry — Codex Critical #1) or, for never-started claims, within
 // pendingClaimTTL. Claims are released when the server is observed
 // non-stopped or gone from the pool listing. The residual race on the last
 // server surfaces as an InsufficientCapacityError (LLD C2).
-func (c *CloudProvider) claimStoppedServer(ctx context.Context, nodeClass *v1alpha1.ScalewayEMNodeClass, nodeClaim *karpv1.NodeClaim) (claimedServer, error) {
+func (c *CloudProvider) claimStoppedServer(ctx context.Context, nodeClass *v1alpha1.ScalewayEMNodeClass, nodeClaim *karpv1.NodeClaim, excluded map[string]struct{}) (claimedServer, error) {
 	// Fresh list on purpose: the inventory cache could hand the same
 	// stopped server to two consecutive Create calls.
 	servers, err := c.backend.ListServers(ctx, nodeClass.Spec.Zone, nodeClass.Spec.PoolTag)
@@ -438,6 +451,9 @@ func (c *CloudProvider) claimStoppedServer(ctx context.Context, nodeClass *v1alp
 		if server.Status.Class() != pool.ClassStartable {
 			// Transition observed: the claim fulfilled its purpose.
 			delete(c.claims, server.ID)
+			continue
+		}
+		if _, ok := excluded[server.ID]; ok {
 			continue
 		}
 		if cl, ok := c.claims[server.ID]; ok {

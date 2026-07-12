@@ -36,6 +36,11 @@ type FakeBackend struct {
 	StopErr  error
 	OfferErr error
 
+	// StartErrFor injects per-server StartServer errors (takes precedence
+	// over StartErr), e.g. to simulate one pool member rejecting power-on
+	// while another accepts.
+	StartErrFor map[string]error
+
 	ListCalls  int
 	StartCalls int
 	StopCalls  int
@@ -136,7 +141,9 @@ func (f *FakeBackend) StartServer(_ context.Context, zone, serverID string) erro
 		return fmt.Errorf("server %s/%s: %w", zone, serverID, ErrServerNotFound)
 	}
 	if s.Status != StatusStopped {
-		return fmt.Errorf("server %s is %s, cannot start", serverID, s.Status)
+		// State conflict = definitive per-server rejection, like the real
+		// backend classifies it.
+		return fmt.Errorf("server %s is %s, cannot start: %w", serverID, s.Status, ErrNotStartable)
 	}
 	transition := func() {
 		if f.Transitional {
@@ -148,6 +155,9 @@ func (f *FakeBackend) StartServer(_ context.Context, zone, serverID string) erro
 	if f.StartErrButStarts {
 		transition()
 		return f.StartErr
+	}
+	if err, ok := f.StartErrFor[serverID]; ok {
+		return err
 	}
 	if f.StartErr != nil {
 		return f.StartErr

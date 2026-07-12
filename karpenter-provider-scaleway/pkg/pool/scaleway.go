@@ -98,9 +98,26 @@ func (b *ScalewayBackend) StartServer(ctx context.Context, zone, serverID string
 		BootType: baremetal.ServerBootTypeNormal,
 	}, scw.WithContext(ctx))
 	if err != nil {
+		if isNotStartable(err) {
+			return fmt.Errorf("starting server %s/%s: %w: %w", zone, serverID, ErrNotStartable, err)
+		}
 		return fmt.Errorf("starting server %s/%s: %w", zone, serverID, err)
 	}
 	return nil
+}
+
+// isNotStartable classifies SDK errors that mean "this server refuses to
+// power on" (per-server conflict), as opposed to auth/API/config failures
+// which must stay retryable and never become a capacity signal.
+func isNotStartable(err error) bool {
+	var precondition *scw.PreconditionFailedError
+	var locked *scw.ResourceLockedError
+	var outOfStock *scw.OutOfStockError
+	var transient *scw.TransientStateError
+	return errors.As(err, &precondition) ||
+		errors.As(err, &locked) ||
+		errors.As(err, &outOfStock) ||
+		errors.As(err, &transient)
 }
 
 func (b *ScalewayBackend) StopServer(ctx context.Context, zone, serverID string) error {

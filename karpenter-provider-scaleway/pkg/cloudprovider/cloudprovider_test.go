@@ -3,6 +3,7 @@ package cloudprovider
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -161,10 +162,10 @@ func TestCreateLastServerRaceReturnsICE(t *testing.T) {
 	provider := newTestProvider(t, backend, testNodeClass(true))
 
 	nodeClass := testNodeClass(true)
-	if _, err := provider.claimStoppedServer(context.Background(), nodeClass, namedNodeClaim("claim-a")); err != nil {
+	if _, err := provider.claimStoppedServer(context.Background(), nodeClass, namedNodeClaim("claim-a"), nil); err != nil {
 		t.Fatalf("first claim returned error: %v", err)
 	}
-	_, err := provider.claimStoppedServer(context.Background(), nodeClass, namedNodeClaim("claim-b"))
+	_, err := provider.claimStoppedServer(context.Background(), nodeClass, namedNodeClaim("claim-b"), nil)
 	if !cloudprovider.IsInsufficientCapacityError(err) {
 		t.Fatalf("second claim = %v, want InsufficientCapacityError", err)
 	}
@@ -370,11 +371,11 @@ func TestCreateAmbiguousStartErrorSucceedsWhenStartTookEffect(t *testing.T) {
 	}
 }
 
-func TestCreateStartRejectedLastServerReturnsICE(t *testing.T) {
-	// Post-claim start rejection with no other startable candidate must be
-	// a clean capacity signal (Codex Major #5), not a generic launch error.
+func TestCreateNotStartableLastServerReturnsICE(t *testing.T) {
+	// A per-server power-on rejection (ErrNotStartable) with no other
+	// startable candidate is genuine capacity exhaustion → clean ICE.
 	backend := newTestBackend()
-	backend.StartErr = errors.New("409 conflict: cannot start")
+	backend.StartErr = fmt.Errorf("412 precondition failed: %w", pool.ErrNotStartable)
 	backend.AddServer(testServer("aaa", pool.StatusStopped))
 	provider := newTestProvider(t, backend, testNodeClass(true))
 
@@ -382,13 +383,42 @@ func TestCreateStartRejectedLastServerReturnsICE(t *testing.T) {
 	if !cloudprovider.IsInsufficientCapacityError(err) {
 		t.Fatalf("Create = %v, want InsufficientCapacityError", err)
 	}
+	if backend.StartCalls != 1 {
+		t.Fatalf("StartServer called %d times, want 1", backend.StartCalls)
+	}
 }
 
-func TestCreateStartRejectedWithOtherCandidateIsRetryable(t *testing.T) {
+func TestCreateProgressesPastRejectedServer(t *testing.T) {
+	// Re-review Major proof: one rejected server must not starve another
+	// startable candidate — the SAME Create call quarantines the rejected
+	// server and succeeds on the next one.
 	backend := newTestBackend()
-	backend.StartErr = errors.New("409 conflict: cannot start")
+	backend.StartErrFor = map[string]error{
+		"aaa": fmt.Errorf("423 locked: %w", pool.ErrNotStartable),
+	}
 	backend.AddServer(testServer("aaa", pool.StatusStopped))
 	backend.AddServer(testServer("bbb", pool.StatusStopped))
+	provider := newTestProvider(t, backend, testNodeClass(true))
+
+	created, err := provider.Create(context.Background(), namedNodeClaim("claim-a"))
+	if err != nil {
+		t.Fatalf("Create = %v, want success on the next candidate", err)
+	}
+	if created.Status.ProviderID != pool.FormatProviderID(testZone, "bbb") {
+		t.Fatalf("ProviderID = %q, want the non-rejected server bbb", created.Status.ProviderID)
+	}
+	if backend.StartCalls != 2 {
+		t.Fatalf("StartServer called %d times, want 2 (aaa rejected, bbb started)", backend.StartCalls)
+	}
+}
+
+func TestCreateUnknownStartErrorIsNeverICE(t *testing.T) {
+	// A non-capacity StartServer failure (auth, API, config) must stay a
+	// retryable error even when the pool has no other candidate: reporting
+	// it as ICE would delete NodeClaims with misleading capacity events.
+	backend := newTestBackend()
+	backend.StartErr = errors.New("403 permission denied")
+	backend.AddServer(testServer("aaa", pool.StatusStopped))
 	provider := newTestProvider(t, backend, testNodeClass(true))
 
 	_, err := provider.Create(context.Background(), namedNodeClaim("claim-a"))
@@ -396,7 +426,7 @@ func TestCreateStartRejectedWithOtherCandidateIsRetryable(t *testing.T) {
 		t.Fatalf("Create should have failed")
 	}
 	if cloudprovider.IsInsufficientCapacityError(err) {
-		t.Fatalf("Create = ICE, want a plain retryable error (another stopped server remains)")
+		t.Fatalf("Create = ICE, want a plain retryable error (cause is not capacity)")
 	}
 }
 

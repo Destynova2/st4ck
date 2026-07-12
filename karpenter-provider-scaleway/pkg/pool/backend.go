@@ -97,6 +97,15 @@ type Offer struct {
 var (
 	ErrServerNotFound = errors.New("server not found")
 	ErrOfferNotFound  = errors.New("offer not found")
+
+	// ErrNotStartable marks a StartServer failure that is a definitive
+	// per-server power-on rejection (wrong state, locked, out of stock…):
+	// that server is not startable capacity right now, but another pool
+	// member may be. Callers use it to progress to the next candidate and,
+	// once no candidate remains, to report a clean insufficient-capacity
+	// signal. Auth/API/config failures are deliberately NOT in this class:
+	// they must surface as retryable errors, never as a capacity outcome.
+	ErrNotStartable = errors.New("server not startable")
 )
 
 // Backend abstracts the Scaleway Elastic Metal API calls used by the
