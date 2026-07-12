@@ -120,6 +120,7 @@ resource "terraform_data" "seed_openbao_secrets" {
   # detect via the `bao kv get` idempotency guards below, not a hash diff).
   input = sha256(join(",", [
     random_password.hydra_system_secret.result,
+    random_password.oidc_client_secret.result,
     random_password.garage_admin_token.result,
   ]))
 
@@ -191,8 +192,16 @@ resource "terraform_data" "seed_openbao_secrets" {
       }
 
       echo "Seeding identity secrets..."
-      seed_if_absent secret/identity/hydra \
-        system_secret="$HYDRA_SYSTEM_SECRET"
+      if $BAO bao kv get secret/identity/hydra >/dev/null 2>&1; then
+        echo "  secret/identity/hydra: patching managed fields"
+        $BAO bao kv patch secret/identity/hydra \
+          system_secret="$HYDRA_SYSTEM_SECRET" \
+          client_secret="$OIDC_CLIENT_SECRET"
+      else
+        seed_if_absent secret/identity/hydra \
+          system_secret="$HYDRA_SYSTEM_SECRET" \
+          client_secret="$OIDC_CLIENT_SECRET"
+      fi
 
       seed_if_absent secret/identity/pomerium \
         shared_secret="$POMERIUM_SHARED_SECRET" \
@@ -324,11 +333,6 @@ output "pomerium_cookie_secret" {
 
 output "pomerium_client_secret" {
   value     = random_password.pomerium_client_secret.result
-  sensitive = true
-}
-
-output "oidc_client_secret" {
-  value     = random_password.oidc_client_secret.result
   sensitive = true
 }
 

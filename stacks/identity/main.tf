@@ -34,7 +34,6 @@ locals {
     pomerium_shared_secret = data.terraform_remote_state.pki.outputs.pomerium_shared_secret
     pomerium_cookie_secret = data.terraform_remote_state.pki.outputs.pomerium_cookie_secret
     pomerium_client_secret = data.terraform_remote_state.pki.outputs.pomerium_client_secret
-    oidc_client_secret     = data.terraform_remote_state.pki.outputs.oidc_client_secret
   }
 }
 
@@ -243,8 +242,9 @@ resource "kubectl_manifest" "hydra_tls_cert" {
 #
 # Solution: registration is now a post-Flux step. The script lives at
 # `scripts/register-hydra-oidc-client.sh` and is wired through the
-# `make oidc-register` target. The OIDC client secret is exposed as the
-# `oidc_client_secret` output (see outputs.tf). A future Phase F-bis-3
+# `make oidc-register` target. The OIDC client secret stays in OpenBao
+# (`secret/identity/hydra.client_secret`) and is mounted from the ESO-backed
+# `hydra-secrets` Kubernetes Secret as a file. A future Phase F-bis-3
 # will replace this with Hydra Maester (OAuth2Client CRD).
 
 # Pomerium → Flux owner (ADR-028 wave 2). The 3 secrets (client/shared/

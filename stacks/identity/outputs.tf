@@ -14,9 +14,3 @@ output "pomerium_version" {
   description = "Pinned Pomerium chart version (applied by Flux)"
   value       = var.pomerium_version
 }
-
-output "oidc_client_secret" {
-  description = "OIDC client secret for kubernetes client (for kubelogin)"
-  value       = local.secrets["oidc_client_secret"]
-  sensitive   = true
-}

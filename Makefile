@@ -306,11 +306,7 @@ oidc-register: ## Register Kubernetes OIDC client in Hydra (post-Flux step)
 	@KUBECONFIG=$(KC_FILE) kubectl -n identity wait --for=condition=Ready pod \
 		-l app.kubernetes.io/name=hydra,app.kubernetes.io/component=admin \
 		--timeout=300s
-	@OIDC_CLIENT_SECRET=$$(TF_HTTP_USERNAME='$(TF_HTTP_USERNAME)' TF_HTTP_PASSWORD='$(TF_HTTP_PASSWORD)' \
-		$(TF) -chdir=$(TF_IDENTITY) output -raw oidc_client_secret 2>/dev/null) ; \
-	test -n "$$OIDC_CLIENT_SECRET" || { echo "ERROR: oidc_client_secret not in identity tofu output — run k8s-identity-apply first"; exit 1; } ; \
-	KUBECONFIG=$(KC_FILE) OIDC_CLIENT_SECRET="$$OIDC_CLIENT_SECRET" \
-		bash scripts/register-hydra-oidc-client.sh
+	@KUBECONFIG=$(KC_FILE) bash scripts/register-hydra-oidc-client.sh
 
 # ─── KaaS stacks — Kamaji + CAPI + autoscaling + gateway (management cluster) ──
 
