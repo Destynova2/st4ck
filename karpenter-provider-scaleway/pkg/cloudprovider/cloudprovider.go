@@ -104,11 +104,12 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		return nil, fmt.Errorf("resolving instance type for node class %q, %w", nodeClass.Name, err)
 	}
 
-	server, err := c.claimStoppedServer(ctx, nodeClass, nodeClaim)
+	claimed, err := c.claimStoppedServer(ctx, nodeClass, nodeClaim)
 	if err != nil {
 		return nil, err
 	}
-	if err := c.startClaimedServer(ctx, nodeClass, server); err != nil {
+	server := claimed.server
+	if err := c.startClaimedServer(ctx, nodeClass, claimed); err != nil {
 		return nil, err
 	}
 	// Flip Offering.Available on the next scheduling loop if this was the
@@ -127,10 +128,19 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 // retryable error. If the re-read itself fails, the claim is kept as
 // started (fail closed against a double power-on) and the core retries
 // Create, which resumes the claim.
-func (c *CloudProvider) startClaimedServer(ctx context.Context, nodeClass *v1alpha1.ScalewayEMNodeClass, server pool.Server) error {
+func (c *CloudProvider) startClaimedServer(ctx context.Context, nodeClass *v1alpha1.ScalewayEMNodeClass, claimed claimedServer) error {
+	server := claimed.server
+	if claimed.started {
+		// Resumed claim whose StartServer already succeeded (or whose
+		// outcome was ambiguous): never issue a second power-on, even if
+		// Scaleway still reports the server as stopped — a stale read must
+		// not undo the "claim kept" safety (re-review Major).
+		return nil
+	}
 	if server.Status.Class() != pool.ClassStartable {
-		// Resumed claim: a previous Create for this NodeClaim already
-		// started the server (it is starting/ready). Nothing to do.
+		// The server left `stopped` without us starting it (e.g. a pending
+		// claim raced an out-of-band power-on): treat as started.
+		c.markClaimStarted(server.ID)
 		return nil
 	}
 	startErr := c.backend.StartServer(ctx, nodeClass.Spec.Zone, server.ID)
@@ -370,6 +380,15 @@ func (c *CloudProvider) GetSupportedNodeClasses() []status.Object {
 	return []status.Object{&v1alpha1.ScalewayEMNodeClass{}}
 }
 
+// claimedServer is a pool server bound to a NodeClaim by the claim guard,
+// together with the claim's started state — startClaimedServer must know
+// whether a resumed claim already issued its power-on, because a stale
+// `stopped` server snapshot cannot tell.
+type claimedServer struct {
+	server  pool.Server
+	started bool
+}
+
 // claimStoppedServer picks a server for the NodeClaim, in this order:
 //  1. resume — a claim already owned by this NodeClaim (UID) is returned
 //     as-is, whatever the server status: a retried Create must converge on
@@ -381,12 +400,12 @@ func (c *CloudProvider) GetSupportedNodeClasses() []status.Object {
 // pendingClaimTTL. Claims are released when the server is observed
 // non-stopped or gone from the pool listing. The residual race on the last
 // server surfaces as an InsufficientCapacityError (LLD C2).
-func (c *CloudProvider) claimStoppedServer(ctx context.Context, nodeClass *v1alpha1.ScalewayEMNodeClass, nodeClaim *karpv1.NodeClaim) (pool.Server, error) {
+func (c *CloudProvider) claimStoppedServer(ctx context.Context, nodeClass *v1alpha1.ScalewayEMNodeClass, nodeClaim *karpv1.NodeClaim) (claimedServer, error) {
 	// Fresh list on purpose: the inventory cache could hand the same
 	// stopped server to two consecutive Create calls.
 	servers, err := c.backend.ListServers(ctx, nodeClass.Spec.Zone, nodeClass.Spec.PoolTag)
 	if err != nil {
-		return pool.Server{}, fmt.Errorf("listing pool servers, %w", err)
+		return claimedServer{}, fmt.Errorf("listing pool servers, %w", err)
 	}
 	sort.Slice(servers, func(i, j int) bool { return servers[i].ID < servers[j].ID })
 
@@ -399,7 +418,7 @@ func (c *CloudProvider) claimStoppedServer(ctx context.Context, nodeClass *v1alp
 		if cl, ok := c.claims[server.ID]; ok && cl.owner == nodeClaim.UID {
 			cl.at = now
 			c.claims[server.ID] = cl
-			return server, nil
+			return claimedServer{server: server, started: cl.started}, nil
 		}
 	}
 
@@ -429,9 +448,9 @@ func (c *CloudProvider) claimStoppedServer(ctx context.Context, nodeClass *v1alp
 			// whose TTL expired: reclaimable.
 		}
 		c.claims[server.ID] = serverClaim{owner: nodeClaim.UID, ownerName: nodeClaim.Name, at: now}
-		return server, nil
+		return claimedServer{server: server}, nil
 	}
-	return pool.Server{}, cloudprovider.NewInsufficientCapacityError(
+	return claimedServer{}, cloudprovider.NewInsufficientCapacityError(
 		fmt.Errorf("no stopped server left in pool %q (zone %s)", nodeClass.Spec.PoolTag, nodeClass.Spec.Zone))
 }
 

@@ -292,7 +292,10 @@ func TestStartedClaimBlocksWhileOwnerAlive(t *testing.T) {
 
 func TestCreateResumesOwnClaim(t *testing.T) {
 	// A retried Create for the SAME NodeClaim must converge on the same
-	// server and providerID instead of consuming a second pool member.
+	// server and providerID instead of consuming a second pool member, and
+	// must NOT issue a second StartServer while Scaleway still reports the
+	// server as stopped (re-review Major: a stale read must not undo the
+	// started-claim safety).
 	backend := newTestBackend()
 	backend.StartKeepsStopped = true
 	backend.AddServer(testServer("aaa", pool.StatusStopped))
@@ -309,6 +312,42 @@ func TestCreateResumesOwnClaim(t *testing.T) {
 	}
 	if first.Status.ProviderID != second.Status.ProviderID {
 		t.Fatalf("retried Create switched server: %q then %q", first.Status.ProviderID, second.Status.ProviderID)
+	}
+	if backend.StartCalls != 1 {
+		t.Fatalf("StartServer called %d times, want 1 (resume must not re-start a started claim)", backend.StartCalls)
+	}
+}
+
+func TestCreateRetryAfterAmbiguousErrorDoesNotRestart(t *testing.T) {
+	// First Create hits an ambiguous StartServer failure (start error AND
+	// the disambiguating re-read fails): the claim is kept as started. The
+	// retry of the same NodeClaim must succeed WITHOUT a second StartServer,
+	// even though Scaleway still reports the server as stopped.
+	backend := newTestBackend()
+	backend.AddServer(testServer("aaa", pool.StatusStopped))
+	backend.StartErr = errors.New("gateway timeout")
+	backend.GetErr = errors.New("gateway timeout")
+	provider := newTestProvider(t, backend, testNodeClass(true))
+
+	claimA := namedNodeClaim("claim-a")
+	if _, err := provider.Create(context.Background(), claimA); err == nil {
+		t.Fatalf("first Create should have failed ambiguously")
+	}
+	if backend.StartCalls != 1 {
+		t.Fatalf("StartServer called %d times, want 1", backend.StartCalls)
+	}
+
+	backend.StartErr = nil
+	backend.GetErr = nil
+	created, err := provider.Create(context.Background(), claimA)
+	if err != nil {
+		t.Fatalf("retried Create = %v, want success resuming the started claim", err)
+	}
+	if created.Status.ProviderID != pool.FormatProviderID(testZone, "aaa") {
+		t.Fatalf("ProviderID = %q, want the claimed server", created.Status.ProviderID)
+	}
+	if backend.StartCalls != 1 {
+		t.Fatalf("StartServer called %d times after retry, want still 1", backend.StartCalls)
 	}
 }
 
