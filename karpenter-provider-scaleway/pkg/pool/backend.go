@@ -104,7 +104,9 @@ var (
 // (in-memory, tests only).
 type Backend interface {
 	// ListServers returns every server in the zone carrying the given tag,
-	// whatever its status.
+	// whatever its status. On success the returned slice is never nil —
+	// an empty pool yields an empty slice (contract shared by every
+	// implementation, audit F1).
 	ListServers(ctx context.Context, zone, tag string) ([]Server, error)
 	// GetServer returns a single server or ErrServerNotFound.
 	GetServer(ctx context.Context, zone, serverID string) (Server, error)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -26,7 +27,7 @@ func main() {
 	backend, err := pool.NewScalewayBackend()
 	if err != nil {
 		log.FromContext(ctx).Error(err, "failed creating scaleway backend")
-		panic(err)
+		os.Exit(1)
 	}
 	inventory := pool.NewInventory(backend, inventoryTTL)
 

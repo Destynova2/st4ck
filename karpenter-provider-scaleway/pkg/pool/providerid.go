@@ -16,13 +16,15 @@ func FormatProviderID(zone, serverID string) string {
 }
 
 // ParseProviderID splits a canonical provider ID into zone and server ID.
+// Strict: exactly one separating slash — extra path segments are rejected
+// instead of being folded into the server ID (Codex Minor).
 func ParseProviderID(providerID string) (zone, serverID string, err error) {
 	rest, ok := strings.CutPrefix(providerID, ProviderIDPrefix)
 	if !ok {
 		return "", "", fmt.Errorf("provider ID %q does not start with %q", providerID, ProviderIDPrefix)
 	}
 	zone, serverID, ok = strings.Cut(rest, "/")
-	if !ok || zone == "" || serverID == "" {
+	if !ok || zone == "" || serverID == "" || strings.Contains(serverID, "/") {
 		return "", "", fmt.Errorf("provider ID %q is not of the form %s<zone>/<server-id>", providerID, ProviderIDPrefix)
 	}
 	return zone, serverID, nil

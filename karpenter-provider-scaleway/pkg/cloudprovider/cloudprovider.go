@@ -99,7 +99,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *karpv1.NodeClaim)
 		return nil, cloudprovider.NewNodeClassNotReadyError(stderrors.New(ready.Message))
 	}
 
-	instanceType, err := c.buildInstanceType(ctx, nodeClass, nil)
+	instanceType, err := c.buildInstanceType(ctx, nodeClass, nil, false)
 	if err != nil {
 		return nil, fmt.Errorf("resolving instance type for node class %q, %w", nodeClass.Name, err)
 	}
@@ -297,7 +297,7 @@ func (c *CloudProvider) List(ctx context.Context) ([]*karpv1.NodeClaim, error) {
 		if err != nil {
 			return nil, fmt.Errorf("listing pool servers for node class %q, %w", nodeClass.Name, err)
 		}
-		it, itErr := c.buildInstanceType(ctx, nodeClass, servers)
+		it, itErr := c.buildInstanceType(ctx, nodeClass, servers, true)
 		for _, server := range servers {
 			if server.Status.Class() == pool.ClassStartable {
 				continue
@@ -332,7 +332,7 @@ func (c *CloudProvider) GetInstanceTypes(ctx context.Context, nodePool *karpv1.N
 	if err != nil {
 		return nil, fmt.Errorf("snapshotting pool for node class %q, %w", nodeClass.Name, err)
 	}
-	it, err := c.buildInstanceType(ctx, nodeClass, servers)
+	it, err := c.buildInstanceType(ctx, nodeClass, servers, true)
 	if err != nil {
 		return nil, fmt.Errorf("resolving instance type for node class %q, %w", nodeClass.Name, err)
 	}
@@ -437,16 +437,21 @@ func (c *CloudProvider) unclaim(serverID string) {
 	c.mu.Unlock()
 }
 
-// invalidateInventoryFor drops the cached snapshot of every pool the server
-// belongs to, so availability counts recover promptly after a power-off.
+// invalidateInventoryFor drops the cached snapshot of every declared pool
+// the server belongs to (zone and tag match), so availability counts
+// recover promptly after a power-off. Pools of the same zone the server is
+// not tagged into keep their cache (audit F2 / XRAY-004).
 func (c *CloudProvider) invalidateInventoryFor(ctx context.Context, zone string, server pool.Server) {
 	nodeClassList := &v1alpha1.ScalewayEMNodeClassList{}
 	if err := c.kubeClient.List(ctx, nodeClassList); err != nil {
+		// Non-fatal: stale availability self-heals at TTL expiry, but leave
+		// a trace instead of swallowing the failure (audit F2).
+		log.FromContext(ctx).V(1).Info("failed listing node classes for inventory invalidation", "error", err)
 		return
 	}
 	for i := range nodeClassList.Items {
 		nc := &nodeClassList.Items[i]
-		if nc.Spec.Zone == zone {
+		if nc.Spec.Zone == zone && slices.Contains(server.Tags, nc.Spec.PoolTag) {
 			c.inventory.Invalidate(nc.Spec.Zone, nc.Spec.PoolTag)
 		}
 	}

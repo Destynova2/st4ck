@@ -93,7 +93,10 @@ func (f *FakeBackend) ListServers(_ context.Context, zone, tag string) ([]Server
 	if f.ListErr != nil {
 		return nil, f.ListErr
 	}
-	var out []Server
+	// Empty pool → empty non-nil slice, like the real backend (audit F1):
+	// both Backend implementations honor the "never nil on success"
+	// contract documented on Backend.ListServers.
+	out := make([]Server, 0, len(f.servers))
 	for _, s := range f.servers {
 		if s.Zone == zone && slices.Contains(s.Tags, tag) {
 			out = append(out, *s)

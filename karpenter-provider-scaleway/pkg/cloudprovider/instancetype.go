@@ -20,16 +20,20 @@ import (
 const defaultPodsPerNode = 110
 
 // buildInstanceType derives the single static instance type of a pool from
-// its offer. When servers is nil the offering availability is not computed
-// from the pool state and defaults to available (Create() path, where the
-// stopped-server pick happens right after against fresh data).
-func (c *CloudProvider) buildInstanceType(ctx context.Context, nodeClass *v1alpha1.ScalewayEMNodeClass, servers []pool.Server) (*cloudprovider.InstanceType, error) {
+// its offer. computeAvailability selects whether Offering.Available is
+// derived from the servers snapshot (scheduling paths) or defaults to true
+// (Create() path, where the stopped-server pick happens right after against
+// fresh data, and hydration paths where availability is irrelevant). An
+// explicit flag rather than a nil-slice sentinel: the real backend returns
+// an empty non-nil slice on an empty pool, and both cases must yield
+// Available=false (audit F1).
+func (c *CloudProvider) buildInstanceType(ctx context.Context, nodeClass *v1alpha1.ScalewayEMNodeClass, servers []pool.Server, computeAvailability bool) (*cloudprovider.InstanceType, error) {
 	offer, err := c.backend.GetOfferByName(ctx, nodeClass.Spec.Zone, nodeClass.Spec.OfferName)
 	if err != nil {
 		return nil, fmt.Errorf("resolving offer %q in %s, %w", nodeClass.Spec.OfferName, nodeClass.Spec.Zone, err)
 	}
 	available := true
-	if servers != nil {
+	if computeAvailability {
 		available = pool.CountByStatus(servers, pool.StatusStopped) > 0
 	}
 	return newInstanceType(offer, nodeClass.Spec.Zone, available), nil
@@ -45,6 +49,11 @@ func newInstanceType(offer pool.Offer, zone string, available bool) *cloudprovid
 		Name: offer.Name,
 		Requirements: scheduling.NewRequirements(
 			scheduling.NewRequirement(corev1.LabelInstanceTypeStable, corev1.NodeSelectorOpIn, offer.Name),
+			// M0 assumption (audit F7): the pool is pre-imaged with Talos
+			// metal-amd64, so every declarable offer is x86-64. Scaleway
+			// does list non-x86 EM offers (e.g. EM-RV1 RISC-V) — declaring
+			// one would advertise a wrong arch to the scheduler. M1: derive
+			// from Offer.CPUs or reject in the nodeclass controller.
 			scheduling.NewRequirement(corev1.LabelArchStable, corev1.NodeSelectorOpIn, karpv1.ArchitectureAmd64),
 			scheduling.NewRequirement(corev1.LabelOSStable, corev1.NodeSelectorOpIn, string(corev1.Linux)),
 			scheduling.NewRequirement(corev1.LabelTopologyZone, corev1.NodeSelectorOpIn, zone),

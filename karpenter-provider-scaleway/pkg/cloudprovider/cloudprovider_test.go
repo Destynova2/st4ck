@@ -664,19 +664,106 @@ func TestListReflectsOutOfBandPowerOff(t *testing.T) {
 }
 
 func testNodePool() *karpv1.NodePool {
+	return nodePoolFor("metal-pool")
+}
+
+func nodePoolFor(nodeClassName string) *karpv1.NodePool {
 	return &karpv1.NodePool{
-		ObjectMeta: metav1.ObjectMeta{Name: "metal"},
+		ObjectMeta: metav1.ObjectMeta{Name: "np-" + nodeClassName},
 		Spec: karpv1.NodePoolSpec{
 			Template: karpv1.NodeClaimTemplate{
 				Spec: karpv1.NodeClaimTemplateSpec{
 					NodeClassRef: &karpv1.NodeClassReference{
 						Group: v1alpha1.Group,
 						Kind:  "ScalewayEMNodeClass",
-						Name:  "metal-pool",
+						Name:  nodeClassName,
 					},
 				},
 			},
 		},
+	}
+}
+
+func TestGetInstanceTypesEmptyPoolIsUnavailable(t *testing.T) {
+	// Audit F1 regression proof: an empty pool (empty, non-nil listing)
+	// must yield Available=false, with fake and real backends agreeing on
+	// the never-nil ListServers contract.
+	backend := newTestBackend()
+	provider := newTestProvider(t, backend, testNodeClass(true))
+
+	instanceTypes, err := provider.GetInstanceTypes(context.Background(), testNodePool())
+	if err != nil {
+		t.Fatalf("GetInstanceTypes returned error: %v", err)
+	}
+	if len(instanceTypes) != 1 {
+		t.Fatalf("GetInstanceTypes returned %d types, want 1", len(instanceTypes))
+	}
+	if instanceTypes[0].Offerings[0].Available {
+		t.Fatalf("offering should be unavailable on an empty pool")
+	}
+}
+
+func TestListDegradedPathKeepsLiveCapacityVisible(t *testing.T) {
+	// Offer resolution failing must not hide live servers from the GC:
+	// List returns minimally hydrated claims (providerID, no capacity).
+	backend := newTestBackend()
+	backend.AddServer(testServer("aaa", pool.StatusReady))
+	backend.OfferErr = errors.New("503 catalog unavailable")
+	provider := newTestProvider(t, backend, testNodeClass(true))
+
+	nodeClaims, err := provider.List(context.Background())
+	if err != nil {
+		t.Fatalf("List returned error: %v", err)
+	}
+	if len(nodeClaims) != 1 {
+		t.Fatalf("List returned %d claims, want 1 (degraded but visible)", len(nodeClaims))
+	}
+	if got := nodeClaims[0].Status.ProviderID; got != pool.FormatProviderID(testZone, "aaa") {
+		t.Fatalf("ProviderID = %q, want the live server", got)
+	}
+	if len(nodeClaims[0].Status.Capacity) != 0 {
+		t.Fatalf("degraded claim should carry no capacity, got %v", nodeClaims[0].Status.Capacity)
+	}
+}
+
+func TestDeleteInvalidatesOnlyPoolsOfTheServer(t *testing.T) {
+	// Audit F2 / XRAY-004: a power-off must only drop the snapshots of
+	// pools whose tag the server carries, not every pool of the zone.
+	backend := newTestBackend()
+	backend.AddServer(testServer("aaa", pool.StatusReady)) // tagged testPoolTag only
+	otherPool := testServer("zzz", pool.StatusStopped)
+	otherPool.Tags = []string{"st4ck.io/karpenter-pool=other"}
+	backend.AddServer(otherPool)
+
+	otherClass := testNodeClass(true)
+	otherClass.Name = "other-pool"
+	otherClass.Spec.PoolTag = "st4ck.io/karpenter-pool=other"
+
+	kubeClient := fake.NewClientBuilder().
+		WithScheme(scheme.Scheme).
+		WithObjects(testNodeClass(true), otherClass).
+		WithStatusSubresource(&v1alpha1.ScalewayEMNodeClass{}).
+		Build()
+	provider := New(kubeClient, backend, pool.NewInventory(backend, time.Hour))
+
+	// Warm the other pool's snapshot.
+	if _, err := provider.GetInstanceTypes(context.Background(), nodePoolFor("other-pool")); err != nil {
+		t.Fatalf("GetInstanceTypes returned error: %v", err)
+	}
+	warmCalls := backend.ListCalls
+
+	nodeClaim := testNodeClaim()
+	nodeClaim.Status.ProviderID = pool.FormatProviderID(testZone, "aaa")
+	if err := provider.Delete(context.Background(), nodeClaim); err != nil {
+		t.Fatalf("Delete returned error: %v", err)
+	}
+
+	// The other pool's snapshot must still be served from cache.
+	if _, err := provider.GetInstanceTypes(context.Background(), nodePoolFor("other-pool")); err != nil {
+		t.Fatalf("GetInstanceTypes returned error: %v", err)
+	}
+	if backend.ListCalls != warmCalls {
+		t.Fatalf("ListServers called %d times after Delete, want still %d (other pool cache intact)", backend.ListCalls, warmCalls)
 	}
 }
 

@@ -50,7 +50,9 @@ func (c *Controller) Reconcile(ctx context.Context, nodeClass *v1alpha1.Scaleway
 		// wholesale by a JSON merge patch, guard against racing writers.
 		if err := c.kubeClient.Status().Patch(ctx, nodeClass, client.MergeFromWithOptions(stored, client.MergeFromWithOptimisticLock{})); err != nil {
 			if errors.IsConflict(err) {
-				return reconcile.Result{Requeue: true}, nil
+				// Requeue (bool) is deprecated in controller-runtime v0.23
+				// (audit F3): re-reconcile shortly after the racing writer.
+				return reconcile.Result{RequeueAfter: time.Second}, nil
 			}
 			return reconcile.Result{}, client.IgnoreNotFound(err)
 		}

@@ -28,6 +28,7 @@ func TestParseProviderIDErrors(t *testing.T) {
 		"scaleway-em://fr-par-2",
 		"scaleway-em://fr-par-2/",
 		"scaleway-em:///abc-123",
+		"scaleway-em://fr-par-2/abc/def", // extra path segment (strict form)
 	} {
 		if _, _, err := ParseProviderID(providerID); err == nil {
 			t.Errorf("ParseProviderID(%q) should have failed", providerID)
