@@ -1,0 +1,35 @@
+{
+  "skill": "cli-audit-sync",
+  "schema_version": 1,
+  "generated_at": "2026-07-12T00:00:00Z",
+  "scope": null,
+  "score": { "value": 5, "scale": 10, "label": "coherence" },
+  "findings": [
+    { "id": "SYNC-001", "tier": 3, "dimension": "executable", "file": "scripts/mirror-images.txt", "line": 46, "description": "kube-apiserver/controller-manager/proxy/scheduler pinned v1.35.0 while cluster deploys K8s 1.35.6 — hauler-manifest.yaml:62-65 stages wrong control-plane images (not derived from contexts/_defaults.yaml k8s_version)", "confidence": "high", "effort": "low" },
+    { "id": "SYNC-002", "tier": 3, "dimension": "executable", "file": "CLAUDE.md", "line": 202, "description": "make scaleway-oidc does not exist (renamed oidc-register); also docs/roadmap.md:107,898", "confidence": "high", "effort": "low" },
+    { "id": "SYNC-003", "tier": 3, "dimension": "executable", "file": "docs/roadmap.md", "line": 241, "description": "make capi-init/capi-create/capi-delete do not exist (real: k8s-capi-init/apply/destroy, managed-cluster-apply/destroy)", "confidence": "high", "effort": "low" },
+    { "id": "SYNC-004", "tier": 3, "dimension": "semantic", "file": "docs/reference/config.md", "line": 5, "description": "dead 'Version Variables (vars.mk)' table — the 4 variables were deleted today (also docs/reference/commands.md:17-24, llms.txt:56)", "confidence": "high", "effort": "low" },
+    { "id": "SYNC-005", "tier": 3, "dimension": "structural", "file": "llms.txt", "line": 80, "description": "5 broken Configuration links — values files moved under stacks/*/flux*/", "confidence": "high", "effort": "low" },
+    { "id": "SYNC-006", "tier": 3, "dimension": "executable", "file": "Makefile", "line": 1133, "description": "'Arbor — unchanged' comment masks breakage: recipe greps variables.tf defaults that are now null (registry refactor), so chart pulls fail; CLAUDE.md:155 still documents make arbor as the staging path without hauler", "confidence": "high", "effort": "medium" },
+    { "id": "SYNC-007", "tier": 2, "dimension": "ssot", "file": "docs/techno.md", "line": 12, "description": "S-SSOT-02: version inventory hand-copied in 6 docs (techno.md 17 stale pins, roadmap.md 13, design/001 19, hld 6, README badges, AGENTS.md) — all drifted from versions-configmap.yaml", "confidence": "high", "effort": "medium" },
+    { "id": "SYNC-008", "tier": 2, "dimension": "ssot", "file": "CLAUDE.md", "line": 180, "description": "S-SSOT-04: kubeconfig ~/.kube/talos-$(ENV) contradicts CLAUDE.md:88 and Makefile:28 (~/.kube/$(CTX_ID)); same stale value in config.md:21, hld:280/420, design/001:933, troubleshoot.md:96", "confidence": "high", "effort": "low" },
+    { "id": "SYNC-009", "tier": 2, "dimension": "semantic", "file": "CLAUDE.md", "line": 45, "description": "ESO ownership stale vs ADR-033: external-secrets stack described as owning ESO, but helm_release lives in stacks/pki/main.tf; also CLAUDE.md:219,289, llms.txt:69, techno.md:180, .woodpecker.yml:14-18, design/001:1219 (deleted flux/ dir in Mermaid)", "confidence": "high", "effort": "low" },
+    { "id": "SYNC-010", "tier": 2, "dimension": "semantic", "file": "docs/how-to/upgrade.md", "line": 55, "description": "arbor presented as the current pre-staging mechanism, no hauler mention (also AGENTS.md:104, Makefile:1140 help text, llms.txt:52)", "confidence": "high", "effort": "low" },
+    { "id": "SYNC-011", "tier": 2, "dimension": "semantic", "file": "stacks/monitoring/main.tf", "line": 70, "description": "header still claims tofu manages the VMRule and points vm-k8s-stack HR at flux/ — contradicts the two-phase split (flux-vm/ + flux-alerts/) described at lines 209-214", "confidence": "high", "effort": "low" },
+    { "id": "SYNC-012", "tier": 2, "dimension": "drift", "file": "modules/talos-cluster/variables.tf", "line": 20, "description": "C-DRY-04: kubernetes_version default 1.35.0 (talos_version was bumped, k8s missed); also envs/local/variables.tf:10,16 (v1.12.4/1.35.0) and envs/vmware-airgap/vars.env:5-7", "confidence": "high", "effort": "low" },
+    { "id": "SYNC-013", "tier": 2, "dimension": "executable", "file": ".woodpecker.yml", "line": 102, "description": "image-build path trigger still watches vars.mk (now inert) but not contexts/_defaults.yaml where the Talos pin moved — version bumps no longer trigger image rebuild", "confidence": "medium", "effort": "low" },
+    { "id": "SYNC-014", "tier": 1, "dimension": "semantic", "file": "CLAUDE.md", "line": 58, "description": "'30 ADRs' stale — docs/adr/ has 33 (also AGENTS.md:95, README.md:120)", "confidence": "high", "effort": "low" },
+    { "id": "SYNC-015", "tier": 1, "dimension": "structural", "file": "docs/explanation/architecture.md", "line": 223, "description": "GitOps tree shows clusters/management/ with k8s-cni/..k8s-storage/ subdirs that do not exist", "confidence": "high", "effort": "low" },
+    { "id": "SYNC-016", "tier": 1, "dimension": "semantic", "file": "stacks/security/flux-openclarity/helmrelease-openclarity.yaml", "line": 4, "description": "comment claims tag pinned to var.openclarity_version in tofu; resolution is now ${openclarity_version} via substituteFrom (lines 14-16 are correct)", "confidence": "high", "effort": "low" }
+  ],
+  "strengths": [
+    { "dimension": "semantic", "note": "Registry and all consumers coherent: vars.mk header, versions-configmap header, coalesce()+null defaults in every stack, flux-bootstrap substituteFrom, hauler-manifest-gen.py docstring" },
+    { "dimension": "executable", "note": "docs/reference/commands.md hauler section, ADR-034/035/036, how-to/deploy, disaster-recovery, rotate-keys, getting-started all verified accurate" },
+    { "dimension": "structural", "note": "No doc references the deleted clusters/management-eso/ path; two-phase monitoring wiring correctly documented in kustomizations" }
+  ],
+  "handoffs": [
+    { "target": "cli-forge-doc", "scope": "docs/techno.md docs/roadmap.md docs/hld-talos-platform.md docs/design/001-hld-lld.md", "reason": "replace 6 hand-copied version inventories with links to (or generation from) versions-configmap.yaml" },
+    { "target": "cli-forge-schema", "scope": "docs/explanation/architecture.md docs/design/001-hld-lld.md", "reason": "regenerate GitOps tree + ESO Mermaid diagrams from current layout" },
+    { "target": "cli-audit-code", "scope": "Makefile:1133-1195", "reason": "arbor block is broken dead code since the registry refactor; decide removal vs repair (ADR-034 keeps it as transition alias)" }
+  ]
+}
