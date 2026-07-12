@@ -11,7 +11,7 @@ variable "cluster_endpoint" {
 variable "talos_version" {
   description = "Talos Linux version"
   type        = string
-  default     = "v1.12.4"
+  default     = "v1.12.9"
 }
 
 variable "kubernetes_version" {

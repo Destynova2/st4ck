@@ -19,7 +19,7 @@ variable "zone" {
 variable "talos_version" {
   description = "Talos Linux version (e.g. v1.12.4)"
   type        = string
-  default     = "v1.12.4"
+  default     = "v1.12.9"
 }
 
 variable "talos_schematic_id" {
