@@ -45,6 +45,8 @@
 - [ADR-035: Elastic Metal Static Pool](docs/adr/035-elastic-metal-static-pool.md): Static EM pool pending CAPS support (amends ADR-024)
 - [ADR-036: Karpenter Scaleway Provider](docs/adr/036-karpenter-scaleway-provider.md): Where to invest dev effort to unblock Scaleway autoscaling
 - [ADR-037: Env Promotion by Tags](docs/adr/037-env-promotion-tags.md): Isolated Scaleway projects per env class; qa/prod pin release tags of main
+- [ADR-038: OpenClarity Retirement](docs/adr/038-openclarity-retirement.md): Project archived upstream; consolidate on trivy-operator (supersedes ADR-027)
+- [ADR-039: Registry zot vs Harbor](docs/adr/039-registry-zot-vs-harbor.md): Pilot zot (arm64-native); re-evaluate Harbor at its v2.16 arm64 GA
 
 ## Documentation (Diataxis)
 - [Landing Page](docs/index.md): What this is and where to go
