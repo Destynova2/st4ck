@@ -1,0 +1,132 @@
+# Tester la plateforme en local — plan complet
+
+Tout ce qui se teste SANS Scaleway ni materiel, ordonne par cout et par
+ce que chaque niveau prouve. Etat des lieux au 2026-07-14 (post ADR-034
+hauler, ADR-038 kubescape, ADR-039 zot, mode local-docker arm64).
+
+## Vue d'ensemble
+
+| Niveau | Quoi | Duree | Prerequis | Etat |
+|---|---|---|---|---|
+| 0 | Statique (validate/render/tests unitaires) | ~3 min | rien | ✅ tout existe — a bundler en 1 cible |
+| 1 | Rendu + schemas (kubeconform, HR×values) | ~10 min | brew kubeconform | ⬜ a outiller |
+| 2 | Bootstrap podman E2E (platform pod) | ~15-20 min | podman rootful | ✅ cible existante, a rejouer |
+| 3 | Cluster Talos local + stacks + Flux | ~10-30 min | local-docker-up | 🟨 cluster+CNI valides, stacks a caler |
+| 4 | Mirror hauler → containerd Talos | ~30 min | niveaux 2+3 | ⬜ **ferme le point ouvert ADR-034** |
+| 5 | Harnais kwok du provider karpenter | ~2-4 h build | brew kwok | ⬜ derniere marche avant EM reel |
+
+## Niveau 0 — Statique (a chaque commit, CI-able)
+
+Tout est deja en place, disperse. A bundler dans une cible `make
+verify-local` unique :
+
+- `tofu validate` sur les 15 stacks + `tofu fmt -check -recursive`
+- `tofu test` : suites .tftest.hcl (envs/scaleway/{iam,image,ci,.} +
+  modules/em-talos-bootstrap — goldens provider_id inclus)
+- `kubectl kustomize` sur les 12 arbres de manifests
+- **Substitution 0-placeholder** : rendu + `flux envsubst` avec les
+  variables du registre → aucun `${...}` residuel (technique validee —
+  a attrape le bug substituteFrom non herite)
+- `go build && go test -race ./...` du provider karpenter (62 tests)
+- `shellcheck` scripts/, `gitleaks` (hook), `make -n` des cibles clefs
+- Determinisme du generateur hauler (`hauler-manifest` → diff vide)
+
+Ce que ca prouve : coherence interne totale. Ce que ca ne prouve pas :
+que les charts acceptent nos values, que les CRDs existent.
+
+## Niveau 1 — Rendu + schemas (avant chaque bump de versions)
+
+- **`helm template` de CHAQUE HelmRelease avec ses values** a la version
+  du registre — attrape les values incompatibles AU BUMP au lieu du
+  deploy (ex. vm-k8s-stack 0.72→0.86 = 14 minors de bundle). Scriptable :
+  lire les HR Flux, resoudre `${x_version}` via le registre, templater.
+- **kubeconform** sur tout le rendu substitue (schemas K8s 1.35 + CRDs
+  Flux/VM/Kyverno depuis le datree catalog) — attrape les apiVersion et
+  champs invalides que kustomize laisse passer.
+- `woodpecker-cli lint .woodpecker.yml`.
+
+## Niveau 2 — Bootstrap podman E2E (stage 0 entier)
+
+```bash
+make bootstrap          # platform pod : OpenBao KMS + vault-backend + Gitea + Woodpecker
+curl -s localhost:8080/state/test   # state backend up
+make state-snapshot     # cycle DR snapshot/restore
+make bootstrap-stop
+```
+
+Jamais rejoue depuis le registre de versions et les fixes du jour.
+Prouve : init KMS, PKI root, seeds, state locking. Attention : la
+machine podman est passee rootful (requis par local-docker) — bootstrap
+fonctionne aussi en rootful.
+
+## Niveau 3 — Cluster Talos local + stacks + Flux day-2
+
+Acquis (valide 2026-07-13) : `make local-docker-up` → Talos v1.12.9
+arm64 en containers + Cilium kube-proxy-free avec NOS values, coredns
+vert, `cilium status` OK.
+
+Extensions a caler, dans l'ordre de valeur :
+
+1. **Flux day-2 E2E** : `flux install` sur le cluster local + le root
+   Kustomization pointe sur le Gitea du bootstrap (niveau 2) →
+   reconciliation reelle de clusters/management. Prouve : two-phase,
+   remediation, substituteFrom, PDB, tout le graphe Flux — sur de vrais
+   CRDs. C'est ~80 % du risque day-2 restant.
+2. **zot smoke** : HR zot avec un override filesystem (pas de Garage en
+   local) → `skopeo copy` push/pull + login htpasswd + pull anonyme.
+3. **kubescape smoke** : deposer un fichier EICAR dans un pod → verifier
+   l'evenement malware du node-agent.
+4. **Sous-ensemble k8s-up** : cni → pki → external-secrets contre le
+   cluster local (vault-backend du niveau 2 pour l'etat). Les stacks
+   sont provider-agnostiques (kubeconfig_path) — la limite est la RAM
+   de la machine podman (8 Gi : monter a 12-16 pour la stack complete).
+
+Limites structurelles du mode container : pas de vraie surface OS Talos
+(upgrade kernel, machine config bas niveau), 1 seul CP (pas de quorum
+etcd 3 noeuds), pas de PN/LB.
+
+## Niveau 4 — Mirror hauler → containerd (ferme ADR-034)
+
+Le point ouvert n°1 de l'ADR-034 (naming `?ns=`, collision prouvee en
+PoC) devient testable SANS cluster dev Scaleway :
+
+```bash
+make hauler-sync                      # store complet (~qq Go, une fois)
+make hauler-serve                     # registre OCI :5000 sur le Mac
+# cluster local recree avec un patch registries.mirrors pointant sur
+# host.containers.internal:5000, puis :
+crictl pull docker.io/library/busybox:stable   # via le mirror ?
+```
+
+Verdict attendu : mirror transparent OK / KO → si KO, valider le repli
+`rewrite:` + endpoints par upstream avec `overridePath` (documente dans
+l'ADR). Ce test decide l'architecture air-gap finale.
+
+## Niveau 5 — Harnais kwok du provider karpenter
+
+karpenter-core + notre provider + FakeBackend contre un cluster kwok
+(noeuds simules — l'outil de test de karpenter lui-meme) : cycle
+NodeClaim COMPLET — Create → noeud joint (simule avec le providerID
+attendu) → matching → Registered → Delete. Derniere marche avant de
+louer le premier EM ; complement logiciel du runbook materiel du
+M0-REPORT (denylist kubelet + p95 power-on restent hardware-only).
+
+## Ce qui ne se teste PAS en local (assume)
+
+- Surface OS Talos reelle : upgrades, machine config kernel → hote KVM
+  (`envs/local`) ou Scaleway.
+- Tout le plan Scaleway : IAM, image import, PN par AZ, LB, CI VM.
+- Elastic Metal : denylist `provider-id`, p95 power-on→Ready, e2e
+  NodePool 0→1→0 (runbook M0-REPORT §3, EM loue a l'heure ~1-2 €).
+- Perf realiste (pki ~10 min, vagues k8s-up) : les chiffres locaux ne
+  transferent pas.
+- Woodpecker CI de bout en bout (agent sur la VM CI).
+
+## Ordre recommande
+
+1. Cible `make verify-local` (niveau 0 bundle) — 1 h d'outillage, gain
+   permanent (+ step CI).
+2. Niveau 2 rejoue (bootstrap) puis niveau 3.1 (Flux day-2 E2E) — le
+   plus gros retour sur effort.
+3. Niveau 4 (mirror) — decide l'architecture air-gap.
+4. Niveau 1 (outillage bump) et niveau 5 (kwok) en tache de fond.

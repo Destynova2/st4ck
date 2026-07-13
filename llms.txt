@@ -60,6 +60,7 @@
 - [Bootstrap Mechanics](docs/explanation/bootstrap.md): 5 chicken-and-egg problems and their solutions (Mermaid diagrams)
 - [Security Model](docs/explanation/security.md): Threat model, PKI trust chain, policy inventory
 - [How to Upgrade](docs/how-to/upgrade.md): Upgrade workflow, rollback, hauler staging (ADR-034)
+- [Local Testing Plan](docs/how-to/test-local.md): Everything testable without Scaleway/hardware, by level (static -> kwok)
 
 ## Infrastructure
 - [Makefile](Makefile): Root orchestration with all deployment targets
