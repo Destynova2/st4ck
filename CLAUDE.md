@@ -214,7 +214,7 @@ Note: pipeline was initially parallel (make -j2) but race conditions
 | monitoring | vm-k8s-stack, VictoriaLogs, Headlamp | monitoring namespace |
 | pki | OpenBao x2, cert-manager, ClusterIssuer, CA secrets | ClusterIssuer "internal-ca", secrets namespace |
 | identity | Kratos, Hydra, Pomerium, OIDC registration | identity namespace |
-| security | Trivy, Tetragon, Kyverno, Cosign policy | security namespace |
+| security | Trivy, Tetragon, Kyverno, Cosign policy, Kubescape node-agent (malware, ADR-038) | security + kubescape namespaces |
 | storage | Garage (tofu — chart owner since 2026-04-29 #12), Velero, Harbor | storage + garage namespaces |
 | flux-bootstrap | Flux v2, GitRepository, root Kustomization | flux-system namespace |
 | external-secrets | ClusterSecretStore (ESO chart lives in pki, ADR-033) | external-secrets namespace |

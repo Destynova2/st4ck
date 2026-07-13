@@ -116,6 +116,9 @@ spec:
   - name: kratos
     repoURL: https://k8s.ory.sh/helm/charts
     version: 0.62.1
+  - name: kubescape-operator
+    repoURL: https://kubescape.github.io/helm-charts
+    version: 1.40.2
   - name: kyverno
     repoURL: https://kyverno.github.io/kyverno
     version: 3.8.2

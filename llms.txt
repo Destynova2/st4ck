@@ -74,7 +74,7 @@
 - [pki](stacks/pki/main.tf): OpenBao + cert-manager + CA secrets
 - [monitoring](stacks/monitoring/main.tf): VictoriaMetrics + VictoriaLogs + Headlamp
 - [identity](stacks/identity/main.tf): Kratos + Hydra + Pomerium
-- [security](stacks/security/main.tf): Trivy + Tetragon + Kyverno
+- [security](stacks/security/main.tf): Trivy + Tetragon + Kyverno + Kubescape node-agent (malware)
 - [storage](stacks/storage/main.tf): Garage + Velero + Harbor
 - [flux-bootstrap](stacks/flux-bootstrap/main.tf): Flux v2 GitOps
 - [external-secrets](stacks/external-secrets/): ClusterSecretStore Flux config (ESO chart: stacks/pki, ADR-033)

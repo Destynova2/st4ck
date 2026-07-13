@@ -174,7 +174,7 @@ stacks/
 ├── monitoring/     # vm-k8s-stack, VictoriaLogs, Headlamp (4 helm releases + dashboard + flux/)
 ├── pki/            # PKI, OpenBao x2, cert-manager (4 helm releases + secrets + ClusterIssuer + flux/)
 ├── identity/       # Kratos, Hydra, Pomerium (3 helm releases + OIDC client + flux/)
-├── security/       # Trivy, Tetragon, Kyverno (3 helm releases + policy + flux/)
+├── security/       # Trivy, Tetragon, Kyverno, Kubescape node-agent (flux/)
 ├── storage/        # Garage, Velero, Harbor (3 helm releases + K8s Job setup + flux/)
 ├── flux-bootstrap/ # Flux v2, SSH key, GitRepository, Kustomization
 └── external-secrets/ # ESO + ClusterSecretStore (chart ESO tofu-owned dans stacks/pki (ADR-033) ; le dossier external-secrets ne porte que le ClusterSecretStore)

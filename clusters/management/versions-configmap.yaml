@@ -34,6 +34,7 @@ data:
   karpenter_capi_provider_version: "0.2.0"
   karpenter_version: "1.14.0"
   keda_version: "2.20.1"
+  kubescape_version: "1.40.2"
   kratos_version: "0.62.1"
   kyverno_version: "3.8.2"
   local_path_provisioner_version: "0.0.37"

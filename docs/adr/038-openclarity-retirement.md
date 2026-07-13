@@ -27,8 +27,8 @@ embarquer un composant sans correctifs CVE dans le stack… sécurité.
    uniquement le `node-agent` de Kubescape (CNCF Incubating, moteur
    ClamAV adapté k8s, FIM fanotify, arm64, ~1-2 % CPU) avec kubevuln et
    le moteur de posture **désactivés** (sinon double scan avec
-   trivy-operator). À activer si le besoin malware est confirmé, pas par
-   défaut.
+   trivy-operator). Activée le 2026-07-14 (chart kubescape-operator 1.40.2,
+   profil réduit : node-agent + operator + storage).
 4. **NeuVector écarté** : redondance triple avec Tetragon (runtime),
    Kyverno (admission) et trivy-operator (scan), pour 3-4× le coût.
 5. **Trous assumés, documentés** : rootkits (chkrootkit) et matching
