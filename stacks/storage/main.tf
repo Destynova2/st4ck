@@ -28,7 +28,7 @@ locals {
   secrets = {
     garage_rpc_secret     = data.terraform_remote_state.pki.outputs.garage_rpc_secret
     garage_admin_token    = data.terraform_remote_state.pki.outputs.garage_admin_token
-    harbor_admin_password = data.terraform_remote_state.pki.outputs.harbor_admin_password
+    zot_admin_password    = data.terraform_remote_state.pki.outputs.zot_admin_password
   }
 }
 
@@ -246,13 +246,13 @@ resource "terraform_data" "garage_buckets_keys" {
       [ "$${READY:-0}" -ge 3 ] || { echo "ERROR: Garage pods not ready after 5 min (got $${READY:-0}/3)"; exit 1; }
 
       echo "Creating buckets..."
-      for BUCKET in velero-backups harbor-registry cnpg-backups; do
+      for BUCKET in velero-backups zot-registry cnpg-backups; do
         $GARAGE ./garage bucket create "$BUCKET" 2>/dev/null || true
       done
 
       echo "Creating keys and K8s secrets..."
       for ENTRY in "velero-key:velero-backups:storage:velero-s3-credentials:ini" \
-                    "harbor-key:harbor-registry:storage:harbor-s3-credentials:plain" \
+                    "zot-key:zot-registry:storage:zot-s3-credentials:plain" \
                     "cnpg-key:cnpg-backups:identity:cnpg-s3-credentials:plain"; do
         KEY_NAME=$(echo "$ENTRY" | cut -d: -f1)
         BUCKET=$(echo "$ENTRY" | cut -d: -f2)
@@ -314,14 +314,12 @@ resource "terraform_data" "garage_buckets_keys" {
 # ${s3_url} + ${velero_bucket} substituted via Flux postBuild — defined
 # in stacks/flux-bootstrap/main.tf Kustomization "management"). ADR-028.
 
-# Harbor → Flux owner (ADR-028 wave 3).
-# Three secrets enter Harbor at runtime, all via the harbor-secrets
-# ExternalSecret which renders a values.yaml fragment from OpenBao:
-#   - harborAdminPassword     ← seeded by tofu pki at secret/storage/harbor
-#   - persistence.imageChartStorage.s3.accesskey
-#   - persistence.imageChartStorage.s3.secretkey
-#       ↑ both mirrored from harbor-s3-credentials K8s Secret to OpenBao
-#       at secret/storage/harbor-s3 by the harbor-s3-mirror PushSecret
-#       (see stacks/storage/flux/external-secrets.yaml).
-# garage_buckets_keys terraform_data still creates harbor-s3-credentials
-# (Garage CLI generates the API key); the PushSecret mirrors it.
+# zot → Flux owner (ADR-039 — remplace Harbor le 2026-07-14 : pas de
+# release GA arm64 upstream, features projets/quotas inutilisées ici).
+# Deux entrées secrètes au runtime, pipeline plus simple qu'avant :
+#   - zot-secret (htpasswd)  ← ExternalSecret depuis OpenBao
+#     secret/storage/zot (admin_password + htpasswd pré-composé, seedés
+#     par tofu pki — bcrypt calculé côté tofu).
+#   - zot-s3-credentials     ← créé DIRECTEMENT par garage_buckets_keys
+#     ci-dessus (env AWS_* du chart) — plus de PushSecret miroir ni
+#     d'aller-retour OpenBao pour le S3.

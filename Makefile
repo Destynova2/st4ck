@@ -241,7 +241,7 @@ garage-chart: ## Fetch Garage Helm chart (pin: versions-configmap.yaml) from ups
 k8s-storage-init: garage-chart
 	$(call tf_init,$(TF_STORAGE),$(STATE_STORAGE))
 
-k8s-storage-apply: k8s-storage-init ## Deploy Garage + Velero + Harbor
+k8s-storage-apply: k8s-storage-init ## Deploy Garage + Velero + zot
 	$(TF) -chdir=$(TF_STORAGE) apply -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS)
 
 k8s-storage-destroy: k8s-storage-init
@@ -1261,7 +1261,7 @@ clean: ## Remove all build artifacts
 # UI Access
 # ═══════════════════════════════════════════════════════════════════════
 
-.PHONY: scaleway-headlamp scaleway-grafana scaleway-harbor
+.PHONY: scaleway-headlamp scaleway-grafana scaleway-zot
 
 scaleway-headlamp: scaleway-kubeconfig ## Open Headlamp UI (token to clipboard)
 	@KUBECONFIG=$(KC_FILE) kubectl create serviceaccount headlamp-admin -n kube-system 2>/dev/null || true
@@ -1271,11 +1271,11 @@ scaleway-headlamp: scaleway-kubeconfig ## Open Headlamp UI (token to clipboard)
 		KUBECONFIG=$(KC_FILE) kubectl port-forward -n monitoring svc/headlamp 4466:80 >/dev/null 2>&1 & \
 		sleep 2 && open http://localhost:4466
 
-scaleway-harbor: scaleway-kubeconfig
-	@PASSWORD=$$($(TF) -chdir=$(TF_STORAGE) output -raw harbor_admin_password) && \
+scaleway-zot: scaleway-kubeconfig ## Open zot UI (admin password to clipboard)
+	@PASSWORD=$$($(TF) -chdir=$(TF_STORAGE) output -raw zot_admin_password) && \
 		echo "$$PASSWORD" | pbcopy && \
-		KUBECONFIG=$(KC_FILE) kubectl port-forward -n storage svc/harbor 8080:80 >/dev/null 2>&1 & \
-		sleep 2 && open http://localhost:8080
+		KUBECONFIG=$(KC_FILE) kubectl port-forward -n storage svc/zot 5000:5000 >/dev/null 2>&1 & \
+		sleep 2 && open http://localhost:5000
 
 scaleway-grafana: scaleway-kubeconfig
 	@KUBECONFIG=$(KC_FILE) kubectl port-forward -n monitoring svc/grafana 3000:80 >/dev/null 2>&1 & \

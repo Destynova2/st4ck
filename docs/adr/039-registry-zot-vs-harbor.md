@@ -1,7 +1,7 @@
 # ADR-039 : Registre interne — pilote zot, Harbor réévalué à sa v2.16
 
 **Date** : 2026-07-13
-**Statut** : Proposé
+**Statut** : Accepté — élargi à « zot partout » et exécuté le 2026-07-14
 **Décideurs** : Équipe plateforme
 **Reliés à** : ADR-034 (Hauler), ADR-003 (Garage S3), ADR-037 (envs par tags)
 **Preuves** : `docs/reviews/2026-07-13-harbor-arm-openclarity.md` (Q1)
@@ -44,17 +44,24 @@ en KaaS multi-tenant (quotas/projets par tenant).
   la recommandation pour le profil local ; l'option dev-tags est
   documentée ici comme dépannage volontairement borné aux envs jetables.
 
-## Décision proposée
+## Décision (élargie le 2026-07-14 : zot PARTOUT)
 
-1. **Piloter zot** comme registre du profil local/ARM immédiatement
-   (S3 → Garage, sync pull-through comme miroir hauler-compatible).
-2. **Garder Harbor sur les environnements Scaleway amd64** en attendant
-   sa v2.16 — aucun geste.
-3. **Point de décision à la sortie de Harbor v2.16** (premier GA arm64
-   attendu) : si le pilote zot couvre l'usage réel → bascule complète et
-   ADR d'exécution ; si les besoins KaaS (projets/quotas/réplication
-   push par tenant) se sont matérialisés → Harbor v2.16 partout, zot
-   reste le registre du profil local.
+Constat déclencheur : Harbor était déployé mais **inconsommé** (rien ne
+pousse dedans ; le rôle miroir a déménagé vers hauler, ADR-034). Le coût
+de bascule était minimal et n'aurait fait que grossir.
+
+1. **zot remplace Harbor sur tous les environnements** : chart `zot`
+   0.1.122 (registre de versions), S3 → Garage (`zot-registry`), auth
+   htpasswd (admin seedé par pki, bcrypt côté tofu, pull anonyme en
+   lecture), UI + search + métriques Prometheus. Pipeline secrets
+   SIMPLIFIÉ : plus de PushSecret miroir S3 (les creds Garage vont
+   directement au chart en env).
+2. **Réversibilité assumée** : contenu 100 % OCI — `skopeo sync` /
+   `hauler store copy` migrent si le besoin Harbor (projets/quotas/
+   réplication tenant KaaS) se matérialise un jour ; réévaluation à ce
+   moment-là seulement.
+3. Le suivi de la v2.16 Harbor (premier GA arm64 attendu) devient
+   informatif, plus décisionnel.
 
 ## Conséquences
 

@@ -84,7 +84,7 @@ make velero-test                # Backup/restore validation
 # UI access
 make scaleway-headlamp          # Headlamp UI (token in clipboard)
 make scaleway-grafana           # Grafana UI
-make scaleway-harbor            # Harbor UI (password in clipboard)
+make scaleway-zot               # zot UI (password in clipboard)
 ```
 
 ## Gotchas
@@ -96,7 +96,7 @@ make scaleway-harbor            # Harbor UI (password in clipboard)
 - **Bootstrap has 5 chicken-and-egg problems** resolved by design -- see `docs/explanation/bootstrap.md`.
 - **Talos has no shell access** -- you cannot SSH into nodes. Use `talosctl` for node operations.
 - **Kyverno webhooks block deletion** -- `k8s-down` deletes webhooks first to prevent cascading failures.
-- **Harbor admin password** is generated in `stacks/pki/secrets.tf`, seeded into OpenBao Infra, and synced to Kubernetes by ESO. Use `make scaleway-harbor` to access.
+- **zot admin password** (+ pre-composed htpasswd) is generated in `stacks/pki/secrets.tf`, seeded into OpenBao Infra, and synced to Kubernetes by ESO. Use `make scaleway-zot` to access.
 - **Port-forward zombies** -- previous `kubectl port-forward` processes may linger. `k8s-down` kills them.
 - **Bootstrap is now a single TF module** (`bootstrap/`) -- old references to `scripts/openbao-kms-bootstrap.sh` or `configs/openbao/` are stale.
 - **Cosign signing pipeline** exists at `scripts/cosign-sign.sh` for image signing (triggered via Woodpecker CI).

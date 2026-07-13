@@ -18,9 +18,9 @@ resources:
   - ../../stacks/security/flux
   - ../../stacks/storage/flux
 
-  # Same two-phase split for Harbor (postmortem 2026-04-29 #15).
-  # storage-harbor-eso → storage-harbor — see file header for rationale.
-  - storage-harbor.yaml
+  # Same two-phase split for zot (ADR-039 — replaced Harbor 2026-07-14).
+  # storage-zot-eso → storage-zot — see file header for rationale.
+  - storage-zot.yaml
   # Two-phase monitoring: vm-k8s-stack HR (phase 1) → VMRule flux-alerts
   # (phase 2) — replaces the CRD-count-gated tofu manifest (hanoi #6).
   - monitoring-vm.yaml

@@ -39,7 +39,7 @@ graph TB
         MON[3. k8s-monitoring<br/>VictoriaMetrics ~2min]
         IDN[4. k8s-identity<br/>Kratos + Hydra ~1min]
         SEC[5. k8s-security<br/>Trivy + Tetragon + Kyverno ~2min]
-        STO[6. k8s-storage<br/>Garage + Velero + Harbor ~2min]
+        STO[6. k8s-storage<br/>Garage + Velero + zot ~2min]
         FLUXB[7. flux-bootstrap<br/>Flux SSH ~30s]
 
         CNI --> PKI --> MON --> IDN --> SEC --> STO --> FLUXB
@@ -166,7 +166,7 @@ Toutes les stacks K8s sont provider-agnostiques — elles recoivent uniquement u
 | k8s-monitoring | VictoriaMetrics, VictoriaLogs, Grafana, Headlamp | monitoring |
 | k8s-identity | Kratos, Hydra, Pomerium | identity |
 | k8s-security | Trivy, Tetragon, Kyverno, Cosign policy | security |
-| k8s-storage | Garage, Velero, Harbor | garage, storage |
+| k8s-storage | Garage, Velero, zot | garage, storage |
 | flux-bootstrap | Flux v2, GitRepository, root Kustomization | flux-system |
 
 ## Cluster K8s — vue composants
@@ -200,7 +200,7 @@ graph TB
         LP[local-path-provisioner]
         GAR[Garage S3 x3<br/>replication factor 3]
         VEL[Velero<br/>backup → Garage]
-        HAR[Harbor<br/>registry → Garage]
+        HAR[zot<br/>registre OCI → Garage]
     end
 
     subgraph "Identite"
@@ -226,7 +226,7 @@ clusters/management/
     versions-configmap.yaml     # Registre de versions (postBuild.substituteFrom)
     monitoring-vm.yaml          # Two-phase : vm-k8s-stack -> VMRule flux-alerts
     security-kyverno.yaml       # Two-phase : HelmRelease -> ClusterPolicies
-    storage-harbor.yaml         # Two-phase : ESO -> HelmRelease
+    storage-zot.yaml            # Two-phase : ESO -> HelmRelease (ADR-039)
 ```
 
 Les HelmReleases eux-memes vivent dans `stacks/*/flux*/` (co-localises avec

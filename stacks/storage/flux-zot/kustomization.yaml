@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Phase 2 of the two-phase zot split (Fix #7 pattern). Without this
+# gate, the HelmRelease mounts zot-secret before the ExternalSecret in
+# ../flux-zot-eso/ has rendered it.
+namespace: storage
+resources:
+  - helmrelease-zot.yaml
+configMapGenerator:
+  - name: zot-values
+    namespace: storage
+    files:
+      - values.yaml=values-zot.yaml
+generatorOptions:
+  disableNameSuffixHash: true

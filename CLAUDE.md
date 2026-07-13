@@ -40,7 +40,7 @@ talos/
 │   ├── monitoring/                     # vm-k8s-stack + VictoriaLogs + Headlamp
 │   ├── identity/                       # Kratos + Hydra + Pomerium
 │   ├── security/                       # Trivy + Tetragon + Kyverno
-│   ├── storage/                        # Garage + Velero + Harbor
+│   ├── storage/                        # Garage + Velero + zot (registre OCI)
 │   ├── flux-bootstrap/                 # Flux v2 + GitRepository + root Kustomization
 │   ├── external-secrets/               # ClusterSecretStore Flux config (ESO chart: stacks/pki, ADR-033)
 │   │  ─── KaaS / Phase A (deployed by `make kaas-up`) ─────────────
@@ -193,7 +193,7 @@ identity         ← Kratos + Hydra + Pomerium (~1min)
     │                 (secrets sourced from OpenBao Infra via ESO)
 security         ← Trivy + Tetragon + Kyverno (~2min)
     │
-storage          ← Garage + Velero + Harbor (~2min)
+storage          ← Garage + Velero + zot (~2min)
     │
 flux-bootstrap   ← Flux SSH + GitRepository (~30s)
     │
@@ -215,7 +215,7 @@ Note: pipeline was initially parallel (make -j2) but race conditions
 | pki | OpenBao x2, cert-manager, ClusterIssuer, CA secrets | ClusterIssuer "internal-ca", secrets namespace |
 | identity | Kratos, Hydra, Pomerium, OIDC registration | identity namespace |
 | security | Trivy, Tetragon, Kyverno, Cosign policy, Kubescape node-agent (malware, ADR-038) | security + kubescape namespaces |
-| storage | Garage (tofu — chart owner since 2026-04-29 #12), Velero, Harbor | storage + garage namespaces |
+| storage | Garage (tofu — chart owner since 2026-04-29 #12), Velero, zot (ADR-039) | storage + garage namespaces |
 | flux-bootstrap | Flux v2, GitRepository, root Kustomization | flux-system namespace |
 | external-secrets | ClusterSecretStore (ESO chart lives in pki, ADR-033) | external-secrets namespace |
 
@@ -260,7 +260,7 @@ OpenBao Infra KV v2 → ESO ClusterSecretStore → ExternalSecret → K8s Secret
 | Hydra system secret | secret/identity/hydra | hydra-secrets | identity |
 | Pomerium shared/cookie/client | secret/identity/pomerium | pomerium-secrets | identity |
 | Garage RPC + admin token | secret/storage/garage | garage-secrets | garage |
-| Harbor admin password | secret/storage/harbor | harbor-secrets | storage |
+| zot admin htpasswd | secret/storage/zot | zot-secret | storage |
 
 No SOPS. No secrets in Git.
 
@@ -287,7 +287,7 @@ No SOPS. No secrets in Git.
 - Cilium MUST be destroyed LAST (removing it breaks pod eviction)
 - pki MUST be deployed before identity (ClusterIssuer dependency)
 - In-cluster OpenBao uses Helm + static seal; bootstrap jobs must be explicit Flux/Kustomize jobs or real Helm hooks (see ADR-033)
-- harbor_admin_password is generated and seeded by pki (secrets.tf); storage reads it from OpenBao
+- zot_admin_password (+ htpasswd bcrypt) is generated and seeded by pki (secrets.tf); storage reads it from OpenBao
 - Stacks are provider-agnostic: they only need a kubeconfig path
 - vault-backend (podman) must be running for any tofu command
 - Platform pod does NOT auto-stop — use `make bootstrap-stop`

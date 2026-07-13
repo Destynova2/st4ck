@@ -23,7 +23,7 @@ on `openbao-infra-0`, or wire an `ExternalSecret` with
 | `secret/identity/hydra` | `system_secret`, `client_secret` | identity | `stacks/pki/secrets.tf` |
 | `secret/identity/pomerium` | `shared_secret`, `cookie_secret`, `client_secret` | identity | `stacks/pki/secrets.tf` |
 | `secret/storage/garage` | `rpc_secret`, `admin_token` | storage | `stacks/pki/secrets.tf` |
-| `secret/storage/harbor` | `admin_password` | storage | `stacks/pki/secrets.tf` |
+| `secret/storage/zot` | `admin_password`, `htpasswd` | storage | `stacks/pki/secrets.tf` |
 
 ### Scaleway IAM expansion
 

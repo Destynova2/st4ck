@@ -82,7 +82,7 @@ resource "random_password" "garage_admin_token" {
   }
 }
 
-resource "random_password" "harbor_admin_password" {
+resource "random_password" "zot_admin_password" {
   length  = 24
   special = false
 
@@ -135,7 +135,10 @@ resource "terraform_data" "seed_openbao_secrets" {
       OIDC_CLIENT_SECRET     = random_password.oidc_client_secret.result
       GARAGE_RPC_SECRET      = random_bytes.garage_rpc_secret.hex
       GARAGE_ADMIN_TOKEN     = random_password.garage_admin_token.result
-      HARBOR_ADMIN_PASSWORD  = random_password.harbor_admin_password.result
+      ZOT_ADMIN_PASSWORD     = random_password.zot_admin_password.result
+      # bcrypt() re-salts on every eval — harmless: seed_if_absent only
+      # writes the FIRST value, OpenBao keeps it stable afterwards.
+      ZOT_HTPASSWD           = "admin:${bcrypt(random_password.zot_admin_password.result)}"
       # Cosign keypair (Phase 1a-1). PEMs go through env vars, never on
       # the kubectl exec command line where they'd hit ps + audit logs.
       COSIGN_PUB = tls_private_key.cosign.public_key_pem
@@ -213,8 +216,9 @@ resource "terraform_data" "seed_openbao_secrets" {
         rpc_secret="$GARAGE_RPC_SECRET" \
         admin_token="$GARAGE_ADMIN_TOKEN"
 
-      seed_if_absent secret/storage/harbor \
-        admin_password="$HARBOR_ADMIN_PASSWORD"
+      seed_if_absent secret/storage/zot \
+        admin_password="$ZOT_ADMIN_PASSWORD" \
+        htpasswd="$ZOT_HTPASSWD"
 
       echo "Seeding security secrets..."
       # Cosign keypair: Kyverno verifyImages reads cosign-public-key from
@@ -346,7 +350,7 @@ output "garage_admin_token" {
   sensitive = true
 }
 
-output "harbor_admin_password" {
-  value     = random_password.harbor_admin_password.result
+output "zot_admin_password" {
+  value     = random_password.zot_admin_password.result
   sensitive = true
 }

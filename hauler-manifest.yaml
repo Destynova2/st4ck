@@ -92,9 +92,6 @@ spec:
   - name: flux2
     repoURL: https://fluxcd-community.github.io/helm-charts
     version: 2.18.4
-  - name: harbor
-    repoURL: https://helm.goharbor.io
-    version: 1.19.1
   - name: headlamp
     repoURL: https://kubernetes-sigs.github.io/headlamp
     version: 0.43.0
@@ -155,6 +152,9 @@ spec:
   - name: victoria-metrics-k8s-stack
     repoURL: https://victoriametrics.github.io/helm-charts
     version: 0.86.0
+  - name: zot
+    repoURL: https://zotregistry.dev/helm-charts
+    version: 0.1.122
 ---
 apiVersion: content.hauler.cattle.io/v1
 kind: Files

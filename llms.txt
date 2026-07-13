@@ -75,7 +75,7 @@
 - [monitoring](stacks/monitoring/main.tf): VictoriaMetrics + VictoriaLogs + Headlamp
 - [identity](stacks/identity/main.tf): Kratos + Hydra + Pomerium
 - [security](stacks/security/main.tf): Trivy + Tetragon + Kyverno + Kubescape node-agent (malware)
-- [storage](stacks/storage/main.tf): Garage + Velero + Harbor
+- [storage](stacks/storage/main.tf): Garage + Velero + zot
 - [flux-bootstrap](stacks/flux-bootstrap/main.tf): Flux v2 GitOps
 - [external-secrets](stacks/external-secrets/): ClusterSecretStore Flux config (ESO chart: stacks/pki, ADR-033)
 
@@ -92,7 +92,7 @@
 - [Monitoring Values](stacks/monitoring/flux-vm/values-vm-stack.yaml): VictoriaMetrics stack values
 - [PKI Values](stacks/pki/flux/values-openbao-infra.yaml): OpenBao infra Helm values
 - [Identity Values](stacks/identity/flux/values-hydra.yaml): Hydra Helm values
-- [Storage Values](stacks/storage/flux-harbor/values-harbor.yaml): Harbor registry Helm values
+- [Storage Values](stacks/storage/flux-zot/values-zot.yaml): zot registry Helm values (ADR-039)
 
 ## Design
 - [HLD/LLD System Design](docs/design/001-hld-lld.md): Complete high-level and low-level design

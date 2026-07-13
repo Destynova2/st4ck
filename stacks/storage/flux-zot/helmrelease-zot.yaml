@@ -1,37 +1,28 @@
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
-  name: harbor
+  name: zot
   namespace: storage
 spec:
   interval: 30m
+  install:
+    remediation:
+      retries: 3
+    createNamespace: false
   # Failed upgrades: retry 3x then roll back (hardening 2026-07-12)
   upgrade:
     cleanupOnFail: true
     remediation:
       retries: 3
-  dependsOn:
-    - name: garage
-      namespace: garage
   chart:
     spec:
-      chart: harbor
-      version: "${harbor_version}"
+      chart: zot
+      version: "${zot_version}"
       sourceRef:
         kind: HelmRepository
-        name: harbor
+        name: zot
         namespace: flux-system
-  install:
-    remediation:
-      retries: 3
-    createNamespace: false
-    timeout: 10m
   valuesFrom:
     - kind: ConfigMap
-      name: harbor-values
+      name: zot-values
       valuesKey: values.yaml
-      optional: false
-    - kind: Secret
-      name: harbor-secrets
-      valuesKey: values.yaml
-      optional: false

@@ -1,6 +1,6 @@
-output "harbor_admin_password" {
-  description = "Harbor admin password"
-  value       = local.secrets["harbor_admin_password"]
+output "zot_admin_password" {
+  description = "zot admin password (htpasswd user: admin)"
+  value       = local.secrets["zot_admin_password"]
   sensitive   = true
 }
 

@@ -138,13 +138,13 @@ Files: `flux/values-kratos.yaml`, `flux/values-hydra.yaml`, `flux/values-pomeriu
 
 ### Storage (stacks/storage/)
 
-Files: `flux/values-garage.yaml`, `flux/values-velero.yaml`, `flux-harbor/values-harbor.yaml`
+Files: `flux/values-garage.yaml`, `flux/values-velero.yaml`, `flux-zot/values-zot.yaml`
 
 | Setting | File | Purpose |
 |---------|------|---------|
 | `garage.replication_mode` | values-garage.yaml | Replication factor (default: 3) |
 | `velero.configuration.backupStorageLocation` | values-velero.yaml | Garage S3 endpoint |
-| `harbor.persistence.imageChartStorage.s3` | values-harbor.yaml | S3 backend config |
+| `configFiles.config.json` storage.storageDriver | values-zot.yaml | zot S3 (Garage) backend config |
 
 ## Scaleway-Specific Configuration
 

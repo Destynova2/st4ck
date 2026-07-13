@@ -101,7 +101,7 @@ Each stack has `-init`, `-apply`, and `-destroy` targets:
 |---------|-------------|
 | `make scaleway-headlamp` | Open Headlamp UI (token in clipboard) |
 | `make scaleway-grafana` | Open Grafana UI |
-| `make scaleway-harbor` | Open Harbor UI (password in clipboard) |
+| `make scaleway-zot` | Open zot UI (admin password in clipboard) |
 
 ## Local (libvirt/KVM)
 

@@ -20,7 +20,7 @@
 |---|---|---|---|
 | Woodpecker CI | v3 | Pipeline CI/CD push-based | 13 stages sequentiels (validate -> image -> bootstrap -> cluster -> wait-api -> stacks) |
 | Gitea | 1.x | Serveur Git | VM CI Scaleway, Podman Quadlet + systemd |
-| Harbor | 1.19.1 | Registry conteneurs | S3 Garage backend, Trivy scan integre |
+| zot | chart 0.1.122 (app v2.1.18) | Registry OCI | CNCF, arm64, S3 Garage backend, Trivy integre, cosign/notation (ADR-039) |
 
 ### VM CI (Scaleway DEV1-M)
 
@@ -135,7 +135,7 @@ OpenBao KMS bootstrap (single-node Raft, Podman)
 |---|---|---|---|
 | Garage | v2.3.0 (app) | Stockage objet S3 | 3 pods StatefulSet, replication factor 3, ~300 MB RAM |
 | Velero | 11.4.0 | Backup/restore | Target: Garage S3, BSL Available |
-| Harbor | 1.19.1 | Registry conteneurs | S3 Garage backend, Trivy scan integre |
+| zot | chart 0.1.122 (app v2.1.18) | Registry OCI | CNCF, arm64, S3 Garage backend, Trivy integre, cosign/notation (ADR-039) |
 
 ### Garage Post-Deploy (K8s Job)
 
@@ -143,9 +143,9 @@ OpenBao KMS bootstrap (single-node Raft, Podman)
 kubernetes_job_v1.garage_setup :
 ├── Wait Garage admin API
 ├── Configure layout (5 GB/node, zone dc1)
-├── Create buckets (velero-backups, harbor-registry)
-├── Create API keys (velero-key, harbor-key)
-└── Create K8s secrets (velero-s3-credentials, harbor-s3-credentials)
+├── Create buckets (velero-backups, zot-registry)
+├── Create API keys (velero-key, zot-key)
+└── Create K8s secrets (velero-s3-credentials, zot-s3-credentials)
     └── RBAC: ServiceAccount garage-setup, Role/RoleBinding storage ns
 ```
 
@@ -175,7 +175,7 @@ stacks/
 ├── pki/            # PKI, OpenBao x2, cert-manager (4 helm releases + secrets + ClusterIssuer + flux/)
 ├── identity/       # Kratos, Hydra, Pomerium (3 helm releases + OIDC client + flux/)
 ├── security/       # Trivy, Tetragon, Kyverno, Kubescape node-agent (flux/)
-├── storage/        # Garage, Velero, Harbor (3 helm releases + K8s Job setup + flux/)
+├── storage/        # Garage, Velero, zot (flux/ + flux-zot*/)
 ├── flux-bootstrap/ # Flux v2, SSH key, GitRepository, Kustomization
 └── external-secrets/ # ESO + ClusterSecretStore (chart ESO tofu-owned dans stacks/pki (ADR-033) ; le dossier external-secrets ne porte que le ClusterSecretStore)
 

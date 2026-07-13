@@ -1,0 +1,61 @@
+# zot — registre OCI interne (ADR-039, remplace Harbor). arm64-natif,
+# backend S3 -> Garage, auth htpasswd (admin, pull anonyme en lecture),
+# UI + search + metrics Prometheus. Profil rendu et vérifié 2026-07-14
+# (chart 0.1.122) : Deployment + Service + ConfigMap, zéro Secret créé
+# par le chart (zot-secret vient de l'ExternalSecret, zot-s3-credentials
+# du loop garage_buckets_keys).
+replicaCount: 1
+service:
+  type: ClusterIP
+  port: 5000
+mountConfig: true
+configFiles:
+  config.json: |-
+    {
+      "distSpecVersion": "1.1.1",
+      "storage": {
+        "rootDirectory": "/var/lib/registry",
+        "storageDriver": {
+          "name": "s3",
+          "regionendpoint": "http://garage.garage.svc.cluster.local:3900",
+          "region": "garage",
+          "bucket": "zot-registry",
+          "secure": false,
+          "forcepathstyle": true
+        }
+      },
+      "http": {
+        "address": "0.0.0.0",
+        "port": "5000",
+        "auth": { "htpasswd": { "path": "/secret/htpasswd" } },
+        "accessControl": {
+          "repositories": {
+            "**": {
+              "anonymousPolicy": ["read"],
+              "policies": [
+                { "users": ["admin"], "actions": ["read", "create", "update", "delete"] }
+              ]
+            }
+          }
+        }
+      },
+      "log": { "level": "info" },
+      "extensions": {
+        "search": { "enable": true },
+        "ui": { "enable": true },
+        "metrics": { "enable": true, "prometheus": { "path": "/metrics" } }
+      }
+    }
+mountSecret: true
+secretFiles: null
+env:
+  - name: AWS_ACCESS_KEY_ID
+    valueFrom:
+      secretKeyRef:
+        name: zot-s3-credentials
+        key: access_key
+  - name: AWS_SECRET_ACCESS_KEY
+    valueFrom:
+      secretKeyRef:
+        name: zot-s3-credentials
+        key: secret_key
