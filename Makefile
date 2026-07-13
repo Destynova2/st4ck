@@ -1126,6 +1126,24 @@ bootstrap-update:
 		--configmap=$(BOOTSTRAP_DIR)/configmap.yaml
 
 # ═══════════════════════════════════════════════════════════════════════
+# Local docker mode — Talos-in-containers on podman (arm64-native on
+# Apple Silicon). Validated 2026-07-13: Cilium kube-proxy-free + coredns
+# green with the platform values. NOT the real Talos OS surface — for
+# that use envs/local (KVM host). Requires ROOTFUL podman machine.
+# ═══════════════════════════════════════════════════════════════════════
+
+LOCAL_DOCKER_NAME ?= st4ck-local
+
+.PHONY: local-docker-up local-docker-down
+
+local-docker-up: ## Disposable Talos-in-containers cluster + Cilium (native arch)
+	bash scripts/local-docker-up.sh $(LOCAL_DOCKER_NAME)
+
+local-docker-down: ## Destroy the local docker-mode cluster
+	@SOCK=$$(podman machine inspect --format '{{ .ConnectionInfo.PodmanSocket.Path }}' 2>/dev/null); \
+	DOCKER_HOST="unix://$$SOCK" talosctl cluster destroy --name $(LOCAL_DOCKER_NAME)
+
+# ═══════════════════════════════════════════════════════════════════════
 # Arbor — DEPRECATED, superseded by Hauler (ADR-034)
 # ═══════════════════════════════════════════════════════════════════════
 # The old inline recipes are gone: they resolved chart versions by

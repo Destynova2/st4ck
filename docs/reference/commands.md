@@ -45,6 +45,8 @@ All chart/provider pins: `clusters/management/versions-configmap.yaml`
 | `make hauler-verify` | List store contents (digest-addressed OCI layout) |
 | `make hauler-save` | Export store to chunked tarball for air-gap transfer |
 | `make hauler-serve` | Serve store as OCI registry on :5000 (registry-mirror endpoint candidate) |
+| `make local-docker-up` | Disposable Talos-in-containers cluster + Cilium, native arch (rootful podman) |
+| `make local-docker-down` | Destroy the local docker-mode cluster |
 
 ## K8s Stacks (Provider-Agnostic)
 
