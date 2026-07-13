@@ -142,8 +142,6 @@ server:
                 # CNPG → OpenBao mirrors (PushSecret writes here)
                 path "secret/data/identity/db/postgres"     { capabilities = ["create", "update", "read", "delete", "patch"] }
                 path "secret/metadata/identity/db/postgres" { capabilities = ["create", "update", "read", "delete", "list", "patch"] }
-                path "secret/data/security/db/openclarity"     { capabilities = ["create", "update", "read", "delete", "patch"] }
-                path "secret/metadata/security/db/openclarity" { capabilities = ["create", "update", "read", "delete", "list", "patch"] }
 
                 # Harbor → OpenBao mirror (PushSecret writes Garage S3
                 # access/secret keys here so the harbor-secrets ES can

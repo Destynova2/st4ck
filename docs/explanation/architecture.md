@@ -226,7 +226,6 @@ clusters/management/
     versions-configmap.yaml     # Registre de versions (postBuild.substituteFrom)
     monitoring-vm.yaml          # Two-phase : vm-k8s-stack -> VMRule flux-alerts
     security-kyverno.yaml       # Two-phase : HelmRelease -> ClusterPolicies
-    security-openclarity.yaml   # Two-phase : ESO -> HelmRelease
     storage-harbor.yaml         # Two-phase : ESO -> HelmRelease
 ```
 

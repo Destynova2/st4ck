@@ -16,8 +16,7 @@
 #   discriminator), so we cannot gate the ClusterPolicy at the HR layer.
 #
 # Solution: two Flux Kustomizations with Kustomization-level dependsOn,
-# mirror of clusters/management/security-openclarity.yaml +
-# clusters/management/storage-harbor.yaml.
+# mirror of clusters/management/storage-harbor.yaml.
 #   Phase 1 — security-kyverno applies the HelmRelease + values
 #     ConfigMap with `wait: true`, blocking until the HR is Ready
 #     (chart hooks finished, CRDs installed, controllers up).

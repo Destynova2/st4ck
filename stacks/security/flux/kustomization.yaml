@@ -13,16 +13,6 @@ resources:
   # memory limits in values-trivy.yaml.
   - scan-isolation.yaml
   #
-  # NOTE: OpenClarity HelmRelease + its ESO/cert pipeline split into
-  #   ../flux-openclarity-eso/   (PushSecret + ExternalSecret + 4 CNPG certs)
-  #   ../flux-openclarity/       (HelmRelease + values configmap)
-  # wired by clusters/management/security-openclarity.yaml as two Flux
-  # Kustomizations (security-openclarity dependsOn security-openclarity-eso).
-  # Why split: HelmRelease.spec.dependsOn only accepts other HelmReleases
-  # (no Kind discriminator). The chart needs the openclarity-pg-credentials
-  # Secret (rendered by ESO) at install time, so we gate the install on
-  # the ESO pipeline reaching Ready via Kustomization-level dependsOn.
-  #
   # Bug #41 (postmortem 2026-04-29) — Kyverno HelmRelease + its
   # ClusterPolicies split into
   #   ../flux-kyverno/             (HelmRelease + values configmap)
@@ -30,8 +20,8 @@ resources:
   # wired by clusters/management/security-kyverno.yaml as two Flux
   # Kustomizations (security-kyverno-policies dependsOn security-kyverno).
   # Why split: server-side dry-run of the ClusterPolicy fails until the
-  # Kyverno chart has installed its CRDs — same chicken/egg as
-  # OpenClarity above, fixed with the same Kustomization-level dependsOn.
+  # Kyverno chart has installed its CRDs — fixed with a
+  # Kustomization-level dependsOn.
 configMapGenerator:
   - name: trivy-values
     namespace: security

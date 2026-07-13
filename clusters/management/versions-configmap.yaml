@@ -38,7 +38,6 @@ data:
   kyverno_version: "3.8.2"
   local_path_provisioner_version: "0.0.37"
   openbao_version: "0.28.4"
-  openclarity_version: "1.1.3"
   pomerium_version: "34.0.1"
   prometheus_adapter_version: "4.11.0"
   tetragon_version: "1.7.0"

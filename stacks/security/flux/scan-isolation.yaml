@@ -80,16 +80,16 @@ spec:
     #
     # Postmortem 2026-04-29: previous cap of 32 was sized for trivy scan
     # jobs in isolation — when the security ns also hosts the toolchain
-    # (kyverno + tetragon + openclarity + trivy + scan jobs) the
+    # (kyverno + tetragon + trivy + scan jobs) the
     # LimitRange default cpu: "1" applied to containers without explicit
     # limits exhausted the quota before scans could start.
     # Pair with explicit limits.cpu in values-tetragon, values-kyverno,
-    # values-openclarity, values-trivy.
+    # values-trivy.
     requests.cpu: "20"
     requests.memory: "48Gi"
     limits.cpu: "48"
     limits.memory: "96Gi"
     # Cap concurrent pods so a runaway scan loop can't fork-bomb the ns.
     pods: "150"
-    # Cap PVCs (Trivy server PVC + openclarity-pg + maybe future scanners).
+    # Cap PVCs (Trivy server PVC + maybe future scanners).
     persistentvolumeclaims: "20"

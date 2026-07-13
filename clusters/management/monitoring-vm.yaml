@@ -1,6 +1,6 @@
 ---
-# Two-phase monitoring split — same pattern as security-kyverno.yaml,
-# security-openclarity.yaml and storage-harbor.yaml (postmortem Bug #41):
+# Two-phase monitoring split — same pattern as security-kyverno.yaml
+# and storage-harbor.yaml (postmortem Bug #41):
 # a CR whose CRD is installed by a HelmRelease cannot live in the same
 # Kustomization (server-side dry-run aborts the whole Kustomization).
 #

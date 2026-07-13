@@ -419,21 +419,22 @@ k8s-init: k8s-cni-init k8s-monitoring-init k8s-pki-init k8s-identity-init k8s-se
 # Parallel waves since 2026-07-12 (pipeline audit): the races that
 # forced sequential mode are dead — local-path lives in cni (Fix #4),
 # Kyverno/VictoriaMetrics are Flux-owned (ADR-028), no webhook is alive
-# during the applies. Real DAG: cni → pki → {monitoring ∥ identity} →
-# {security ∥ storage} → flux. The security→identity edge (CNPG CRD)
-# is enforced in-stack; storage creates the identity ns idempotently.
+# during the applies. Real DAG: cni → pki → {monitoring ∥ identity ∥
+# security} → storage → flux. The security→identity CNPG edge died with
+# OpenClarity (ADR-038); storage still writes into the identity ns
+# (created idempotently, but sequenced after identity to stay clean).
 # The old pre-apply of ns.storage was a Fix #4 fossil (hanoi pass 2 #3).
 k8s-up: ## Deploy every k8s stack to the current context (parallel waves)
 	@curl -so /dev/null -w '%{http_code}' $(VB_URL)/state/test 2>/dev/null | grep -qE '^(2|4)' || { echo "ERROR: vault-backend not reachable at $(VB_URL). Run 'make bootstrap' or 'make bootstrap-tunnel'."; exit 1; }
 	$(MAKE) k8s-cni-apply
 	$(MAKE) k8s-pki-apply
-	$(MAKE) -j2 k8s-wave1
+	$(MAKE) -j3 k8s-wave1
 	$(MAKE) -j2 k8s-wave2
 	$(MAKE) flux-bootstrap-apply
 
 .PHONY: k8s-wave1 k8s-wave2
-k8s-wave1: k8s-monitoring-apply k8s-identity-apply ## (internal) post-pki independent stacks
-k8s-wave2: k8s-security-apply k8s-storage-apply    ## (internal) stacks needing identity
+k8s-wave1: k8s-monitoring-apply k8s-identity-apply k8s-security-apply ## (internal) post-pki independent stacks
+k8s-wave2: k8s-storage-apply                       ## (internal) writes into the identity ns
 
 k8s-down: ## Destroy every k8s stack on the current context (correct order)
 	@curl -so /dev/null -w '%{http_code}' $(VB_URL)/state/test 2>/dev/null | grep -qE '^(2|4)' || { echo "ERROR: vault-backend not reachable at $(VB_URL)."; exit 1; }

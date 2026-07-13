@@ -4,7 +4,7 @@ kind: Kustomization
 # Kustomization wrapper can gate it on the storage-harbor-eso
 # Kustomization — see clusters/management/storage-harbor.yaml).
 #
-# Mirror of stacks/security/flux-openclarity/ (Fix #7). Without this
+# Two-phase HelmRelease pattern (Fix #7). Without this
 # split, Flux installs Harbor immediately and the install fails until
 # the harbor-secrets ExternalSecret catches up — the chart references
 # admin password + S3 keys via valuesFrom optional: false, so the chart

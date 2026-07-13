@@ -38,7 +38,7 @@
 - [ADR-024: Hybrid Autoscaling](docs/adr/024-hybrid-autoscaling-architecture.md): Cloud VM first, bare metal by consolidation
 - [ADR-025: Kamaji Architecture](docs/adr/025-kamaji-detailed-architecture.md): KaaS multi-tenant control planes + NodePools
 - [ADR-026: OpenBao Static Seal](docs/adr/026-openbao-static-seal-accepted-risk.md): Accepted risk on static seal
-- [ADR-027: OpenClarity](docs/adr/027-openclarity-multi-scanner.md): Multi-scanner security posture
+- [ADR-027: OpenClarity](docs/adr/027-openclarity-multi-scanner.md): Multi-scanner (superseded by ADR-038)
 - [ADR-028: Flux Owner by Default](docs/adr/028-flux-owner-by-default.md): Day-2 ownership boundary
 - [ADR-032: PKI Bootstrap Job](docs/adr/032-pki-vm-root-cluster-subca-job.md): VM root CA, cluster sub-CA job
 - [ADR-034: Hauler Artifact Store](docs/adr/034-hauler-artifact-store.md): Hauler replaces arbor staging; Zarf rejected

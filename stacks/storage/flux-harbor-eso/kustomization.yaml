@@ -4,7 +4,7 @@ kind: Kustomization
 # Harbor HelmRelease can `dependsOn` this Kustomization via a Flux
 # Kustomization wrapper — see clusters/management/storage-harbor.yaml).
 #
-# Mirror of stacks/security/flux-openclarity-eso/ (Fix #7) for the same
+# Two-phase ESO pattern (Fix #7) for the same
 # class of bug: HelmRelease references a Secret rendered by an
 # ExternalSecret pipeline, but HelmRelease.spec.dependsOn cannot
 # discriminate on Kind (only HelmReleases). Wrap the prerequisite ESO

@@ -21,7 +21,7 @@
 #   ExternalSecret directly inside the HR.
 #
 # Solution: two Flux Kustomizations with Kustomization-level dependsOn.
-# Mirror of clusters/management/security-openclarity.yaml (Fix #7).
+# Two-phase ESO → HelmRelease pattern (Fix #7).
 # Phase 1 — storage-harbor-eso applies the PushSecret + ExternalSecret
 #   with `wait: true`, blocking until harbor-secrets exists.
 # Phase 2 — storage-harbor applies the HelmRelease, gated on phase 1.
