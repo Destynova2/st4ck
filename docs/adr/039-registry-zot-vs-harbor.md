@@ -29,6 +29,21 @@ tags, blocage de pull sur CVE. Dans notre stack, l'enforcement est déjà
 la perte est largement théorique aujourd'hui — elle redeviendrait réelle
 en KaaS multi-tenant (quotas/projets par tenant).
 
+### Vérification complémentaire (2026-07-14) — autres registries et tags dev
+
+- **ghcr.io/goharbor** existe et miroite les releases… **amd64 uniquement**
+  (v2.15.2 vérifié) ; pas de tag `dev`. Aucun autre canal officiel arm64.
+- **Aucun tag v2.16 (même RC)** sur Docker Hub à ce jour (414 tags scannés).
+- Les seuls artefacts arm64 du projet : les tags **`dev` / `dev-arm64`**
+  (nightly de `main`, rebuild quotidien — vérifié frais de la veille).
+  Utilisable pour un env dev jetable À CONDITION de : pinner par digest
+  (tag mutable), aligner les 8-9 composants sur le même nightly, et
+  accepter deux risques — qualité nightly sans correctifs garantis, et
+  **schéma DB potentiellement en avance sur la future v2.16** (un env
+  monté sur `dev` peut ne pas migrer proprement vers la GA). zot reste
+  la recommandation pour le profil local ; l'option dev-tags est
+  documentée ici comme dépannage volontairement borné aux envs jetables.
+
 ## Décision proposée
 
 1. **Piloter zot** comme registre du profil local/ARM immédiatement
