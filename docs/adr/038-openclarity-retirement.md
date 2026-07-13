@@ -1,7 +1,7 @@
 # ADR-038 : Retrait d'OpenClarity — consolidation sur trivy-operator
 
 **Date** : 2026-07-13
-**Statut** : Proposé (remplace ADR-027)
+**Statut** : Accepté — exécuté le 2026-07-13 (commit c688f73) (remplace ADR-027)
 **Décideurs** : Équipe plateforme
 **Reliés à** : ADR-027 (OpenClarity multi-scanner), ADR-018 (Tetragon)
 **Preuves** : `docs/reviews/2026-07-13-harbor-arm-openclarity.md` (Q2)
