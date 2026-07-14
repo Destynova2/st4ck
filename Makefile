@@ -1133,6 +1133,12 @@ bootstrap-update:
 # that use envs/local (KVM host). Requires ROOTFUL podman machine.
 # ═══════════════════════════════════════════════════════════════════════
 
+# Niveau 0 du plan docs/how-to/test-local.md : toutes les verifications
+# statiques en une passe (~2-3 min a chaud). SKIP_TFTEST=1 pour aller vite.
+.PHONY: verify-local
+verify-local: ## Run every local static check (validate/tests/kustomize/substitution/...)
+	bash scripts/verify-local.sh
+
 LOCAL_DOCKER_NAME ?= st4ck-local
 
 .PHONY: local-docker-up local-docker-down
