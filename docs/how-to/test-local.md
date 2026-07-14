@@ -11,7 +11,7 @@ hauler, ADR-038 kubescape, ADR-039 zot, mode local-docker arm64).
 | 0 | Statique (validate/render/tests unitaires) | ~3 min | rien | ✅ tout existe — a bundler en 1 cible |
 | 1 | Rendu + schemas (kubeconform, HR×values) | ~10 min | brew kubeconform | ⬜ a outiller |
 | 2 | Bootstrap podman E2E (platform pod) | ~15-20 min | podman rootful | ✅ cible existante, a rejouer |
-| 3 | Cluster Talos local + stacks + Flux | ~10-30 min | local-docker-up | 🟨 cluster+CNI valides, stacks a caler |
+| 3 | Cluster Talos local + stacks + Flux | ~10-30 min | local-docker-up, **VM podman ≥ 12 Gi** | 🟨 execute au 2/3 le 2026-07-14 (voir 3.1) |
 | 4 | Mirror hauler → containerd Talos | ~30 min | niveaux 2+3 | ⬜ **ferme le point ouvert ADR-034** |
 | 5 | Harnais kwok du provider karpenter | ~2-4 h build | brew kwok | ⬜ derniere marche avant EM reel |
 
@@ -72,6 +72,19 @@ Extensions a caler, dans l'ordre de valeur :
    reconciliation reelle de clusters/management. Prouve : two-phase,
    remediation, substituteFrom, PDB, tout le graphe Flux — sur de vrais
    CRDs. C'est ~80 % du risque day-2 restant.
+
+   **Run du 2026-07-14 (verdict partiel)** — acquis : GitRepository
+   Ready sur le Gitea du bootstrap (auth basic + IP gvproxy
+   192.168.127.254 depuis les pods), build + substitution + apply
+   progressif du root OK, et le « dry-run onion » a valide les
+   frontieres ADR-033 couche par couche (chaque echec = exactement une
+   precondition day-1 : CRDs cert-manager statiques, PUIS 23 CRDs ESO,
+   PUIS webhook ESO pret). Non atteint : HRs avec versions substituees
+   et progression two-phase — la VM podman 8 Gi est morte en thrashing
+   (load 160) avec un autre projet actif a cote. Reprise : machine
+   podman ≥ 12-16 Gi ou machine dediee ; le deroule est rejouable en
+   ~15 min (bootstrap → push HEAD → flux install → secret+ConfigMap →
+   GitRepository+Kustomization → CRDs day-1 → reconcile).
 2. **zot smoke** : HR zot avec un override filesystem (pas de Garage en
    local) → `skopeo copy` push/pull + login htpasswd + pull anonyme.
 3. **kubescape smoke** : deposer un fichier EICAR dans un pod → verifier
