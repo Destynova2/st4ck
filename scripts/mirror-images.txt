@@ -79,8 +79,8 @@ ghcr.io/fluxcd/notification-controller:v1.8.4
 # ─── KaaS: CAPI + Kamaji + Karpenter (Phase A) ────────────────────────
 registry.k8s.io/cluster-api/cluster-api-controller:v1.10.7
 quay.io/clastix/kamaji:26.7.2-edge
-# ^ l'operateur Kamaji vit sur quay depuis que Clastix a ferme l'acces
-# anonyme a ghcr.io/clastix/{kamaji,charts/kamaji} (2026-07-14, verifie —
-# le provider CAPI ghcr reste public). Chart vendore via make kamaji-chart.
+# ^ operateur Kamaji : ghcr est ferme aux anonymes (chart + image) mais
+# l'image reste publique sur Docker Hub ET quay — quay retenu (rate
+# limits anonymes du Hub). Chart vendore via make kamaji-chart.
 ghcr.io/aenix-io/etcd-operator:v0.4.5
 public.ecr.aws/karpenter/controller:1.7.4

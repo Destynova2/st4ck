@@ -71,16 +71,15 @@ resource "kubernetes_namespace" "kamaji" {
 
 resource "helm_release" "kamaji" {
   name = "kamaji"
-  # ⚠ 2026-07-14 (delimitation precise apres contre-verification) :
-  # Clastix a ferme l'acces anonyme au chart ET a l'image de l'OPERATEUR
-  # Kamaji sur ghcr (401 cible — ghcr.io/clastix/charts/kamaji et
-  # ghcr.io/clastix/kamaji), coherent avec leur modele stable-payant.
-  # Le provider CAPI (ghcr.io/clastix/charts/cluster-api-control-plane-
-  # provider-kamaji) RESTE public, l'image operateur RESTE publiee sur
-  # quay.io/clastix/kamaji (26.7.x-edge), et le chart source est public
-  # dans github.com/clastix/kamaji (charts/kamaji). Deblocage retenu :
-  # chart vendore depuis git (make kamaji-chart, pattern garage-chart)
-  # + image quay en override — voir values ci-dessous.
+  # ⚠ 2026-07-14 (delimitation finale apres deux contre-verifications) :
+  # SEULS les artefacts ghcr de l'operateur sont fermes aux anonymes
+  # (ghcr.io/clastix/charts/kamaji et ghcr.io/clastix/kamaji → 401).
+  # Restent publics : le provider CAPI sur ghcr, l'image operateur sur
+  # docker.io/clastix/kamaji ET quay.io/clastix/kamaji (26.7.x-edge),
+  # le chart source dans github.com/clastix/kamaji, et kamaji-etcd sur
+  # clastix.github.io. Deblocage : chart vendore depuis git
+  # (make kamaji-chart, SHA pinne au registre) + image en override —
+  # quay retenu plutot que Docker Hub (rate limits anonymes du Hub).
   # Chart vendore par `make kamaji-chart` (pin kamaji_git_ref au registre).
   chart            = "${path.module}/chart"
   namespace        = kubernetes_namespace.kamaji.metadata[0].name
