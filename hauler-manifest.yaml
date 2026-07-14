@@ -164,3 +164,5 @@ spec:
     name: talosctl
   - path: https://github.com/clastix/kamaji/archive/3e5439488b678e8827c6bcc4733f2017ed2d59fc.tar.gz
     name: kamaji-src.tar.gz
+  - path: https://git.deuxfleurs.fr/Deuxfleurs/garage/archive/v2.3.0.tar.gz
+    name: garage-src.tar.gz

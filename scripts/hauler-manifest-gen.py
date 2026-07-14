@@ -260,6 +260,12 @@ def talos_files() -> list[dict]:
             "path": f"https://github.com/clastix/kamaji/archive/{REGISTRY['kamaji_git_ref']}.tar.gz",
             "name": "kamaji-src.tar.gz",
         },
+        {
+            # Chart Garage vendore par make garage-chart — meme besoin
+            # air-gap que le tarball kamaji.
+            "path": f"https://git.deuxfleurs.fr/Deuxfleurs/garage/archive/{REGISTRY['garage_chart_version']}.tar.gz",
+            "name": "garage-src.tar.gz",
+        },
     ]
 
 

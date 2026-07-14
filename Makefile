@@ -1060,6 +1060,15 @@ bootstrap-tunnel: ## SSH tunnel to remote bootstrap (forwards :8080 + :8200 to l
 bootstrap-stop: ## Stop the platform pod
 	@podman play kube --down $(BOOTSTRAP_DIR)/platform-pod.yaml 2>/dev/null || true
 
+# Reset COMPLET : stop + purge des volumes (KMS/Gitea/CI perdus !). Les
+# volumes persistent volontairement a travers bootstrap-stop — mais un
+# re-run avec un admin_password different echoue alors sur le login
+# OpenBao (constate au E2E local 2026-07-14 : le KMS garde l'ancien
+# credential). Fresh start = ce target.
+bootstrap-reset: bootstrap-stop ## DESTRUCTIVE: stop pod + delete platform volumes (fresh state)
+	@podman volume ls --format "{{.Name}}" | grep "^platform-" | xargs -I{} podman volume rm -f {} 2>/dev/null || true
+	@echo "Platform volumes purged - next make bootstrap starts from scratch."
+
 state-snapshot: ## Backup OpenBao Raft snapshot (all states)
 	@ROOT_TOKEN=$$(cat $(KMS_OUTPUT)/root-token.txt) && \
 		curl -sf -H "X-Vault-Token: $$ROOT_TOKEN" \
