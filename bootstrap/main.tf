@@ -245,6 +245,43 @@ output "admin_user" {
   value = var.admin_user
 }
 
+# ─── Admin Gitea (host-side) ────────────────────────────────────────────
+# Sur la VM CI, envs/scaleway/ci/setup.sh.tpl cree l'admin via podman
+# exec ; en flux LOCAL personne ne le faisait et le sidecar attendait
+# l'utilisateur 300 s pour rien (constate au E2E local 2026-07-14).
+# Idempotent : "already exists" tolere.
+resource "terraform_data" "gitea_admin" {
+  depends_on = [terraform_data.platform_pod]
+
+  input = var.admin_user
+
+  provisioner "local-exec" {
+    environment = {
+      GITEA_ADMIN_PASSWORD = var.admin_password
+    }
+    command = <<-EOT
+      set -eu
+      echo "[gitea-admin] waiting for the gitea container..."
+      ready=0
+      for i in $(seq 1 120); do
+        if podman exec -u git platform-gitea gitea admin user list >/dev/null 2>&1; then
+          ready=1; break
+        fi
+        sleep 2
+      done
+      [ "$ready" -eq 1 ] || { echo "[gitea-admin] ERROR: gitea not exec-able after 240s" >&2; exit 1; }
+      if podman exec -u git platform-gitea gitea admin user list 2>/dev/null | grep -q " ${var.admin_user} "; then
+        echo "[gitea-admin] user '${var.admin_user}' already exists"
+      else
+        podman exec -u git -e GITEA_ADMIN_PASSWORD platform-gitea sh -c \
+          'gitea admin user create --username ${var.admin_user} --password "$GITEA_ADMIN_PASSWORD" --email ${var.admin_user}@local.invalid --admin --must-change-password=false'
+        echo "[gitea-admin] user '${var.admin_user}' created"
+      fi
+    EOT
+  }
+}
+
+
 output "admin_password" {
   value     = var.admin_password
   sensitive = true
@@ -257,9 +294,9 @@ output "status" {
     =========================================
       Setup:    podman logs -f platform-tofu-setup
       OpenBao:  http://127.0.0.1:8200
-      Gitea:    http://${var.domain}:3000 (${var.admin_user})
+      Gitea:    http://${var.domain}:${var.host_ports.gitea_http} (${var.admin_user})
       WP:       ${local.wp_host}
-      State:    http://127.0.0.1:8080
+      State:    http://127.0.0.1:${var.host_ports.vb}
       KMS out:  podman volume inspect platform-kms-output
       Stop:     make bootstrap-stop
     =========================================
