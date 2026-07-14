@@ -5,8 +5,8 @@ variable "kubeconfig_path" {
 
 # ─── Kamaji ───────────────────────────────────────────────────────────
 
-variable "kamaji_version" {
-  description = "Kamaji Helm chart version (OCI tag in ghcr.io/clastix/charts/kamaji)"
+variable "kamaji_image_tag" {
+  description = "Kamaji operator image tag on quay.io/clastix/kamaji. Null = platform version registry."
   type        = string
   default     = null
 }

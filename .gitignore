@@ -55,3 +55,4 @@ images.txt
 envs/scaleway/ci/files/
 haul/
 haul.tar.zst*
+stacks/kamaji/chart/

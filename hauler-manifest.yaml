@@ -49,6 +49,7 @@ spec:
   - name: quay.io/cilium/operator-generic:v1.17.13
   - name: quay.io/cilium/tetragon-operator:v1.5.0
   - name: quay.io/cilium/tetragon:v1.5.0
+  - name: quay.io/clastix/kamaji:26.7.2-edge
   - name: quay.io/jetstack/cert-manager-cainjector:v1.19.4
   - name: quay.io/jetstack/cert-manager-controller:v1.19.4
   - name: quay.io/jetstack/cert-manager-webhook:v1.19.4
@@ -96,9 +97,6 @@ spec:
   - name: hydra
     repoURL: https://k8s.ory.sh/helm/charts
     version: 0.62.1
-  - name: kamaji
-    repoURL: oci://ghcr.io/clastix/charts
-    version: 26.7.2-edge
   - name: karpenter
     repoURL: oci://public.ecr.aws/karpenter
     version: 1.14.0
@@ -164,3 +162,5 @@ spec:
   - path: https://factory.talos.dev/image/613e1592b2da41ae5e265e8789429f22e121aab91cb4deb6bc3c0b6262961245/v1.12.9/metal-amd64.raw.xz
   - path: https://github.com/siderolabs/talos/releases/download/v1.12.9/talosctl-linux-amd64
     name: talosctl
+  - path: https://github.com/clastix/kamaji/archive/3e5439488b678e8827c6bcc4733f2017ed2d59fc.tar.gz
+    name: kamaji-src.tar.gz

@@ -350,9 +350,23 @@ k8s-capi-destroy: k8s-capi-init
 		-var="scw_project_id=$(SCW_PROJECT_ID)" \
 		-var="scw_region=$(REGION)"
 
-.PHONY: k8s-kamaji-init k8s-kamaji-apply k8s-kamaji-destroy
+# Chart Kamaji vendore depuis le repo git public (le chart OCI ghcr et
+# l'image ghcr de l'operateur sont fermes aux anonymes depuis 2026-07-14 ;
+# l'image vit sur quay, le chart source dans git — pin par SHA au registre).
+KAMAJI_GIT_REF := $(shell sed -n 's/^ *kamaji_git_ref: "\(.*\)"/\1/p' clusters/management/versions-configmap.yaml)
+KAMAJI_CHART   := stacks/kamaji/chart
 
-k8s-kamaji-init:
+.PHONY: kamaji-chart k8s-kamaji-init k8s-kamaji-apply k8s-kamaji-destroy
+
+kamaji-chart: ## Vendor the Kamaji operator chart from git (pin: versions-configmap.yaml)
+	@test -n "$(KAMAJI_GIT_REF)" || { echo "Error: kamaji_git_ref missing from versions-configmap.yaml"; exit 1; }
+	@rm -rf $(KAMAJI_CHART) && mkdir -p $(KAMAJI_CHART)
+	@curl -sL "https://github.com/clastix/kamaji/archive/$(KAMAJI_GIT_REF).tar.gz" | \
+		tar -xz --strip-components=3 -C $(KAMAJI_CHART) "kamaji-$(KAMAJI_GIT_REF)/charts/kamaji/"
+	@helm dependency update $(KAMAJI_CHART) >/dev/null
+	@echo "Kamaji chart $(KAMAJI_GIT_REF) vendored to $(KAMAJI_CHART)/"
+
+k8s-kamaji-init: kamaji-chart
 	$(call tf_init,$(TF_KAMAJI),$(STATE_KAMAJI))
 
 k8s-kamaji-apply: k8s-kamaji-init ## Install Kamaji operator + Ænix etcd-operator

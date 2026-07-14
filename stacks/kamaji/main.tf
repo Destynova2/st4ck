@@ -70,21 +70,38 @@ resource "kubernetes_namespace" "kamaji" {
 # Webhook serving cert is issued by cert-manager via ClusterIssuer "internal-ca".
 
 resource "helm_release" "kamaji" {
-  name             = "kamaji"
-  # ⚠ 2026-07-14 : Clastix a ferme l'acces ANONYME a ghcr.io/clastix
-  # (401 sur le token pull — chart et image). Un deploiement fresh de ce
-  # stack echoue tant que : (a) un compte/token Clastix est configure,
-  # (b) les artefacts sont re-serves depuis notre registre (hauler/zot),
-  # ou (c) une alternative a Kamaji est actee. Decision a prendre —
-  # coherent avec leur passage stable-payant (cf. ADR-020/025 et le
-  # rapport docs/reviews/2026-07-12 versions : "edge = canal de facto").
-  repository       = "oci://ghcr.io/clastix/charts"
-  chart            = "kamaji"
-  version          = coalesce(var.kamaji_version, local.platform_versions.kamaji_version)
+  name = "kamaji"
+  # ⚠ 2026-07-14 (delimitation precise apres contre-verification) :
+  # Clastix a ferme l'acces anonyme au chart ET a l'image de l'OPERATEUR
+  # Kamaji sur ghcr (401 cible — ghcr.io/clastix/charts/kamaji et
+  # ghcr.io/clastix/kamaji), coherent avec leur modele stable-payant.
+  # Le provider CAPI (ghcr.io/clastix/charts/cluster-api-control-plane-
+  # provider-kamaji) RESTE public, l'image operateur RESTE publiee sur
+  # quay.io/clastix/kamaji (26.7.x-edge), et le chart source est public
+  # dans github.com/clastix/kamaji (charts/kamaji). Deblocage retenu :
+  # chart vendore depuis git (make kamaji-chart, pattern garage-chart)
+  # + image quay en override — voir values ci-dessous.
+  # Chart vendore par `make kamaji-chart` (pin kamaji_git_ref au registre).
+  chart            = "${path.module}/chart"
   namespace        = kubernetes_namespace.kamaji.metadata[0].name
   create_namespace = false
 
   values = [file("${path.module}/values.yaml")]
+
+  # Image operateur depuis quay (le default du chart pointe sur des
+  # registres fermes aux anonymes).
+  set {
+    name  = "image.repository"
+    value = "quay.io/clastix/kamaji"
+  }
+  set {
+    name  = "image.tag"
+    value = coalesce(var.kamaji_image_tag, local.platform_versions.kamaji_image_tag)
+  }
+  set {
+    name  = "image.pullPolicy"
+    value = "IfNotPresent"
+  }
 
   depends_on = [kubernetes_namespace.kamaji]
 }

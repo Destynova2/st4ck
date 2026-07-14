@@ -254,6 +254,12 @@ def talos_files() -> list[dict]:
             "path": f"https://github.com/siderolabs/talos/releases/download/{talos_version}/talosctl-linux-amd64",
             "name": "talosctl",
         },
+        {
+            # Chart Kamaji vendore depuis git (l'OCI ghcr est ferme aux
+            # anonymes) — le tarball pinne par SHA suit le registre.
+            "path": f"https://github.com/clastix/kamaji/archive/{REGISTRY['kamaji_git_ref']}.tar.gz",
+            "name": "kamaji-src.tar.gz",
+        },
     ]
 
 
