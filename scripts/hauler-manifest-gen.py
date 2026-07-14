@@ -80,7 +80,7 @@ def collect_images() -> list[str]:
 
     kept = []
     for img in sorted(images):
-        if "__" in img:  # bootstrap placeholder (locally built, not upstream)
+        if "__" in img or "${" in img:  # placeholder de template bootstrap (image locale)
             warn(f"image skipped (build-time placeholder): {img}")
             continue
         name, _, tag = img.partition(":")

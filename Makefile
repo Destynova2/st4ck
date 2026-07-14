@@ -35,8 +35,18 @@ PROVIDER ?= scaleway
 # HTTP on :8080 (localhost or tunnelled from remote CI VM).
 KMS_OUTPUT         := kms-output
 VB_HOST            ?= localhost
+# Ports hote du platform pod — surchargables si un autre projet local les
+# occupe (ex.: make bootstrap VB_PORT=18080 GITEA_PORT=13000).
 VB_PORT            ?= 8080
+KMS_PORT           ?= 8200
+KMS_CLUSTER_PORT   ?= 8201
+GITEA_PORT         ?= 3000
+GITEA_SSH_PORT     ?= 2222
+WP_PORT            ?= 8000
+WP_GRPC_PORT       ?= 9000
+BOOTSTRAP_PORTS    := $(VB_PORT) $(KMS_PORT) $(KMS_CLUSTER_PORT) $(GITEA_PORT) $(GITEA_SSH_PORT) $(WP_PORT) $(WP_GRPC_PORT)
 VB_URL             := http://$(VB_HOST):$(VB_PORT)
+KMS_URL            := http://127.0.0.1:$(KMS_PORT)
 # Lazy (=, not :=) so each sub-make/tofu call re-reads from disk. Critical
 # during scaleway-bootstrap-vm where kms-output/ is populated mid-run.
 export TF_HTTP_USERNAME = $(shell cat $(KMS_OUTPUT)/approle-role-id.txt 2>/dev/null)
@@ -1002,10 +1012,18 @@ bootstrap-init:
 
 bootstrap: bootstrap-init ## Start the platform pod locally (podman)
 	@command -v podman >/dev/null 2>&1 || { echo "Error: podman required"; exit 1; }
+	@for port in $(BOOTSTRAP_PORTS); do \
+		if lsof -nP -iTCP:$$port -sTCP:LISTEN >/dev/null 2>&1; then \
+			echo "ERROR: port $$port deja occupe :"; lsof -nP -iTCP:$$port -sTCP:LISTEN | tail -1; \
+			echo "Surcharge possible: make bootstrap VB_PORT=18080 KMS_PORT=18200 GITEA_PORT=13000 ..."; \
+			exit 1; \
+		fi; \
+	done
 	@mkdir -p $(BOOTSTRAP_DIR)
 	$(TF) -chdir=$(TF_BOOTSTRAP) apply -auto-approve \
 		-var="source_dir=$(CURDIR)" \
-		-var="bootstrap_dir=$(BOOTSTRAP_DIR)"
+		-var="bootstrap_dir=$(BOOTSTRAP_DIR)" \
+		-var='host_ports={kms=$(KMS_PORT),kms_cluster=$(KMS_CLUSTER_PORT),vb=$(VB_PORT),gitea_http=$(GITEA_PORT),gitea_ssh=$(GITEA_SSH_PORT),wp_http=$(WP_PORT),wp_grpc=$(WP_GRPC_PORT)}'
 	@$(TF) -chdir=$(TF_BOOTSTRAP) output -raw status
 
 bootstrap-export: ## Copy tokens + certs from PVC to kms-output/
@@ -1031,7 +1049,7 @@ bootstrap-stop: ## Stop the platform pod
 state-snapshot: ## Backup OpenBao Raft snapshot (all states)
 	@ROOT_TOKEN=$$(cat $(KMS_OUTPUT)/root-token.txt) && \
 		curl -sf -H "X-Vault-Token: $$ROOT_TOKEN" \
-			http://127.0.0.1:8200/v1/sys/storage/raft/snapshot \
+			$(KMS_URL)/v1/sys/storage/raft/snapshot \
 			-o $(KMS_OUTPUT)/raft-snapshot-$$(date +%Y%m%d-%H%M%S).snap && \
 		echo "Raft snapshot saved to $(KMS_OUTPUT)/"
 
@@ -1040,7 +1058,7 @@ state-restore: ## Restore OpenBao Raft snapshot (SNAPSHOT=path)
 	@ROOT_TOKEN=$$(cat $(KMS_OUTPUT)/root-token.txt) && \
 		curl -sf -X PUT -H "X-Vault-Token: $$ROOT_TOKEN" \
 			--data-binary @$(SNAPSHOT) \
-			http://127.0.0.1:8200/v1/sys/storage/raft/snapshot && \
+			$(KMS_URL)/v1/sys/storage/raft/snapshot && \
 		echo "Raft snapshot restored from $(SNAPSHOT)"
 
 # ─── Disaster Recovery ──────────────────────────────────────────────────
@@ -1055,7 +1073,7 @@ dr-backup-kms:
 		cp -r $(KMS_OUTPUT) $$BACKUP_DIR/kms-output && \
 		ROOT_TOKEN=$$(cat $(KMS_OUTPUT)/root-token.txt) && \
 		curl -sf -H "X-Vault-Token: $$ROOT_TOKEN" \
-			http://127.0.0.1:8200/v1/sys/storage/raft/snapshot \
+			$(KMS_URL)/v1/sys/storage/raft/snapshot \
 			-o $$BACKUP_DIR/raft.snap && \
 		echo "DR backup saved to $$BACKUP_DIR/"
 

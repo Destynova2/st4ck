@@ -159,9 +159,9 @@ spec:
       command: ["bao", "server", "-config=/config/config.hcl"]
       ports:
         - containerPort: 8200
-          hostPort: 8200
+          hostPort: ${p_kms}
         - containerPort: 8201
-          hostPort: 8201
+          hostPort: ${p_kms_cluster}
       env:
         - name: SKIP_CHOWN
           value: "true"
@@ -180,10 +180,10 @@ spec:
     # ═══ vault-backend (TF state HTTP → OpenBao KV v2) ═══════════════
     # No token needed at startup — each TF client sends creds per request.
     - name: vault-backend
-      image: __VAULT_BACKEND_IMAGE__
+      image: ${vault_backend_image}
       ports:
         - containerPort: 8080
-          hostPort: 8080
+          hostPort: ${p_vb}
       env:
         - name: VAULT_URL
           value: "http://127.0.0.1:8200"
@@ -202,9 +202,9 @@ spec:
       image: docker.io/gitea/gitea:1.22-rootless@sha256:4216d612992a25ed5fe6062679ca0be0b224f93c0b6fdba03e6c8f3d623cfb4e
       ports:
         - containerPort: 3000
-          hostPort: 3000
+          hostPort: ${p_gitea_http}
         - containerPort: 2222
-          hostPort: 2222
+          hostPort: ${p_gitea_ssh}
       volumeMounts:
         - name: gitea-data
           mountPath: /var/lib/gitea
@@ -235,9 +235,9 @@ spec:
       image: docker.io/woodpeckerci/woodpecker-server:v3@sha256:428eb0965754e25e67b8b086648438858b4fa64487b1cd3cc8e4101b396e459a
       ports:
         - containerPort: 8000
-          hostPort: 8000
+          hostPort: ${p_wp_http}
         - containerPort: 9000
-          hostPort: 9000
+          hostPort: ${p_wp_grpc}
       volumeMounts:
         - name: woodpecker-data
           mountPath: /var/lib/woodpecker
@@ -407,7 +407,7 @@ spec:
     - name: shared
       persistentVolumeClaim: { claimName: platform-shared }
     - name: source
-      hostPath: { path: __SOURCE_DIR__, type: Directory }
+      hostPath: { path: "${source_dir}", type: Directory }
     - name: kms-output
       persistentVolumeClaim: { claimName: platform-kms-output }
     - name: matchbox-data

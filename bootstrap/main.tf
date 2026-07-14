@@ -24,16 +24,40 @@ variable "bootstrap_dir" {
   default     = "/tmp/platform-local"
 }
 
+# Ports hote publies par le pod. Surchargables quand un autre projet
+# local occupe deja un port (ex.: make bootstrap VB_PORT=18080).
+variable "host_ports" {
+  description = "Host-side ports published by the platform pod."
+  type = object({
+    kms         = number
+    kms_cluster = number
+    vb          = number
+    gitea_http  = number
+    gitea_ssh   = number
+    wp_http     = number
+    wp_grpc     = number
+  })
+  default = {
+    kms         = 8200
+    kms_cluster = 8201
+    vb          = 8080
+    gitea_http  = 3000
+    gitea_ssh   = 2222
+    wp_http     = 8000
+    wp_grpc     = 9000
+  }
+}
+
 variable "gitea_url" {
-  description = "Gitea external URL (used by WP OAuth callback)"
+  description = "Gitea external URL (used by WP OAuth callback). Null = derived from host_ports."
   type        = string
-  default     = "http://host.containers.internal:3000"
+  default     = null
 }
 
 variable "oauth_url" {
-  description = "OAuth URL (browser-accessible Gitea URL)"
+  description = "OAuth URL (browser-accessible Gitea URL). Null = derived from host_ports."
   type        = string
-  default     = "http://127.0.0.1:3000"
+  default     = null
 }
 
 variable "domain" {
@@ -43,9 +67,9 @@ variable "domain" {
 }
 
 variable "wp_host" {
-  description = "Woodpecker external URL"
+  description = "Woodpecker external URL. Null = derived from host_ports."
   type        = string
-  default     = "http://127.0.0.1:8000"
+  default     = null
 }
 
 variable "admin_user" {
@@ -134,10 +158,10 @@ locals {
     metadata:
       name: platform-config
     data:
-      CI_GITEA_URL: "${var.gitea_url}"
-      CI_OAUTH_URL: "${var.oauth_url}"
+      CI_GITEA_URL: "${local.gitea_url}"
+      CI_OAUTH_URL: "${local.oauth_url}"
       CI_DOMAIN: "${var.domain}"
-      CI_WP_HOST: "${var.wp_host}"
+      CI_WP_HOST: "${local.wp_host}"
       CI_ADMIN: "${var.admin_user}"
       CI_GIT_REPO_URL: "${var.git_repo_url}"
       CI_SCW_PROJECT_ID: "${var.scw_project_id}"
@@ -163,15 +187,22 @@ locals {
       unseal.key: ${random_bytes.seal_key.base64}
   YAML
 
-  pod_yaml = replace(
-    replace(
-      file("${path.module}/platform-pod.yaml"),
-      "__VAULT_BACKEND_IMAGE__",
-      var.vault_backend_image
-    ),
-    "__SOURCE_DIR__",
-    var.source_dir
-  )
+  # URLs derivees des ports (surcharge explicite possible via les vars)
+  gitea_url = coalesce(var.gitea_url, "http://host.containers.internal:${var.host_ports.gitea_http}")
+  oauth_url = coalesce(var.oauth_url, "http://127.0.0.1:${var.host_ports.gitea_http}")
+  wp_host   = coalesce(var.wp_host, "http://127.0.0.1:${var.host_ports.wp_http}")
+
+  pod_yaml = templatefile("${path.module}/platform-pod.yaml", {
+    vault_backend_image = var.vault_backend_image
+    source_dir          = var.source_dir
+    p_kms               = var.host_ports.kms
+    p_kms_cluster       = var.host_ports.kms_cluster
+    p_vb                = var.host_ports.vb
+    p_gitea_http        = var.host_ports.gitea_http
+    p_gitea_ssh         = var.host_ports.gitea_ssh
+    p_wp_http           = var.host_ports.wp_http
+    p_wp_grpc           = var.host_ports.wp_grpc
+  })
 }
 
 # ─── Write generated files ─────────────────────────────────────────────
@@ -227,7 +258,7 @@ output "status" {
       Setup:    podman logs -f platform-tofu-setup
       OpenBao:  http://127.0.0.1:8200
       Gitea:    http://${var.domain}:3000 (${var.admin_user})
-      WP:       ${var.wp_host}
+      WP:       ${local.wp_host}
       State:    http://127.0.0.1:8080
       KMS out:  podman volume inspect platform-kms-output
       Stop:     make bootstrap-stop
