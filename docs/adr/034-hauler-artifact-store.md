@@ -102,17 +102,23 @@ Flux Day-2 restent les deux seuls owners.
 
 ## Points ouverts à valider (bloquants avant la phase 2)
 
-1. **Comportement `?ns=` de containerd — collision confirmée en PoC local
-   (2026-07-11, hauler v2.0.1)** : le registre servi ignore le paramètre `ns`
-   et normalise les chemins à la Docker — `registry.k8s.io/pause:3.10` est
-   servi sous `library/pause`, `docker.io/busybox` sous `library/busybox`
-   (catalog observé). Deux upstreams partageant un nom court entrent donc en
-   collision, et un mirror transparent multi-upstream ne résout pas les
-   chemins non-Docker. Piste privilégiée : `rewrite:` par image (préfixer le
-   host amont dans le chemin stocké) + un endpoint mirror **par upstream**
-   avec préfixe de chemin et `overridePath` dans le machineconfig Talos —
-   même famille de pattern que le mirror SCR actuel. À valider sur cluster
-   dev. Repli : mirror SCR conservé, Hauler = staging + air-gap uniquement.
+1. **RÉSOLU PAR TEST RÉEL (2026-07-14, cluster Talos local + trafic
+   containerd observé)** — verdict en deux moitiés :
+   - ✅ **docker.io : mirror transparent fonctionnel tel quel.** containerd
+     demande `/v2/library/<x>?ns=docker.io`, hauler sert exactement ce
+     chemin → 200 sur manifests + blobs (busybox prouvé de bout en bout,
+     image installée sur le nœud via le mirror).
+   - ❌ **Upstreams non-Docker : échec par construction.** containerd
+     demande le chemin NU (`/v2/pause?ns=registry.k8s.io`,
+     `/v2/siderolabs/kubelet?ns=ghcr.io`) ; hauler stocke/sert sous
+     `library/pause` ou chemin plein → 404 → fallback upstream. En
+     connecté c'est un aller-retour perdu ; **en air-gap c'est bloquant**.
+   Suite actée : expérimenter `rewrite:` dans le générateur pour stocker
+   les images non-docker sous leur chemin nu (le générateur devra
+   détecter les collisions de chemin nu inter-upstreams et échouer
+   bruyamment — aucune dans le parc actuel), sinon replis : endpoints
+   par upstream + `overridePath`, ou config serveur containerd par host.
+   Le mirror docker.io peut être activé dès maintenant.
 2. **Croissance du store** : pas de GC automatique (delete granulaire depuis
    v1.4.0 seulement). Politique à définir : rebuild périodique du store +
    `--exclude-extras` + platform pinné.
