@@ -66,9 +66,9 @@ ghcr.io/kyverno/kyvernopre:v1.15.0
 ghcr.io/openclarity/openclarity-api-server:1.1.3
 
 # ─── Monitoring: VictoriaMetrics + VictoriaLogs + Headlamp ────────────
-docker.io/victoriametrics/victoria-metrics:v1.121.0
+docker.io/victoriametrics/victoria-metrics:v1.147.0
 docker.io/victoriametrics/operator:v0.62.0
-docker.io/victoriametrics/victoria-logs:v1.40.0-victorialogs
+docker.io/victoriametrics/victoria-logs:v1.51.0
 ghcr.io/headlamp-k8s/headlamp:v0.36.0
 
 # ─── Flux v2 ──────────────────────────────────────────────────────────
@@ -80,5 +80,5 @@ ghcr.io/fluxcd/notification-controller:v1.6.0
 # ─── KaaS: CAPI + Kamaji + Karpenter (Phase A) ────────────────────────
 registry.k8s.io/cluster-api/cluster-api-controller:v1.10.7
 ghcr.io/clastix/kamaji:v1.5.1
-ghcr.io/aenix-io/etcd-operator:v0.5.0
+ghcr.io/aenix-io/etcd-operator:v0.4.5
 public.ecr.aws/karpenter/controller:1.7.4

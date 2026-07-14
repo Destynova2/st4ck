@@ -25,11 +25,11 @@ spec:
   - name: docker.io/rancher/local-path-provisioner:v0.0.35
   - name: docker.io/velero/velero-plugin-for-aws:v1.14.0
   - name: docker.io/victoriametrics/operator:v0.62.0
-  - name: docker.io/victoriametrics/victoria-logs:v1.40.0-victorialogs
-  - name: docker.io/victoriametrics/victoria-metrics:v1.121.0
+  - name: docker.io/victoriametrics/victoria-logs:v1.51.0
+  - name: docker.io/victoriametrics/victoria-metrics:v1.147.0
   - name: docker.io/woodpeckerci/woodpecker-agent:v3@sha256:a983b1016217ad94cdab48d732ec97b5b1f72718725d651183d7ec885f7caf35
   - name: docker.io/woodpeckerci/woodpecker-server:v3@sha256:428eb0965754e25e67b8b086648438858b4fa64487b1cd3cc8e4101b396e459a
-  - name: ghcr.io/aenix-io/etcd-operator:v0.5.0
+  - name: ghcr.io/aenix-io/etcd-operator:v0.4.5
   - name: ghcr.io/aquasecurity/trivy-operator:0.27.0
   - name: ghcr.io/aquasecurity/trivy:0.59.1
   - name: ghcr.io/clastix/kamaji:v1.5.1
