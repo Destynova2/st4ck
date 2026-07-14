@@ -44,9 +44,11 @@ inconnu du provider est `failed`, jamais « disparu ».
 ## Build & test
 
 ```bash
-make build   # go build ./...
-make test    # go test ./... — fake backend in-memory, zéro réseau
-make lint    # gofmt + go vet (+ golangci-lint si présent)
+make build     # go build ./...
+make test      # go test ./... — fake backend in-memory, zéro réseau
+make lint      # gofmt + go vet (+ golangci-lint si présent)
+make e2e-kwok  # cycle NodeClaim complet contre un cluster kwok (~20 s,
+               # brew install kwok + podman/docker — voir hack/kwok-e2e/)
 ```
 
 Versions : Go 1.26, karpenter-core **v1.14.0** (signature `NewControllers`

@@ -220,3 +220,37 @@ Wipe multi-disques + checksum SHA512 (B2/B3), métriques/alertes érosion
 (P1/O6), apply-config via PN (S2), IAM dédiée (S3), cadence upgrade pool
 éteint (O2), chemin DR (O5) : Tier 2 pré-mortem « avant mise en service du
 pool », non exigés par la mission — inchangés.
+
+## 6. Harnais kwok e2e (2026-07-14) — cycle NodeClaim complet, exécuté VERT
+
+Niveau 5 du plan `docs/how-to/test-local.md` : `hack/kwok-e2e/`
+(`make e2e-kwok`). karpenter-core **v1.14.0 réel** (mêmes binaires que la
+prod, CRDs prises du module pinné) + notre CloudProvider + `FakeBackend`
+seedé (3 serveurs `stopped`, offre EM-A116X-SSD), contre un cluster kwok
+v0.8.0 (runtime podman). Un « node simulator » joue le kubelet Talos : il
+crée le Node kwok avec `spec.providerID` **byte-identique** et le taint
+`karpenter.sh/unregistered`, comme le ferait le machineconfig pré-imagé.
+
+**Résultat : PASS, ~20 s, 2 exécutions consécutives** (2026-07-14, macOS
+arm64). Séquence observée et assertée par `run.sh` :
+
+| Étape | Observation |
+|---|---|
+| `ScalewayEMNodeClass` appliquée | condition `Ready=True` posée par le contrôleur statut (poolSize 3, available 3) |
+| NodePool statique `replicas 0→1` (gate `StaticCapacity=true`) | NodeClaim créé par static provisioning ; `Create()` claim + power-on fake ; `status.providerID = scaleway-em://fr-par-2/e2e00000-0000-4000-8000-000000000000` ; serveur fake `stopped→ready` (endpoint debug) |
+| Join simulé | Node `em-sim-0` créé ; **`spec.providerID` == providerID du NodeClaim octet pour octet** (assertion C3 explicite) |
+| Enregistrement | conditions `Registered=True`, `Initialized=True`, `Ready=True` sur le NodeClaim, `nodeName: em-sim-0` |
+| `replicas 1→0` | static deprovisioning → drain → `Delete()` → serveur fake `ready→stopped` → Node supprimé → **NodeClaim finalisé** (finalizer retiré via NotFound sur `stopped`) ; pool revenu à 3 `stopped` |
+
+Preuves archivées par run dans `hack/kwok-e2e/.artifacts/` (non committé) :
+`nodeclaim-registered.yaml`, `node-joined.yaml`,
+`servers-after-scale-{up,down}.json`, `controller.log`.
+
+**Portée** : ceci clôt, côté logiciel, le critère de sortie M0 n°4 (« bout
+en bout NodePool 0→1→0 ») pour tout ce qui ne dépend pas du matériel — le
+contrat CloudProvider entier est exercé par le vrai core v1.14 (static
+provisioning/deprovisioning, registration, GC, termination) et le matching
+C3 est prouvé de bout en bout. Restent hardware-only (runbook §3) : la
+denylist kubelet Talos (`provider-id`), la latence POST p95 < 12 min, et le
+rejeu du même cycle sur un EM loué (critères 1, 2 et la moitié matérielle
+du 4).
