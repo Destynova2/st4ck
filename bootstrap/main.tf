@@ -222,7 +222,10 @@ resource "local_file" "pod" {
 resource "terraform_data" "platform_pod" {
   depends_on = [local_file.configmap, local_file.pod]
 
-  input = sha256(local.configmap_yaml)
+  # triggers_replace (PAS input) : input change = update in-place et les
+  # provisioners create-time ne rejouent JAMAIS — bug constate au E2E
+  # local 2026-07-14 (pod jamais relance apres bootstrap-stop).
+  triggers_replace = [sha256(local.configmap_yaml)]
 
   provisioner "local-exec" {
     command = <<-EOT
@@ -253,7 +256,7 @@ output "admin_user" {
 resource "terraform_data" "gitea_admin" {
   depends_on = [terraform_data.platform_pod]
 
-  input = var.admin_user
+  triggers_replace = [terraform_data.platform_pod.id, var.admin_user]
 
   provisioner "local-exec" {
     environment = {

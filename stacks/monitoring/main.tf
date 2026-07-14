@@ -120,7 +120,7 @@ resource "kubernetes_secret" "grafana_admin" {
 resource "terraform_data" "seed_grafana_to_openbao" {
   # Triggers re-run if the password changes (which, with ignore_changes=all,
   # only happens on a deliberate `tofu state rm` rotation).
-  input = sha256(random_password.grafana_admin.result)
+  triggers_replace = [sha256(random_password.grafana_admin.result)]
 
   provisioner "local-exec" {
     environment = {

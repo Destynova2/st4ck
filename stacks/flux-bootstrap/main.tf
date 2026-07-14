@@ -144,10 +144,12 @@ data "kubernetes_secret" "openbao_admin_password" {
 #   the trigger to avoid rewriting state on every refresh; the pubkey
 #   uniquely identifies the keypair.
 resource "terraform_data" "seed_flux_ssh_to_openbao" {
-  input = sha256(join(",", [
+  # triggers_replace, pas input : le commentaire ci-dessus promet un re-run
+  # sur rotation du known_hosts — input ne le fait pas (update in-place).
+  triggers_replace = [sha256(join(",", [
     tls_private_key.flux_ssh.public_key_openssh,
     var.gitea_known_hosts,
-  ]))
+  ]))]
 
   provisioner "local-exec" {
     environment = {
@@ -352,11 +354,11 @@ resource "kubectl_manifest" "flux_git_repo" {
       # tag of the same branch (end-to-end tested per env). Set
       # -var="flux_git_tag=vX.Y.Z" to pin.
       ref:
-        %{~ if var.flux_git_tag != "" ~}
+        %{~if var.flux_git_tag != ""~}
         tag: ${var.flux_git_tag}
-        %{~ else ~}
+        %{~else~}
         branch: main
-        %{~ endif ~}
+        %{~endif~}
       secretRef:
         name: flux-ssh-identity
   YAML

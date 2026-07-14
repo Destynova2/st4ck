@@ -118,11 +118,11 @@ resource "terraform_data" "seed_openbao_secrets" {
   # additions are deliberately NOT in the input hash: ignore_changes = all
   # locks them, so they only flip on a state-loss reseed (which we want to
   # detect via the `bao kv get` idempotency guards below, not a hash diff).
-  input = sha256(join(",", [
+  triggers_replace = [sha256(join(",", [
     random_password.hydra_system_secret.result,
     random_password.oidc_client_secret.result,
     random_password.garage_admin_token.result,
-  ]))
+  ]))]
 
   provisioner "local-exec" {
     environment = {
@@ -138,7 +138,7 @@ resource "terraform_data" "seed_openbao_secrets" {
       ZOT_ADMIN_PASSWORD     = random_password.zot_admin_password.result
       # bcrypt() re-salts on every eval — harmless: seed_if_absent only
       # writes the FIRST value, OpenBao keeps it stable afterwards.
-      ZOT_HTPASSWD           = "admin:${bcrypt(random_password.zot_admin_password.result)}"
+      ZOT_HTPASSWD = "admin:${bcrypt(random_password.zot_admin_password.result)}"
       # Cosign keypair (Phase 1a-1). PEMs go through env vars, never on
       # the kubectl exec command line where they'd hit ps + audit logs.
       COSIGN_PUB = tls_private_key.cosign.public_key_pem
