@@ -2,7 +2,7 @@
 
 GO ?= go
 
-.PHONY: all build test lint fmt vet tidy clean help
+.PHONY: all build test lint fmt vet tidy clean help e2e-kwok
 
 all: build test lint ## Build, test and lint
 
@@ -32,6 +32,9 @@ vet: ## go vet
 
 tidy: ## go mod tidy
 	$(GO) mod tidy
+
+e2e-kwok: ## Full NodeClaim cycle against a kwok cluster (requires kwokctl + podman/docker)
+	hack/kwok-e2e/run.sh
 
 clean: ## Remove build artifacts
 	$(GO) clean ./...
