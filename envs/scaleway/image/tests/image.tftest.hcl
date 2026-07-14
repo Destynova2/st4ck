@@ -60,12 +60,12 @@ variables {
 
 # ─── S3 bucket naming ───────────────────────────────────────────────────
 
-run "bucket_name_includes_project_id" {
+run "bucket_name_follows_naming_convention" {
   command = plan
 
   assert {
-    condition     = scaleway_object_bucket.talos_image.name == "talos-image-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    error_message = "Bucket name must be 'talos-image-{project_id}' to ensure per-project uniqueness"
+    condition     = scaleway_object_bucket.talos_image.name == "st4ck-talos-image-fr-par-18d0321"
+    error_message = "Bucket name must be '{namespace}-talos-image-{region}-{schematic7}' (see locals.bucket_name)"
   }
 
   assert {
@@ -90,17 +90,17 @@ run "builder_is_cheapest_dev_instance" {
   }
 }
 
-run "builder_tagged_ephemeral" {
+run "builder_tagged_by_convention" {
   command = plan
 
   assert {
-    condition     = contains(scaleway_instance_server.builder.tags, "ephemeral")
-    error_message = "Builder must carry 'ephemeral' tag — makes sweep/teardown scripts safe"
+    condition     = contains(scaleway_instance_server.builder.tags, "component:talos-image")
+    error_message = "Builder must carry 'component:talos-image' tag (base_tags convention)"
   }
 
   assert {
-    condition     = contains(scaleway_instance_server.builder.tags, "builder")
-    error_message = "Builder must carry 'builder' tag — filters in sweep scripts"
+    condition     = contains(scaleway_instance_server.builder.tags, "managed-by:opentofu")
+    error_message = "Builder must carry 'managed-by:opentofu' tag (base_tags convention)"
   }
 }
 
@@ -110,8 +110,8 @@ run "snapshot_name_includes_version" {
   command = plan
 
   assert {
-    condition     = scaleway_instance_snapshot.talos.name == "talos-v1.12.4"
-    error_message = "Instance snapshot name must be 'talos-{version}'"
+    condition     = scaleway_instance_snapshot.talos.name == "st4ck-talos-v1.12.4-18d0321"
+    error_message = "Instance snapshot name must be '{namespace}-talos-{version}-{schematic7}' (locals.image_base)"
   }
 
   assert {
@@ -120,8 +120,8 @@ run "snapshot_name_includes_version" {
   }
 
   assert {
-    condition     = scaleway_block_snapshot.talos.name == "talos-v1.12.4-block"
-    error_message = "Block snapshot name must be 'talos-{version}-block'"
+    condition     = scaleway_block_snapshot.talos.name == "st4ck-talos-v1.12.4-18d0321-block"
+    error_message = "Block snapshot name must be '{image_base}-block'"
   }
 }
 
@@ -131,13 +131,13 @@ run "image_variants" {
   command = plan
 
   assert {
-    condition     = scaleway_instance_image.talos.name == "talos-v1.12.4"
-    error_message = "Local SSD image name must be 'talos-{version}'"
+    condition     = scaleway_instance_image.talos.name == "st4ck-talos-v1.12.4-18d0321"
+    error_message = "Local SSD image name must be '{image_base}'"
   }
 
   assert {
-    condition     = scaleway_instance_image.talos_block.name == "talos-v1.12.4-block"
-    error_message = "Block image name must be 'talos-{version}-block' (needed for GPU instances)"
+    condition     = scaleway_instance_image.talos_block.name == "st4ck-talos-v1.12.4-18d0321-block"
+    error_message = "Block image name must be '{image_base}-block' (needed for GPU instances)"
   }
 
   assert {
