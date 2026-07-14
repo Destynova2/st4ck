@@ -71,6 +71,13 @@ resource "kubernetes_namespace" "kamaji" {
 
 resource "helm_release" "kamaji" {
   name             = "kamaji"
+  # ⚠ 2026-07-14 : Clastix a ferme l'acces ANONYME a ghcr.io/clastix
+  # (401 sur le token pull — chart et image). Un deploiement fresh de ce
+  # stack echoue tant que : (a) un compte/token Clastix est configure,
+  # (b) les artefacts sont re-serves depuis notre registre (hauler/zot),
+  # ou (c) une alternative a Kamaji est actee. Decision a prendre —
+  # coherent avec leur passage stable-payant (cf. ADR-020/025 et le
+  # rapport docs/reviews/2026-07-12 versions : "edge = canal de facto").
   repository       = "oci://ghcr.io/clastix/charts"
   chart            = "kamaji"
   version          = coalesce(var.kamaji_version, local.platform_versions.kamaji_version)

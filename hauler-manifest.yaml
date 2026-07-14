@@ -11,6 +11,7 @@ metadata:
     hauler.dev/platform: linux/amd64
 spec:
   images:
+  - name: docker.io/aquasec/trivy-operator:0.32.0
   - name: docker.io/busybox:latest
   - name: docker.io/busybox:stable
   - name: docker.io/dxflrs/amd64_garage:v2.3.0
@@ -30,19 +31,16 @@ spec:
   - name: docker.io/woodpeckerci/woodpecker-agent:v3@sha256:a983b1016217ad94cdab48d732ec97b5b1f72718725d651183d7ec885f7caf35
   - name: docker.io/woodpeckerci/woodpecker-server:v3@sha256:428eb0965754e25e67b8b086648438858b4fa64487b1cd3cc8e4101b396e459a
   - name: ghcr.io/aenix-io/etcd-operator:v0.4.5
-  - name: ghcr.io/aquasecurity/trivy-operator:0.27.0
   - name: ghcr.io/aquasecurity/trivy:0.59.1
-  - name: ghcr.io/clastix/kamaji:v1.5.1
   - name: ghcr.io/cloudnative-pg/cloudnative-pg:1.27.0
   - name: ghcr.io/external-secrets/external-secrets:v0.20.4
-  - name: ghcr.io/fluxcd/helm-controller:v1.4.1
-  - name: ghcr.io/fluxcd/kustomize-controller:v1.6.2
-  - name: ghcr.io/fluxcd/notification-controller:v1.6.0
-  - name: ghcr.io/fluxcd/source-controller:v1.6.2
+  - name: ghcr.io/fluxcd/helm-controller:v1.5.5
+  - name: ghcr.io/fluxcd/kustomize-controller:v1.8.5
+  - name: ghcr.io/fluxcd/notification-controller:v1.8.4
+  - name: ghcr.io/fluxcd/source-controller:v1.8.5
   - name: ghcr.io/headlamp-k8s/headlamp:v0.36.0
   - name: ghcr.io/kyverno/kyverno:v1.15.0
   - name: ghcr.io/kyverno/kyvernopre:v1.15.0
-  - name: ghcr.io/openclarity/openclarity-api-server:1.1.3
   - name: ghcr.io/opentofu/opentofu:1.9@sha256:2fc03a4a0e745558a0693f1e80ffe56c3c43826ee21140c4d27f52fd938b82fe
   - name: public.ecr.aws/karpenter/controller:1.7.4
   - name: quay.io/cilium/cilium-envoy:v1.35.9-1770554954-8ce3bb4eca04188f4a0a1bfbd0a06a40f90883de
