@@ -37,9 +37,16 @@
 
 set -euo pipefail
 
+# Tofu-first mode (test-local.md niveau 3.4 — matches the production
+# pipeline order): SKIP_CILIUM=1 leaves the cluster CNI-less (nodes stay
+# NotReady, API up — same state a fresh Scaleway cluster is in) so that
+# `make k8s-cni-apply ENV=dev INSTANCE=docker REGION=local` owns Cilium
+# exactly like day-1. KUBECONFIG_OUT overrides the kubeconfig path (use
+# ~/.kube/st4ck-dev-docker-local to match the Makefile context).
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAME="${1:-st4ck-local}"
-KUBECONFIG_OUT="${HOME}/.kube/${NAME}-docker"
+KUBECONFIG_OUT="${KUBECONFIG_OUT:-${HOME}/.kube/${NAME}-docker}"
 WORKERS="${WORKERS:-4}"
 MEM_CP="${MEM_CP:-6GB}"
 MEM_WORKER="${MEM_WORKER:-4GB}"
@@ -96,6 +103,15 @@ sed -i.bak "s|https://10.5.0.2:6443|https://127.0.0.1:${PORT}|" "${KUBECONFIG_OU
 log "kubeconfig: ${KUBECONFIG_OUT}"
 
 until kubectl --kubeconfig "${KUBECONFIG_OUT}" get nodes >/dev/null 2>&1; do sleep 5; done
+
+if [ "${SKIP_CILIUM:-0}" = "1" ]; then
+  # Tofu-first mode: leave the cluster CNI-less. Next step:
+  #   make k8s-cni-apply ENV=dev INSTANCE=docker REGION=local [VB_PORT=...]
+  kubectl --kubeconfig "${KUBECONFIG_OUT}" get nodes
+  log "SKIP_CILIUM=1 — nodes stay NotReady until k8s-cni-apply (by design)."
+  log "done. Destroy with: make local-docker-down"
+  exit 0
+fi
 
 # ── Cilium (platform values, version registry pin) ─────────────────────
 # helm template + apply instead of `helm install`: same rendered result,

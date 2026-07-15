@@ -118,10 +118,31 @@ Extensions a caler, dans l'ordre de valeur :
    local) → `skopeo copy` push/pull + login htpasswd + pull anonyme.
 3. **kubescape smoke** : deposer un fichier EICAR dans un pod → verifier
    l'evenement malware du node-agent.
-4. **Sous-ensemble k8s-up** : cni → pki → external-secrets contre le
-   cluster local (vault-backend du niveau 2 pour l'etat). Les stacks
-   sont provider-agnostiques (kubeconfig_path) — la limite est la RAM
-   de la machine podman (8 Gi : monter a 12-16 pour la stack complete).
+4. **Golden path tofu-first** (l'ordre REEL du pipeline — leçon
+   œuf-poule du run 3.1 : en Flux-first, cert-manager/openbao
+   appartiennent a Flux avant que leurs preconditions tofu n'existent,
+   et il faut poser a la main 7 secrets + 2 Certificates + 7 seeds KV ;
+   en tofu-first tout cela est pose par les stacks, comme en prod).
+   Runbook (contexte `dev-docker-local`, etat dans le vault-backend du
+   bootstrap — VB_PORT=18080 etc. si ports decales) :
+
+   ```bash
+   KUBECONFIG_OUT=~/.kube/st4ck-dev-docker-local SKIP_CILIUM=1 \
+     bash scripts/local-docker-up.sh st4ck-tofu   # nodes NotReady : normal
+   make k8s-cni-apply  ENV=dev INSTANCE=docker REGION=local VB_PORT=18080
+   make k8s-pki-apply  ENV=dev INSTANCE=docker REGION=local VB_PORT=18080
+   # ... puis vagues monitoring/identity/security/storage au besoin,
+   make flux-bootstrap-apply ENV=dev INSTANCE=docker REGION=local VB_PORT=18080
+   ```
+
+   Valide en plus du 3.1 : l'ordre day-1, le handoff tofu→Flux
+   (adoption des releases Helm), et les seeds reels (secrets.tf).
+   Acquis du 2026-07-16 en attendant : la variante manuelle-fidele sur
+   le cluster Flux-first a prouve TOUTE la chaine post-day-1 —
+   issuer bootstrap Ready → Certificates emis → OpenBao Infra
+   auto-init + scale HA x3 (values declaratives) → Job Flux
+   bootstrap-openbao-pki Completed (pki_int, roles, auth k8s) →
+   ClusterSecretStore "store validated" (auth kubernetes, role eso).
 
 Limites structurelles du mode container : pas de vraie surface OS Talos
 (upgrade kernel, machine config bas niveau), 1 seul CP (pas de quorum
