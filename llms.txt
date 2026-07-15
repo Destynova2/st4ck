@@ -47,6 +47,9 @@
 - [ADR-037: Env Promotion by Tags](docs/adr/037-env-promotion-tags.md): Isolated Scaleway projects per env class; qa/prod pin release tags of main
 - [ADR-038: OpenClarity Retirement](docs/adr/038-openclarity-retirement.md): Project archived upstream; consolidate on trivy-operator (supersedes ADR-027)
 - [ADR-039: Registry zot vs Harbor](docs/adr/039-registry-zot-vs-harbor.md): Pilot zot (arm64-native); re-evaluate Harbor at its v2.16 arm64 GA
+- [ADR-040: PKI Issuance](docs/adr/040-pki-issuance-openbao-vs-stepca.md): OpenBao PKI engine + cert-manager confirmed; step-ca/cfssl/EJBCA rejected (step-ca noted as SSH-RA option)
+- [ADR-041: Talos Block Storage](docs/adr/041-storage-talos-localpath-longhorn.md): local-path now; Longhorn staged on Elastic Metal arrival; Mayastor/Rook rejected
+- [ADR-042: GitOps Flux vs ArgoCD](docs/adr/042-gitops-flux-vs-argocd.md): Flux confirmed (registry substitution, two-phase, OCI); explicit re-examination triggers
 
 ## Documentation (Diataxis)
 - [Landing Page](docs/index.md): What this is and where to go
