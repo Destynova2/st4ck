@@ -69,12 +69,13 @@ vert, `cilium status` OK.
 memoire par defaut de talosctl est 2 Gio/noeud — la stack complete
 cgroup-thrash dedans (sockets unix en i/o timeout, API server mort,
 et la VM podman peut mourir avec). Le script cree desormais 1 CP a
-6 Go + 4 workers a 3 Go (`WORKERS`/`MEM_CP`/`MEM_WORKER`
-surchargeables — le CP porte etcd + les watches de 5 noeuds + tous
-les DaemonSets, mesure a 2.9 Go la ou les workers plafonnent a
-~2.3) ; il faut une machine podman ~24 Gi / 12 vCPU. Depannage a
-chaud sans rebuild : `podman update --memory 6g --memory-swap 6g
-<node>`.
+6 Go + 4 workers a 4 Go (`WORKERS`/`MEM_CP`/`MEM_WORKER`
+surchargeables). Mesures : le CP thrash a 2.9/3 (etcd + watches de
+5 noeuds + tous les DaemonSets) ; un worker thrash aussi a 3 Go des
+que vmsingle + trivy-server y bindent leurs PVC (NotReady constate).
+Budget limites 6+4x4 = 22 Go sur une machine podman 24 Gi / 12 vCPU
+(limites != usage ; usage mesure ~14 Go). Depannage a chaud sans
+rebuild : `podman update --memory 4g --memory-swap 4g <node>`.
 Contrainte CLI : le provisioner docker de talosctl >= 1.13 est
 mono-controlplane (`--controlplanes` n'existe que pour qemu,
 Linux-only) — le quorum etcd 3 CP reste hors de portee des containers

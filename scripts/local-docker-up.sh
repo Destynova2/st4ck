@@ -20,13 +20,17 @@
 #
 # Usage: bash scripts/local-docker-up.sh [cluster-name]   (default: st4ck-local)
 #
-# Sizing (env-overridable): WORKERS=4 MEM_CP=6GB MEM_WORKER=3GB.
+# Sizing (env-overridable): WORKERS=4 MEM_CP=6GB MEM_WORKER=4GB.
 # The talosctl defaults (2GiB/node) cgroup-thrash under the full stack —
 # both E2E crashes of 2026-07-15 were that limit, not the podman VM.
 # The CP needs ~2x a worker: etcd + apiserver watches for 5 nodes and
 # the full Flux graph, PLUS every DaemonSet (cilium, tetragon,
 # kubescape, log collectors) also runs there. Measured: 3GB CP
-# thrashes at 2.9GB while workers sit at ~2.2/3GB.
+# thrashes at 2.9GB while workers sit at ~2.2/3GB idle-ish — but the
+# worker hosting vmsingle+trivy-server ALSO thrashes at 3GB once PVCs
+# bind (NotReady at 2.9GB) → 4GB per worker. Full-stack budget:
+# 6 + 4x4 = 22GB of limits on a 24GiB podman VM (limits != usage;
+# measured usage ~14GB total).
 # NOTE: the docker provisioner is single-controlplane by CLI design
 # (talosctl >= 1.13 only has --controlplanes on qemu, Linux-only) —
 # etcd quorum / 3-CP behaviour needs VMs (envs/local or Scaleway).
@@ -38,7 +42,7 @@ NAME="${1:-st4ck-local}"
 KUBECONFIG_OUT="${HOME}/.kube/${NAME}-docker"
 WORKERS="${WORKERS:-4}"
 MEM_CP="${MEM_CP:-6GB}"
-MEM_WORKER="${MEM_WORKER:-3GB}"
+MEM_WORKER="${MEM_WORKER:-4GB}"
 
 log() { printf '[local-docker] %s\n' "$*"; }
 die() { printf '[local-docker] ERROR: %s\n' "$*" >&2; exit 1; }
