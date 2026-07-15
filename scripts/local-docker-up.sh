@@ -19,12 +19,26 @@
 #   - helm, kubectl
 #
 # Usage: bash scripts/local-docker-up.sh [cluster-name]   (default: st4ck-local)
+#
+# Sizing (env-overridable): WORKERS=4 MEM_CP=6GB MEM_WORKER=3GB.
+# The talosctl defaults (2GiB/node) cgroup-thrash under the full stack —
+# both E2E crashes of 2026-07-15 were that limit, not the podman VM.
+# The CP needs ~2x a worker: etcd + apiserver watches for 5 nodes and
+# the full Flux graph, PLUS every DaemonSet (cilium, tetragon,
+# kubescape, log collectors) also runs there. Measured: 3GB CP
+# thrashes at 2.9GB while workers sit at ~2.2/3GB.
+# NOTE: the docker provisioner is single-controlplane by CLI design
+# (talosctl >= 1.13 only has --controlplanes on qemu, Linux-only) —
+# etcd quorum / 3-CP behaviour needs VMs (envs/local or Scaleway).
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAME="${1:-st4ck-local}"
 KUBECONFIG_OUT="${HOME}/.kube/${NAME}-docker"
+WORKERS="${WORKERS:-4}"
+MEM_CP="${MEM_CP:-6GB}"
+MEM_WORKER="${MEM_WORKER:-3GB}"
 
 log() { printf '[local-docker] %s\n' "$*"; }
 die() { printf '[local-docker] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -57,7 +71,9 @@ talosctl cluster create docker \
   --name "${NAME}" \
   --image "ghcr.io/siderolabs/talos:${TALOS_VERSION}" \
   --kubernetes-version "${K8S_VERSION}" \
-  --workers 1 \
+  --workers "${WORKERS}" \
+  --memory-controlplanes "${MEM_CP}" \
+  --memory-workers "${MEM_WORKER}" \
   --config-patch "@${REPO_ROOT}/patches/cilium-cni.yaml" || true
 
 # ── Kubeconfig (rewrite the API endpoint to the published port) ────────

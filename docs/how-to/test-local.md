@@ -11,7 +11,7 @@ hauler, ADR-038 kubescape, ADR-039 zot, mode local-docker arm64).
 | 0 | Statique (validate/render/tests unitaires) | ~3 min | rien | ✅ tout existe — a bundler en 1 cible |
 | 1 | Rendu + schemas (kubeconform, HR×values) | ~10 min | brew kubeconform | ⬜ a outiller |
 | 2 | Bootstrap podman E2E (platform pod) | ~15-20 min | podman rootful | ✅ cible existante, a rejouer |
-| 3 | Cluster Talos local + stacks + Flux | ~10-30 min | local-docker-up, **VM podman ≥ 12 Gi** | 🟨 execute au 2/3 le 2026-07-14 (voir 3.1) |
+| 3 | Cluster Talos local + stacks + Flux | ~10-30 min | local-docker-up, **VM podman 24 Gi / 12 vCPU** | ✅ 3.1 valide le 2026-07-15 (voir verdict) ; 3.2-3.4 ⬜ |
 | 4 | Mirror hauler → containerd Talos | ~30 min | niveaux 2+3 | ⬜ **ferme le point ouvert ADR-034** |
 | 5 | Harnais kwok du provider karpenter | ~2-4 h build | brew kwok | ⬜ derniere marche avant EM reel |
 
@@ -65,6 +65,21 @@ Acquis (valide 2026-07-13) : `make local-docker-up` → Talos v1.12.9
 arm64 en containers + Cilium kube-proxy-free avec NOS values, coredns
 vert, `cilium status` OK.
 
+**Dimensionnement (lecon des 2 crashs du 2026-07-15)** : la limite
+memoire par defaut de talosctl est 2 Gio/noeud — la stack complete
+cgroup-thrash dedans (sockets unix en i/o timeout, API server mort,
+et la VM podman peut mourir avec). Le script cree desormais 1 CP a
+6 Go + 4 workers a 3 Go (`WORKERS`/`MEM_CP`/`MEM_WORKER`
+surchargeables — le CP porte etcd + les watches de 5 noeuds + tous
+les DaemonSets, mesure a 2.9 Go la ou les workers plafonnent a
+~2.3) ; il faut une machine podman ~24 Gi / 12 vCPU. Depannage a
+chaud sans rebuild : `podman update --memory 6g --memory-swap 6g
+<node>`.
+Contrainte CLI : le provisioner docker de talosctl >= 1.13 est
+mono-controlplane (`--controlplanes` n'existe que pour qemu,
+Linux-only) — le quorum etcd 3 CP reste hors de portee des containers
+(→ VMs : envs/local, ou spike virtu vz/Apple Silicon).
+
 Extensions a caler, dans l'ordre de valeur :
 
 1. **Flux day-2 E2E** : `flux install` sur le cluster local + le root
@@ -73,18 +88,31 @@ Extensions a caler, dans l'ordre de valeur :
    remediation, substituteFrom, PDB, tout le graphe Flux — sur de vrais
    CRDs. C'est ~80 % du risque day-2 restant.
 
-   **Run du 2026-07-14 (verdict partiel)** — acquis : GitRepository
-   Ready sur le Gitea du bootstrap (auth basic + IP gvproxy
-   192.168.127.254 depuis les pods), build + substitution + apply
-   progressif du root OK, et le « dry-run onion » a valide les
-   frontieres ADR-033 couche par couche (chaque echec = exactement une
-   precondition day-1 : CRDs cert-manager statiques, PUIS 23 CRDs ESO,
-   PUIS webhook ESO pret). Non atteint : HRs avec versions substituees
-   et progression two-phase — la VM podman 8 Gi est morte en thrashing
-   (load 160) avec un autre projet actif a cote. Reprise : machine
-   podman ≥ 12-16 Gi ou machine dediee ; le deroule est rejouable en
-   ~15 min (bootstrap → push HEAD → flux install → secret+ConfigMap →
-   GitRepository+Kustomization → CRDs day-1 → reconcile).
+   **VALIDE le 2026-07-15** (cluster 1 CP + 4 workers x 3 Go, VM podman
+   24 Gi / 12 vCPU, runbook scripte dans le scratchpad de session) :
+   - Les 16 HelmReleases sortent de la reconciliation avec les
+     **versions concretes du registre** (`substituteFrom
+     platform-versions` prouve de bout en bout : cilium 1.17.13,
+     vm-k8s-stack 0.86.0, openbao 0.28.4, velero 11.4.0, ...).
+   - **Chaines two-phase** : security-kyverno Ready → kyverno-policies
+     lance (transition phase 1 → 2 observee) ; storage-zot correctement
+     RETENU par storage-zot-eso (l'ExternalSecret ne peut etre Ready
+     sans OpenBao seede — c'est le comportement concu).
+   - **Boucle day-2 complete** : le bug velero `dependsOn garage`
+     fantome (garage est tofu-owned, le CR HelmRelease n'existe
+     jamais) a ete trouve par ce test, corrige, commit, pousse sur le
+     Gitea local → Flux a ramasse et velero est passe en install
+     reelle. GitOps end-to-end sur infrastructure locale.
+   - 10+ HRs Ready (cert-manager, cilium, kyverno, tetragon, openbao
+     x2, headlamp, victoria-logs x2, ...). Echecs residuels tous
+     rattaches aux 2 manques day-1 assumes de ce niveau : pas de
+     StorageClass (stack cni = tofu) → PVC Pending, et pas d'OpenBao
+     seede (stack pki = tofu) → identity/grafana en attente de
+     secrets ESO. C'est le perimetre du point 4 ci-dessous.
+   - Egalement valide en passant : le « dry-run onion » ADR-033 (CRDs
+     cert-manager statiques PUIS rendu ESO complet PUIS webhook), la
+     survie du cluster aux reboots durs de la VM (etcd sur volumes),
+     et l'auto-unseal du KMS bootstrap apres restart (volumes podman).
 2. **zot smoke** : HR zot avec un override filesystem (pas de Garage en
    local) → `skopeo copy` push/pull + login htpasswd + pull anonyme.
 3. **kubescape smoke** : deposer un fichier EICAR dans un pod → verifier
@@ -96,7 +124,12 @@ Extensions a caler, dans l'ordre de valeur :
 
 Limites structurelles du mode container : pas de vraie surface OS Talos
 (upgrade kernel, machine config bas niveau), 1 seul CP (pas de quorum
-etcd 3 noeuds), pas de PN/LB.
+etcd 3 noeuds — limite CLI talosctl, voir Dimensionnement), pas de
+PN/LB. Piste pour les lever sur Mac : spike virtu Apple Silicon —
+Talos v1.12 arm64 gele sur QEMU/HVF (siderolabs/talos#13108) mais la
+voie Virtualization.framework (UTM backend Apple, puis Lima vz + image
+nocloud, reseau vmnet) est credible et donnerait quorum 3 CP, upgrades
+OS et extensions systeme (prerequis Longhorn) en local.
 
 ## Niveau 4 — Mirror hauler → containerd (ferme ADR-034)
 
