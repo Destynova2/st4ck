@@ -38,7 +38,7 @@ docker.io/rancher/local-path-provisioner:v0.0.34
 docker.io/rancher/local-path-provisioner:v0.0.35
 docker.io/busybox:latest
 docker.io/busybox:stable
-docker.io/dxflrs/amd64_garage:v2.3.0
+docker.io/dxflrs/garage:v2.3.0
 docker.io/dxflrs/garage:v2.2.0
 docker.io/velero/velero-plugin-for-aws:v1.14.0
 

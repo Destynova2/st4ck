@@ -23,8 +23,11 @@ deployment:
 # image override at TOP LEVEL — chart reads .Values.image.*, not
 # .Values.deployment.image.* (the latter was a values typo that meant
 # Garage stayed on chart-default v2.2.0 forever despite tag bumps).
+# dxflrs/garage is the multi-arch manifest list (arm64+amd64+arm+386) —
+# the chart default dxflrs/amd64_garage is arch-locked and dies on arm64
+# with LMDB ENOSYS under emulation (golden-path finding 2026-07-16).
 image:
-  repository: dxflrs/amd64_garage
+  repository: dxflrs/garage
   tag: "v2.3.0"
 
 persistence:
