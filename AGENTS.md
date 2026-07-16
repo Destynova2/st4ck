@@ -95,6 +95,7 @@ make scaleway-zot               # zot UI (password in clipboard)
 - **ADRs are in French** -- 30+ ADRs in `docs/adr/` covering all major architectural decisions (including ADR-033 OpenBao/ESO ownership).
 - **Bootstrap has 5 chicken-and-egg problems** resolved by design -- see `docs/explanation/bootstrap.md`.
 - **Talos has no shell access** -- you cannot SSH into nodes. Use `talosctl` for node operations.
+- **Architecture-agnostic image rule (amd64 = x86_64)**: every image pin MUST be a multi-arch manifest list (plain tag, no digest-of-single-arch, no arch-suffixed repo). Arch-locked repos are bugs — `dxflrs/amd64_garage` died on arm64 with LMDB ENOSYS (fixed 2026-07-16); Harbor was dropped partly for having no arm64 GA (ADR-039). The two deliberate arch-aware spots: the hauler store (default `linux/amd64`, generate an ARM store with `hauler-manifest-gen.py --platform linux/arm64`) and the Scaleway Talos image import (`x86_64`; ARM nodes need a second `metal-arm64` import).
 - **Kyverno webhooks block deletion** -- `k8s-down` deletes webhooks first to prevent cascading failures.
 - **zot admin password** (+ pre-composed htpasswd) is generated in `stacks/pki/secrets.tf`, seeded into OpenBao Infra, and synced to Kubernetes by ESO. Use `make scaleway-zot` to access.
 - **Port-forward zombies** -- previous `kubectl port-forward` processes may linger. `k8s-down` kills them.

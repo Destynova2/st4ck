@@ -105,6 +105,12 @@ talos/
 - Topology: 3 control planes + 3 workers
 - Sensitive outputs (talosconfig, kubeconfig) are marked `sensitive` in Terraform
 - All k8s stacks use `kubeconfig_path` (not raw k8s credentials)
+- Arch-agnostic images (amd64 = x86_64) : tout pin d'image DOIT être un
+  manifest list multi-arch — les repos arch-locked sont des bugs (cf.
+  `dxflrs/amd64_garage`, ENOSYS sur arm64, fix 2026-07-16). Exceptions
+  assumées : store hauler (`--platform linux/arm64` pour un store ARM)
+  et l'import d'image Talos Scaleway (`x86_64`, second import
+  `metal-arm64` requis pour des nœuds ARM)
 - `ENV` variable selects provider: `make ENV=local k8s-up`
 - State backend: `backend "http"` → vault-backend (:8080) → OpenBao KV v2
 
