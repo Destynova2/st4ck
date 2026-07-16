@@ -234,6 +234,63 @@ resource "terraform_data" "seed_openbao_secrets" {
   }
 }
 
+# ─── Load the VM-signed intermediate CA into pki_int/ ─────────────────
+# Closes the Phase F-bis-2 v3 "TBD" (see the WARN branch in
+# flux/job-bootstrap-openbao-pki.yaml): the day-2 Job deliberately has
+# NO access to the intermediate KEY, so the one-shot `config/ca` load
+# belongs here — tofu day-1 IS the privileged context (it holds
+# kms-output/ directly). Mount enable is idempotent on both sides, so
+# ordering doesn't matter: tofu-first loads the CA before the Job adds
+# roles+auth; on Job-first (legacy) clusters the next pki apply fills
+# the CA in. Without this, ClusterIssuer internal-ca authenticates but
+# CANNOT SIGN — the entire identity chain stalls (golden-path finding
+# 2026-07-16, was the last red segment of the local E2E graph).
+resource "terraform_data" "load_pki_int_ca" {
+  depends_on = [helm_release.openbao_infra]
+
+  triggers_replace = [sha256(local.infra_ca_chain)]
+
+  provisioner "local-exec" {
+    environment = {
+      KUBECONFIG         = var.kubeconfig_path
+      BAO_ADMIN_PASSWORD = random_password.openbao_admin.result
+      # PEMs via env, never on the command line (ps + audit logs).
+      INFRA_CA_KEY   = local.infra_ca_key
+      INFRA_CA_CHAIN = local.infra_ca_chain
+    }
+    command = <<-EOT
+      set -eu
+      BAO="kubectl -n secrets exec -i openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true"
+
+      echo "Waiting for OpenBao Infra API..."
+      ready=0
+      for i in $(seq 1 300); do
+        if $BAO bao status >/dev/null 2>&1; then ready=1; break; fi
+        sleep 1
+      done
+      [ "$ready" = "1" ] || { echo "ERROR: OpenBao Infra API not ready after 300s"; exit 1; }
+
+      $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null
+
+      if $BAO bao secrets list 2>/dev/null | grep -q '^pki_int/'; then
+        echo "pki_int/ already mounted"
+      else
+        echo "Enabling pki_int/ (5y max-lease)..."
+        $BAO bao secrets enable -path=pki_int -max-lease-ttl=43800h pki >/dev/null
+      fi
+
+      if $BAO bao read pki_int/cert/ca 2>/dev/null | grep -q -- "-----BEGIN CERTIFICATE-----"; then
+        echo "pki_int/ CA already loaded, skipping"
+      else
+        echo "Loading VM-signed intermediate into pki_int/config/ca..."
+        printf '%s\n%s\n' "$INFRA_CA_KEY" "$INFRA_CA_CHAIN" \
+          | $BAO bao write pki_int/config/ca pem_bundle=- >/dev/null
+        echo "pki_int/ CA loaded."
+      fi
+    EOT
+  }
+}
+
 # ─── OpenBao PKI engine bootstrap ─────────────────────────────────────
 #
 # Phase F-bis-2 v3 (2026-04-30): logic MOVED to a Helm post-install Job
