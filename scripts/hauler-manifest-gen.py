@@ -37,7 +37,13 @@ IMAGE_VARS = REPO / "envs" / "scaleway" / "image" / "variables.tf"
 VERSIONS_CM = REPO / "clusters" / "management" / "versions-configmap.yaml"
 
 HAULER_API = "content.hauler.cattle.io/v1"
-PLATFORM = "linux/amd64"
+# Store platform. amd64 default = current fleet (Scaleway VMs) and keeps
+# the committed manifest deterministic (verify-local diffs it). For an
+# ARM store (EM COPARM, local arm64): --platform linux/arm64 — every
+# image pin is a multi-arch manifest list (arch-locked repos are treated
+# as bugs, cf. dxflrs/amd64_garage 2026-07-16), so the same manifest
+# resolves for any platform hauler is asked to sync.
+PLATFORM_DEFAULT = "linux/amd64"
 
 REGISTRY: dict[str, str] = yaml.safe_load(VERSIONS_CM.read_text())["data"]
 
@@ -272,6 +278,12 @@ def talos_files() -> list[dict]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-o", "--output", default=str(REPO / "hauler-manifest.yaml"))
+    parser.add_argument(
+        "--platform",
+        default=PLATFORM_DEFAULT,
+        help="hauler.dev/platform annotation (e.g. linux/arm64 for an ARM store; "
+        f"default {PLATFORM_DEFAULT} keeps the committed manifest deterministic)",
+    )
     args = parser.parse_args()
 
     images = collect_images()
@@ -301,7 +313,7 @@ def main() -> None:
             "kind": "Images",
             "metadata": {
                 "name": "st4ck-images",
-                "annotations": {"hauler.dev/platform": PLATFORM},
+                "annotations": {"hauler.dev/platform": args.platform},
             },
             "spec": {"images": [{"name": img} for img in images]},
         },
