@@ -4,6 +4,7 @@ kind: Kustomization
 # rationale (single source of truth for tofu + Flux).
 resources:
   - namespace.yaml
+  - namespace-kubescape.yaml
   - helmrepository.yaml
   - helmrelease-trivy.yaml
   - helmrelease-tetragon.yaml
