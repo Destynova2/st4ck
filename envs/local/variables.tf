@@ -16,6 +16,28 @@ variable "kubernetes_version" {
   default     = "1.35.6"
 }
 
+# Multi-arch (AGENTS.md rule): defaults target the historical x86 KVM
+# host; the arm64 values serve the nested-KVM Lima lab on Apple Silicon
+# (test-local.md) — talos_arch=arm64 libvirt_machine=virt
+# libvirt_firmware=/usr/share/AAVMF/AAVMF_CODE.fd
+variable "talos_arch" {
+  description = "Talos image architecture (amd64 | arm64)"
+  type        = string
+  default     = "amd64"
+}
+
+variable "libvirt_machine" {
+  description = "libvirt machine type ('' = provider default; 'virt' on aarch64)"
+  type        = string
+  default     = ""
+}
+
+variable "libvirt_firmware" {
+  description = "UEFI firmware path ('' = BIOS default; AAVMF required on aarch64)"
+  type        = string
+  default     = ""
+}
+
 # ─── Network ───────────────────────────────────────────────────────────────
 
 variable "network_cidr" {
