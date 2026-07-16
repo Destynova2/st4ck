@@ -76,6 +76,13 @@ que vmsingle + trivy-server y bindent leurs PVC (NotReady constate).
 Budget limites 6+4x4 = 22 Go sur une machine podman 24 Gi / 12 vCPU
 (limites != usage ; usage mesure ~14 Go). Depannage a chaud sans
 rebuild : `podman update --memory 4g --memory-swap 4g <node>`.
+**Disque : 100 Go** — la stack complete x5 noeuds consomme ~54 Go
+(images imbriquees + PVC) ; a 64 Go les kubelets declenchent
+DiskPressure et evincent en boucle (cert-manager en a fait les frais
+le 2026-07-16). Redimensionner : `podman machine set --disk-size 100`
+PUIS, dans la VM, `sudo growpart /dev/vda 4 && sudo xfs_growfs /`
+(CoreOS n'auto-grandit pas la partition apres coup) ; enfin redemarrer
+les workers marques DiskPressure (condition cadvisor figee sinon).
 Contrainte CLI : le provisioner docker de talosctl >= 1.13 est
 mono-controlplane (`--controlplanes` n'existe que pour qemu,
 Linux-only) — le quorum etcd 3 CP reste hors de portee des containers
