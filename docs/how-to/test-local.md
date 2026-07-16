@@ -154,11 +154,45 @@ Extensions a caler, dans l'ordre de valeur :
 Limites structurelles du mode container : pas de vraie surface OS Talos
 (upgrade kernel, machine config bas niveau), 1 seul CP (pas de quorum
 etcd 3 noeuds — limite CLI talosctl, voir Dimensionnement), pas de
-PN/LB. Piste pour les lever sur Mac : spike virtu Apple Silicon —
-Talos v1.12 arm64 gele sur QEMU/HVF (siderolabs/talos#13108) mais la
-voie Virtualization.framework (UTM backend Apple, puis Lima vz + image
-nocloud, reseau vmnet) est credible et donnerait quorum 3 CP, upgrades
-OS et extensions systeme (prerequis Longhorn) en local.
+PN/LB. Ces limites sont levees par le tier VM ci-dessous.
+
+### Tier VM — lab nested-KVM Lima (VALIDE 2026-07-17)
+
+La virtualisation imbriquee est disponible sur Apple Silicon M3+ /
+macOS 15+ (FEAT_NV2, expose par Virtualization.framework). Une VM Lima
+`vz` avec `nestedVirtualization: true` fournit `/dev/kvm` → libvirt →
+**`envs/local` tourne INCHANGE sur le Mac** (provider terraform natif).
+Prouve sur M5 Max : 3 CP + 1 worker Talos v1.12.9 arm64 en VMs KVM,
+**quorum etcd 3/3 membres votants**, bootstrap + kubeconfig par le
+module talos-cluster.
+
+Runbook (config Lima : scratchpad `kvmlab.yaml` — vz, nested, 10 vCPU /
+32 Gi / 120 Gi, ~/workspace/st4ck monte en RO) :
+
+1. `limactl create --name=kvmlab kvmlab.yaml && limactl start kvmlab`
+   → verifier `/dev/kvm` dans la VM.
+2. Dans la VM : libvirt-daemon-system + qemu-system-arm +
+   qemu-efi-aarch64 + qemu-utils, opentofu (deb), talosctl arm64,
+   pool dir `images`, clone du repo depuis le Gitea du bootstrap
+   (auth par header Basic — le mot de passe contient des `/`).
+3. `tofu apply` de envs/local avec `-var talos_arch=arm64
+   -var libvirt_machine=virt
+   -var libvirt_firmware=/usr/share/AAVMF/AAVMF_CODE.no-secboot.fd`.
+
+Pieges rencontres (tous integres au code ou ci-dessous) :
+- `/bin/sh` = dash sur Ubuntu → `pipefail` KO (fixe : interpreter bash
+  explicite sur les provisioners).
+- `libvirt_firmware` DOIT etre un chemin liste dans
+  `/usr/share/qemu/firmware/*.json` (le AAVMF_CODE.fd nu n'y est pas →
+  « Unable to find 'efi' firmware »).
+- Apres `virsh vol-upload` : `chown libvirt-qemu:kvm` sur les qcow2.
+- AppArmor bloque le fichier de backing → `security_driver = "none"`
+  dans /etc/libvirt/qemu.conf (lab jetable, assume).
+- Un create rate laisse des domaines definis hors etat tofu →
+  `virsh undefine --nvram` avant re-apply.
+
+Suite naturelle : k8s-cni-apply contre ce cluster (nodes Ready), puis
+upgrades Talos et extensions systeme (banc Longhorn, ADR-041).
 
 ## Niveau 4 — Mirror hauler → containerd (ferme ADR-034)
 
