@@ -75,7 +75,10 @@ resource "terraform_data" "talos_image" {
   input = local.talos_image_url
 
   provisioner "local-exec" {
-    command = <<-EOT
+    # bash explicite : /bin/sh est dash sur Ubuntu et rejette `-o pipefail`
+    # (casse le lab nested-KVM Lima — 2026-07-17)
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
       set -euo pipefail
       mkdir -p ${local.talos_image_dir}
       if [ ! -f "${local.talos_image_qcow}" ]; then
@@ -96,7 +99,8 @@ resource "terraform_data" "talos_base_volume" {
   input = local.talos_base_name
 
   provisioner "local-exec" {
-    command = <<-EOT
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
       set -euo pipefail
       VIRSH="virsh -c ${var.libvirt_uri}"
       if ! $VIRSH vol-info --pool ${var.libvirt_pool} ${local.talos_base_name} >/dev/null 2>&1; then
