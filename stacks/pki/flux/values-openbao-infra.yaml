@@ -14,6 +14,15 @@ server:
   ha:
     enabled: true
     replicas: 3
+    # PDB: the chart owns it (single owner — golden-path finding
+    # 2026-07-16: a standalone Flux PDB SSA-merged onto the chart's one
+    # → "minAvailable and maxUnavailable cannot be both set"). And the
+    # chart's unset default rendered maxUnavailable: 0, which blocks
+    # EVERY voluntary drain (talosctl upgrade would hang). 1 of 3 ≡
+    # minAvailable 2 — Raft quorum survives, drains proceed.
+    disruptionBudget:
+      enabled: true
+      maxUnavailable: 1
     raft:
       enabled: true
       setNodeId: true
