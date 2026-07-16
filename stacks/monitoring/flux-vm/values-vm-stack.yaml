@@ -34,9 +34,12 @@ vmagent:
     resources:
       requests:
         cpu: 100m
-        memory: 128Mi
+        memory: 192Mi
       limits:
-        memory: 256Mi
+        # 256Mi OOMKilled (exit 137) at ~35 scrape targets on the local
+        # 5-node E2E (2026-07-16) — production has MORE targets, so this
+        # was a latent prod crash-loop, not a local artefact.
+        memory: 512Mi
     # Scrape annotated pods (prometheus.io/scrape=true)
     scrapeInterval: 30s
     externalLabels:

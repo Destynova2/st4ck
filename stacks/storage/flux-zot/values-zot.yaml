@@ -15,6 +15,7 @@ configFiles:
       "distSpecVersion": "1.1.1",
       "storage": {
         "rootDirectory": "/var/lib/registry",
+        "dedupe": false,
         "storageDriver": {
           "name": "s3",
           "regionendpoint": "http://garage.garage.svc.cluster.local:3900",

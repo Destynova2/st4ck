@@ -691,6 +691,49 @@ resource "kubectl_manifest" "cluster_issuer_bootstrap" {
   ]
 }
 
+# ─── TokenRequest RBAC for the Vault issuer ──────────────────────────
+# cert-manager's Vault auth mints a token FOR the referenced SA via the
+# TokenRequest API — without this Role the issuer fails with
+# `serviceaccounts "cert-manager" is forbidden` and every Certificate
+# behind internal-ca stalls (identity chain incl. CNPG — golden-path
+# finding 2026-07-16, keystone of the whole identity dependency tree).
+resource "kubectl_manifest" "cert_manager_tokenrequest_role" {
+  yaml_body = <<-YAML
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: cert-manager-tokenrequest
+      namespace: cert-manager
+    rules:
+      - apiGroups: [""]
+        resources: ["serviceaccounts/token"]
+        resourceNames: ["cert-manager"]
+        verbs: ["create"]
+  YAML
+
+  depends_on = [helm_release.cert_manager]
+}
+
+resource "kubectl_manifest" "cert_manager_tokenrequest_binding" {
+  yaml_body = <<-YAML
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: cert-manager-tokenrequest
+      namespace: cert-manager
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: Role
+      name: cert-manager-tokenrequest
+    subjects:
+      - kind: ServiceAccount
+        name: cert-manager
+        namespace: cert-manager
+  YAML
+
+  depends_on = [kubectl_manifest.cert_manager_tokenrequest_role]
+}
+
 # ─── Day-2 ClusterIssuer (Vault kind, OpenBao PKI backend) ───────────
 # Renamed locally to "internal-ca" — name kept stable so every existing
 # Certificate CR (hydra-tls, pomerium-*-tls, headlamp, etc.) renews from
