@@ -142,7 +142,7 @@ resource "terraform_data" "garage_wait" {
         RUNNING=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{.items[*].status.phase}' 2>/dev/null | tr ' ' '\n' | grep -c Running)
         # garage status only callable once garage-0 is Running; tolerate the
         # exec failure during the first ~10s by suppressing stderr.
-        NODES=$(kubectl -n garage exec garage-0 -c garage -- ./garage status 2>/dev/null | grep -cE '^[a-f0-9]{16}')
+        NODES=$(kubectl -n garage exec garage-0 -c garage -- /garage status 2>/dev/null | grep -cE '^[a-f0-9]{16}')
         if [ "$${RUNNING:-0}" -ge 3 ] && [ "$${NODES:-0}" -ge 3 ]; then
           echo "All 3 Garage pods Running and 3 nodes registered."
           exit 0
@@ -178,7 +178,7 @@ resource "terraform_data" "garage_layout" {
       # within ~5s; polling 1s catches it almost immediately.
       echo "Waiting for node discovery..."
       for i in $(seq 1 150); do
-        COUNT=$($GARAGE ./garage status 2>/dev/null | grep -c "HEALTHY\|NO ROLE")
+        COUNT=$($GARAGE /garage status 2>/dev/null | grep -c "HEALTHY\|NO ROLE")
         [ "$${COUNT:-0}" -ge 3 ] && break
         if [ $((i % 10)) -eq 0 ]; then
           echo "  $${COUNT:-0}/3 nodes (attempt $i/150)..."
@@ -187,13 +187,13 @@ resource "terraform_data" "garage_layout" {
       done
       [ "$${COUNT:-0}" -ge 3 ] || { echo "ERROR: node discovery timeout (got $${COUNT:-0}/3 after 150s)"; exit 1; }
 
-      NODES=$($GARAGE ./garage status 2>/dev/null | grep "NO ROLE" | awk '{print $1}')
+      NODES=$($GARAGE /garage status 2>/dev/null | grep "NO ROLE" | awk '{print $1}')
       if [ -n "$NODES" ]; then
         echo "Assigning layout..."
         for NODE_ID in $NODES; do
-          $GARAGE ./garage layout assign -z dc1 -c 5G "$NODE_ID" 2>&1 | tail -1
+          $GARAGE /garage layout assign -z dc1 -c 5G "$NODE_ID" 2>&1 | tail -1
         done
-        CURRENT_VER=$($GARAGE ./garage layout show 2>/dev/null | grep "layout version" | awk '{print $NF}' || echo 0)
+        CURRENT_VER=$($GARAGE /garage layout show 2>/dev/null | grep "layout version" | awk '{print $NF}' || echo 0)
         # Postmortem 2026-04-29 (#18): the `|| echo 0` fallback only fires
         # when the WHOLE pipeline fails (grep+awk). awk happily emits an
         # empty string when grep matches no line (output format change
@@ -208,7 +208,7 @@ resource "terraform_data" "garage_layout" {
           exit 1
         fi
         NEXT_VER=$((CURRENT_VER + 1))
-        $GARAGE ./garage layout apply --version $NEXT_VER 2>&1 | tail -2
+        $GARAGE /garage layout apply --version $NEXT_VER 2>&1 | tail -2
       else
         echo "Layout already configured."
       fi
@@ -247,7 +247,7 @@ resource "terraform_data" "garage_buckets_keys" {
 
       echo "Creating buckets..."
       for BUCKET in velero-backups zot-registry cnpg-backups; do
-        $GARAGE ./garage bucket create "$BUCKET" 2>/dev/null || true
+        $GARAGE /garage bucket create "$BUCKET" 2>/dev/null || true
       done
 
       echo "Creating keys and K8s secrets..."
@@ -287,11 +287,11 @@ resource "terraform_data" "garage_buckets_keys" {
           continue
         fi
 
-        KEY_INFO=$($GARAGE ./garage key info "$KEY_NAME" 2>/dev/null || $GARAGE ./garage key create "$KEY_NAME" 2>/dev/null)
+        KEY_INFO=$($GARAGE /garage key info "$KEY_NAME" 2>/dev/null || $GARAGE /garage key create "$KEY_NAME" 2>/dev/null)
         ACCESS=$(echo "$KEY_INFO" | grep "Key ID" | awk '{print $NF}')
         SECRET=$(echo "$KEY_INFO" | grep "Secret key" | awk '{print $NF}')
 
-        $GARAGE ./garage bucket allow --read --write --owner "$BUCKET" --key "$KEY_NAME"
+        $GARAGE /garage bucket allow --read --write --owner "$BUCKET" --key "$KEY_NAME"
 
         if [ "$SECRET_FMT" = "ini" ]; then
           kubectl -n "$SECRET_NS" create secret generic "$SECRET_NAME" \
