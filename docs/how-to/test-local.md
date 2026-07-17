@@ -191,8 +191,20 @@ Pieges rencontres (tous integres au code ou ci-dessous) :
 - Un create rate laisse des domaines definis hors etat tofu →
   `virsh undefine --nvram` avant re-apply.
 
-Suite naturelle : k8s-cni-apply contre ce cluster (nodes Ready), puis
-upgrades Talos et extensions systeme (banc Longhorn, ADR-041).
+**Banc CNI + upgrades/extensions — VALIDE aussi (2026-07-17)** :
+- `stacks/cni` applique (tofu, backend local, kubeconfig du lab) →
+  cilium kube-proxy-free + local-path, **4/4 nodes Ready**, coredns ok.
+- **Upgrade OS reel** : `talosctl upgrade --image
+  factory.talos.dev/installer/<schematic>:v1.12.9 --wait` sur wrk-1
+  avec un schematic incluant `iscsi-tools` + `util-linux-tools`
+  (prerequis Longhorn, ADR-041) → reecriture OS, reboot, rejoin,
+  post-check passed, extensions visibles via `talosctl get
+  extensions`, node Ready. Schematic du banc :
+  `53513e54bb39202f35694412577a6bc53d484744d35a126e5d42ef34785c0d83`.
+
+C'est la boucle complete que ni les containers ni un cluster cloud
+sans frais ne permettaient : machine config bas niveau, upgrade
+kernel/OS, extensions systeme — le banc Longhorn est operationnel.
 
 ## Niveau 4 — Mirror hauler → containerd (ferme ADR-034)
 
