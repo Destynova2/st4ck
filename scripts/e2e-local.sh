@@ -19,7 +19,11 @@ VB_PORT="${VB_PORT:-8080}"
 GITEA_PORT="${GITEA_PORT:-3000}"
 E2E_NAME="${E2E_NAME:-st4ck-e2e}"
 E2E_TIMEOUT_MIN="${E2E_TIMEOUT_MIN:-45}"
-CTX_ARGS=(ENV=dev INSTANCE=docker REGION=local "VB_PORT=${VB_PORT}")
+# LOCAL_BACKEND=1 : etat tofu LOCAL et jetable — purge a chaque run.
+# Sans cela, les chemins d'etat partages du vault-backend font sauter les
+# terraform_data (seeds KV, chargement pki_int : triggers inchanges =
+# jamais re-executes sur un cluster neuf) — trouve par le run 1.
+CTX_ARGS=(ENV=dev INSTANCE=docker REGION=local "VB_PORT=${VB_PORT}" LOCAL_BACKEND=1)
 KC="${HOME}/.kube/st4ck-dev-docker-local"
 K="kubectl --kubeconfig ${KC} --request-timeout=30s"
 GVPROXY_HOST="192.168.127.254" # IP de l'hote vue des pods (gvproxy)
@@ -43,7 +47,11 @@ curl -so /dev/null "http://localhost:${GITEA_PORT}" \
 echo "preflight ok"
 
 # ── Phase 1 : cluster jetable sans CNI ──────────────────────────────────
-phase "1. cluster ${E2E_NAME} (5 noeuds, sans CNI)"
+phase "1. cluster ${E2E_NAME} (5 noeuds, sans CNI) + purge etats locaux"
+for st in cni pki monitoring identity security storage; do
+  rm -f "stacks/${st}/terraform.tfstate" "stacks/${st}/terraform.tfstate.backup" \
+        "stacks/${st}/_local_backend_override.tf"
+done
 make local-docker-down "LOCAL_DOCKER_NAME=${E2E_NAME}" >/dev/null 2>&1 || true
 KUBECONFIG_OUT="${KC}" SKIP_CILIUM=1 bash scripts/local-docker-up.sh "${E2E_NAME}"
 
@@ -74,11 +82,12 @@ phase "4. convergence (max ${E2E_TIMEOUT_MIN} min)"
 DEADLINE=$(( $(date +%s) + E2E_TIMEOUT_MIN * 60 ))
 while [ "$(date +%s)" -lt "${DEADLINE}" ]; do
   sleep 60
-  TOTAL=$(${K} get helmrelease -A --no-headers 2>/dev/null | wc -l | tr -d ' ') || TOTAL=0
-  READY=$(${K} get helmrelease -A --no-headers 2>/dev/null | awk '$3=="True"' | wc -l | tr -d ' ') || READY=0
+  HR_STATE=$(${K} get helmrelease -A -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,READY:.status.conditions[?(@.type=='Ready')].status" --no-headers 2>/dev/null) || HR_STATE=""
+  TOTAL=$(printf '%s\n' "${HR_STATE}" | grep -c . || true)
+  READY=$(printf '%s\n' "${HR_STATE}" | awk '$3=="True"' | wc -l | tr -d ' ')
   echo "  HR ready=${READY}/${TOTAL}"
   if [ "${TOTAL}" -gt 0 ]; then
-    PENDING=$(${K} get helmrelease -A --no-headers 2>/dev/null | awk '$3!="True" {print $1"/"$2}')
+    PENDING=$(printf '%s\n' "${HR_STATE}" | awk '$3!="True" {print $1"/"$2}')
     NON_ALLOWED=$(printf '%s\n' "${PENDING}" | grep -vxF "${ALLOWLIST_HR}" | grep -c . || true)
     [ "${NON_ALLOWED}" = "0" ] && break
   fi
@@ -87,22 +96,24 @@ done
 # ── Phase 5 : assertions ────────────────────────────────────────────────
 phase "5. assertions"
 # 5a. HRs Ready (hors allowlist)
-BAD_HR=$(${K} get helmrelease -A --no-headers | awk '$3!="True" {print $1"/"$2}' \
-  | grep -vxF "${ALLOWLIST_HR}" || true)
+BAD_HR=$(${K} get helmrelease -A -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,READY:.status.conditions[?(@.type=='Ready')].status" --no-headers \
+  | awk '$3!="True" {print $1"/"$2}' | grep -vxF "${ALLOWLIST_HR}" || true)
 if [ -z "${BAD_HR}" ]; then echo "✅ HRs Ready (allowlist: ${ALLOWLIST_HR})"
 else echo "❌ HRs non-Ready: ${BAD_HR}"; FAIL=1; fi
 # 5b. Kustomizations enfants True (la racine depend de l'allowlist via
 # ses health checks — verifiee indirectement par 5a)
-BAD_KS=$(${K} get kustomizations -n flux-system --no-headers \
-  | awk '$1!="management" && $3!="True" {print $1}' || true)
+BAD_KS=$(${K} get kustomizations -n flux-system -o custom-columns="NAME:.metadata.name,READY:.status.conditions[?(@.type=='Ready')].status" --no-headers \
+  | awk '$1!="management" && $2!="True" {print $1}' || true)
 if [ -z "${BAD_KS}" ]; then echo "✅ Kustomizations enfants True"
 else echo "❌ Kustomizations KO: ${BAD_KS}"; FAIL=1; fi
 # 5c. ExternalSecrets tous synchronises
-BAD_ES=$(${K} get externalsecrets -A --no-headers | awk '$NF!="True" {print $1"/"$2}' || true)
+BAD_ES=$(${K} get externalsecrets -A -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,READY:.status.conditions[?(@.type=='Ready')].status" --no-headers \
+  | awk '$3!="True" {print $1"/"$2}' || true)
 if [ -z "${BAD_ES}" ]; then echo "✅ ExternalSecrets synchronises"
 else echo "❌ ExternalSecrets KO: ${BAD_ES}"; FAIL=1; fi
 # 5d. ClusterIssuers Ready (la chaine pki_int complete)
-BAD_CI=$(${K} get clusterissuers --no-headers | awk '$2!="True" {print $1}' || true)
+BAD_CI=$(${K} get clusterissuers -o custom-columns="NAME:.metadata.name,READY:.status.conditions[?(@.type=='Ready')].status" --no-headers \
+  | awk '$2!="True" {print $1}' || true)
 if [ -z "${BAD_CI}" ]; then echo "✅ ClusterIssuers Ready"
 else echo "❌ ClusterIssuers KO: ${BAD_CI}"; FAIL=1; fi
 # 5e. Pods KO — informatif (WARN), le tier container a ses limites
