@@ -1187,6 +1187,9 @@ LOCAL_DOCKER_NAME ?= st4ck-local
 local-docker-up: ## Disposable Talos-in-containers cluster + Cilium (native arch)
 	bash scripts/local-docker-up.sh $(LOCAL_DOCKER_NAME)
 
+e2e-local: ## Golden path E2E automatise — cluster jetable, day-1 tofu, day-2 Flux, assertions (nightly / porte de release ADR-037)
+	bash scripts/e2e-local.sh
+
 local-docker-down: ## Destroy the local docker-mode cluster
 	@SOCK=$$(podman machine inspect --format '{{ .ConnectionInfo.PodmanSocket.Path }}' 2>/dev/null); \
 	DOCKER_HOST="unix://$$SOCK" talosctl cluster destroy --name $(LOCAL_DOCKER_NAME)

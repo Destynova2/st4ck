@@ -144,6 +144,14 @@ Extensions a caler, dans l'ordre de valeur :
 
    Valide en plus du 3.1 : l'ordre day-1, le handoff tofu→Flux
    (adoption des releases Helm), et les seeds reels (secrets.tf).
+
+   **AUTOMATISE (2026-07-17)** : `make e2e-local` compile tout le
+   runbook en une cible a assertions et code de sortie
+   (scripts/e2e-local.sh — preflight → cluster jetable → day-1 →
+   day-2 → convergence bornee → 4 assertions strictes + allowlist
+   documentee kubescape + teardown). Usage prevu : nightly, et porte
+   de release ADR-037 (pas de tag qa/prod sans E2E vert). La classe
+   « day-1 manquant / conflit SSA » passe de semi-auto a automatique.
    Acquis du 2026-07-16 en attendant : la variante manuelle-fidele sur
    le cluster Flux-first a prouve TOUTE la chaine post-day-1 —
    issuer bootstrap Ready → Certificates emis → OpenBao Infra
