@@ -26,9 +26,9 @@ data "terraform_remote_state" "pki" {
 
 locals {
   secrets = {
-    garage_rpc_secret     = data.terraform_remote_state.pki.outputs.garage_rpc_secret
-    garage_admin_token    = data.terraform_remote_state.pki.outputs.garage_admin_token
-    zot_admin_password    = data.terraform_remote_state.pki.outputs.zot_admin_password
+    garage_rpc_secret  = data.terraform_remote_state.pki.outputs.garage_rpc_secret
+    garage_admin_token = data.terraform_remote_state.pki.outputs.garage_admin_token
+    zot_admin_password = data.terraform_remote_state.pki.outputs.zot_admin_password
   }
 }
 
@@ -138,7 +138,7 @@ resource "terraform_data" "garage_wait" {
     command = <<-EOT
       set -eu
       echo "Waiting for 3 Garage pods Running AND 3 nodes registered (RPC)..."
-      for i in $(seq 1 300); do
+      for i in $(seq 1 600); do
         RUNNING=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{.items[*].status.phase}' 2>/dev/null | tr ' ' '\n' | grep -c Running)
         # garage status only callable once garage-0 is Running; tolerate the
         # exec failure during the first ~10s by suppressing stderr.
@@ -149,11 +149,11 @@ resource "terraform_data" "garage_wait" {
         fi
         # Reduce log noise: print a heartbeat every 10s instead of every iteration
         if [ $((i % 10)) -eq 0 ]; then
-          echo "  pods=$${RUNNING:-0}/3 nodes=$${NODES:-0}/3 (attempt $i/300)..."
+          echo "  pods=$${RUNNING:-0}/3 nodes=$${NODES:-0}/3 (attempt $i/600)..."
         fi
         sleep 1
       done
-      echo "ERROR: Garage not ready after 5 min (pods=$${RUNNING:-0}/3 nodes=$${NODES:-0}/3)"
+      echo "ERROR: Garage not ready after 10 min (pods=$${RUNNING:-0}/3 nodes=$${NODES:-0}/3)"
       exit 1
     EOT
   }
@@ -232,14 +232,14 @@ resource "terraform_data" "garage_buckets_keys" {
       # Pattern 1 (Phase F-bis): sleep 1 vs 5, drop `|| echo 0`, explicit
       # timeout. After garage_layout, readinessProbe flips to ready in <10s.
       echo "Waiting for Garage ready (post-layout)..."
-      for i in $(seq 1 300); do
+      for i in $(seq 1 600); do
         READY=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{range .items[*]}{.status.containerStatuses[0].ready}{"\n"}{end}' 2>/dev/null | grep -c true)
         if [ "$${READY:-0}" -ge 3 ]; then
           echo "All 3 Garage pods ready."
           break
         fi
         if [ $((i % 10)) -eq 0 ]; then
-          echo "  $${READY:-0}/3 ready (attempt $i/300)..."
+          echo "  $${READY:-0}/3 ready (attempt $i/600)..."
         fi
         sleep 1
       done
