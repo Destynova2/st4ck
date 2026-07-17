@@ -132,7 +132,9 @@ resource "terraform_data" "garage_wait" {
     # at 1s intervals (vs 5s) catches the transition ~5x faster.
     #
     # Pattern 1 (Phase F-bis): drop `|| echo 0` — Bug #18 in the postmortem
-    # notes that `grep -c` always exits 1 when no match, AND emits "0\n0"
+    # `grep -c` exits 1 when count=0 (printing "0") — under set -eu a bare
+    # VAR=$(...|grep -c) assignment DIES instantly (E2E runs 2-5 all failed
+    # here before the loop even started). `|| true` keeps the printed "0"
     # via the `||` fallback (count line + fallback line), giving wrong
     # arithmetic. Use `${VAR:-0}` at use site, with explicit timeout exit.
     command = <<-EOT
@@ -143,10 +145,10 @@ resource "terraform_data" "garage_wait" {
       # local (runs 2-4). Sortie anticipee des que pret : zero cout au
       # chaud. Un cluster prod sur reseau lent a le meme profil.
       for i in $(seq 1 1200); do
-        RUNNING=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{.items[*].status.phase}' 2>/dev/null | tr ' ' '\n' | grep -c Running)
+        RUNNING=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{.items[*].status.phase}' 2>/dev/null | tr ' ' '\n' | grep -c Running || true)
         # garage status only callable once garage-0 is Running; tolerate the
         # exec failure during the first ~10s by suppressing stderr.
-        NODES=$(kubectl -n garage exec garage-0 -c garage -- /garage status 2>/dev/null | grep -cE '^[a-f0-9]{16}')
+        NODES=$(kubectl -n garage exec garage-0 -c garage -- /garage status 2>/dev/null | grep -cE '^[a-f0-9]{16}' || true)
         if [ "$${RUNNING:-0}" -ge 3 ] && [ "$${NODES:-0}" -ge 3 ]; then
           echo "All 3 Garage pods Running and 3 nodes registered."
           exit 0
@@ -182,7 +184,7 @@ resource "terraform_data" "garage_layout" {
       # within ~5s; polling 1s catches it almost immediately.
       echo "Waiting for node discovery..."
       for i in $(seq 1 150); do
-        COUNT=$($GARAGE /garage status 2>/dev/null | grep -c "HEALTHY\|NO ROLE")
+        COUNT=$($GARAGE /garage status 2>/dev/null | grep -c "HEALTHY\|NO ROLE" || true)
         [ "$${COUNT:-0}" -ge 3 ] && break
         if [ $((i % 10)) -eq 0 ]; then
           echo "  $${COUNT:-0}/3 nodes (attempt $i/150)..."
@@ -237,7 +239,7 @@ resource "terraform_data" "garage_buckets_keys" {
       # timeout. After garage_layout, readinessProbe flips to ready in <10s.
       echo "Waiting for Garage ready (post-layout)..."
       for i in $(seq 1 600); do
-        READY=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{range .items[*]}{.status.containerStatuses[0].ready}{"\n"}{end}' 2>/dev/null | grep -c true)
+        READY=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{range .items[*]}{.status.containerStatuses[0].ready}{"\n"}{end}' 2>/dev/null | grep -c true || true)
         if [ "$${READY:-0}" -ge 3 ]; then
           echo "All 3 Garage pods ready."
           break
