@@ -8,3 +8,4 @@ kind: Kustomization
 # `make k8s-monitoring-apply` (hanoi audit 2026-07-12, finding #6).
 resources:
   - vmrule-flux.yaml
+  - vmrule-workloads.yaml
