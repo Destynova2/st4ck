@@ -138,7 +138,11 @@ resource "terraform_data" "garage_wait" {
     command = <<-EOT
       set -eu
       echo "Waiting for 3 Garage pods Running AND 3 nodes registered (RPC)..."
-      for i in $(seq 1 600); do
+      # 20 min : sur un cluster froid les pulls de TOUTE la stack (waves
+      # -j3) saturent le lien — Garage materialise a ~16-18 min en E2E
+      # local (runs 2-4). Sortie anticipee des que pret : zero cout au
+      # chaud. Un cluster prod sur reseau lent a le meme profil.
+      for i in $(seq 1 1200); do
         RUNNING=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{.items[*].status.phase}' 2>/dev/null | tr ' ' '\n' | grep -c Running)
         # garage status only callable once garage-0 is Running; tolerate the
         # exec failure during the first ~10s by suppressing stderr.
@@ -149,11 +153,11 @@ resource "terraform_data" "garage_wait" {
         fi
         # Reduce log noise: print a heartbeat every 10s instead of every iteration
         if [ $((i % 10)) -eq 0 ]; then
-          echo "  pods=$${RUNNING:-0}/3 nodes=$${NODES:-0}/3 (attempt $i/600)..."
+          echo "  pods=$${RUNNING:-0}/3 nodes=$${NODES:-0}/3 (attempt $i/1200)..."
         fi
         sleep 1
       done
-      echo "ERROR: Garage not ready after 10 min (pods=$${RUNNING:-0}/3 nodes=$${NODES:-0}/3)"
+      echo "ERROR: Garage not ready after 20 min (pods=$${RUNNING:-0}/3 nodes=$${NODES:-0}/3)"
       exit 1
     EOT
   }
