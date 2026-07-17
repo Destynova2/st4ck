@@ -137,6 +137,48 @@ else
   ko "hauler-manifest.yaml diverge (lancer: make hauler-manifest)"
 fi
 
+# ── 9. dependsOn fantomes (classe velero→garage, 2026-07-16) ─────────────
+# Chaque dependsOn de HelmRelease doit cibler un HelmRelease qui existe
+# dans l'arbre Flux rendu (garage est tofu-owned : son CR n'existe pas).
+step "dependsOn fantomes (HelmRelease)"
+RENDERED_TREE=$(mktemp)
+kubectl kustomize clusters/management 2>/dev/null > "${RENDERED_TREE}" || true
+GHOSTS=$(python3 - "${RENDERED_TREE}" <<'PYEOF'
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+hrs = {(d["metadata"].get("namespace", ""), d["metadata"]["name"])
+       for d in docs if d.get("kind") == "HelmRelease"}
+ghosts = []
+for d in docs:
+    if d.get("kind") != "HelmRelease":
+        continue
+    ns = d["metadata"].get("namespace", "")
+    for dep in (d.get("spec", {}).get("dependsOn") or []):
+        target = (dep.get("namespace", ns), dep["name"])
+        if target not in hrs:
+            ghosts.append(f'{ns}/{d["metadata"]["name"]} → {target[0]}/{target[1]}')
+print("\n".join(ghosts))
+PYEOF
+)
+rm -f "${RENDERED_TREE}"
+if [ -z "${GHOSTS}" ]; then
+  ok "aucun dependsOn vers un HelmRelease inexistant"
+else
+  ko "dependsOn fantome(s): ${GHOSTS}"
+fi
+
+# ── 10. Images arch-locked (classe amd64_garage, 2026-07-16) ─────────────
+# Regle AGENTS.md : tout pin d'image doit etre un manifest list
+# multi-arch — les repos arch-suffixes cassent l'autre architecture.
+step "images arch-locked"
+ARCH_LOCKED=$(grep -rhoE '(repository|image):[[:space:]]*"?[a-z0-9./_-]*(amd64|arm64|x86_64)_[a-z0-9_-]+' \
+  stacks/*/flux*/*.yaml scripts/mirror-images.txt bootstrap/platform-pod.yaml 2>/dev/null | sort -u || true)
+if [ -z "${ARCH_LOCKED}" ]; then
+  ok "aucun repo d'image arch-locked"
+else
+  ko "image(s) arch-locked: ${ARCH_LOCKED}"
+fi
+
 # ── Bilan ────────────────────────────────────────────────────────────────
 printf '\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
 printf 'verify-local : %d ✅ / %d ❌\n' "${PASS}" "${FAIL}"
