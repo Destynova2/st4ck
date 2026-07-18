@@ -78,6 +78,31 @@ fi
 log "creating Talos ${TALOS_VERSION} / K8s ${K8S_VERSION} cluster '${NAME}' (native arch)"
 # The built-in wait fails on coredns: expected — there is no CNI until
 # Cilium lands below. `|| true` tolerates exactly that.
+# REGISTRY_MIRROR=host:port → mirrors containerd vers un store hauler
+# servi sur le Mac (E2E rapide / air-gap partiel — ADR-034). Chemins :
+# 2-segments servis nus (transparent) ; mono-segment normalises sous
+# library/ → fallback upstream par containerd (trou assume, kube-*).
+MIRROR_PATCH=""
+if [ -n "${REGISTRY_MIRROR:-}" ]; then
+  MIRROR_PATCH=$(mktemp)
+  cat > "${MIRROR_PATCH}" <<MEOF
+machine:
+  registries:
+    mirrors:
+      docker.io:
+        endpoints: ["http://${REGISTRY_MIRROR}"]
+      ghcr.io:
+        endpoints: ["http://${REGISTRY_MIRROR}"]
+      quay.io:
+        endpoints: ["http://${REGISTRY_MIRROR}"]
+      public.ecr.aws:
+        endpoints: ["http://${REGISTRY_MIRROR}"]
+      registry.k8s.io:
+        endpoints: ["http://${REGISTRY_MIRROR}"]
+MEOF
+  log "registry mirror actif: ${REGISTRY_MIRROR}"
+fi
+
 talosctl cluster create docker \
   --name "${NAME}" \
   --image "ghcr.io/siderolabs/talos:${TALOS_VERSION}" \
@@ -85,7 +110,8 @@ talosctl cluster create docker \
   --workers "${WORKERS}" \
   --memory-controlplanes "${MEM_CP}" \
   --memory-workers "${MEM_WORKER}" \
-  --config-patch "@${REPO_ROOT}/patches/cilium-cni.yaml" || true
+  --config-patch "@${REPO_ROOT}/patches/cilium-cni.yaml" \
+  ${MIRROR_PATCH:+--config-patch "@${MIRROR_PATCH}"} || true
 
 # ── Kubeconfig (rewrite the API endpoint to the published port) ────────
 CP="${NAME}-controlplane-1"

@@ -19,6 +19,10 @@ VB_PORT="${VB_PORT:-8080}"
 GITEA_PORT="${GITEA_PORT:-3000}"
 E2E_NAME="${E2E_NAME:-st4ck-e2e}"
 E2E_TIMEOUT_MIN="${E2E_TIMEOUT_MIN:-45}"
+# Levier 5 : 1 CP + 3 workers suffisent (garage rf=3 sur workers).
+export WORKERS="${E2E_WORKERS:-3}"
+# Levier 1 : mirror hauler auto-detecte (hauler store serve sur :5001).
+E2E_MIRROR_PORT="${E2E_MIRROR_PORT:-5001}"
 # LOCAL_BACKEND=1 : etat tofu LOCAL et jetable — purge a chaque run.
 # Sans cela, les chemins d'etat partages du vault-backend font sauter les
 # terraform_data (seeds KV, chargement pki_int : triggers inchanges =
@@ -44,16 +48,28 @@ curl -so /dev/null "http://localhost:${VB_PORT}/state/test" \
 curl -so /dev/null "http://localhost:${GITEA_PORT}" \
   || die "Gitea injoignable sur :${GITEA_PORT}"
 [ -f kms-output/vault-backend-token.txt ] || die "kms-output/ absent"
+if curl -so /dev/null "http://localhost:${E2E_MIRROR_PORT}/v2/_catalog"; then
+  export REGISTRY_MIRROR="192.168.127.254:${E2E_MIRROR_PORT}"
+  echo "mirror hauler detecte → ${REGISTRY_MIRROR}"
+else
+  echo "pas de mirror hauler sur :${E2E_MIRROR_PORT} (pulls upstream directs)"
+fi
 echo "preflight ok"
 
 # ── Phase 1 : cluster jetable sans CNI ──────────────────────────────────
-phase "1. cluster ${E2E_NAME} (5 noeuds, sans CNI) + purge etats locaux"
-for st in cni pki monitoring identity security storage; do
-  rm -f "stacks/${st}/terraform.tfstate" "stacks/${st}/terraform.tfstate.backup" \
-        "stacks/${st}/_local_backend_override.tf"
-done
-make local-docker-down "LOCAL_DOCKER_NAME=${E2E_NAME}" >/dev/null 2>&1 || true
-KUBECONFIG_OUT="${KC}" SKIP_CILIUM=1 bash scripts/local-docker-up.sh "${E2E_NAME}"
+phase "1. cluster ${E2E_NAME} (1 CP + ${WORKERS} workers, sans CNI)"
+if [ "${E2E_REUSE:-0}" = "1" ] && ${K} get nodes >/dev/null 2>&1; then
+  # Levier 3 : mode iteration — cluster ET etats tofu conserves
+  # (coherents entre eux). Le mode froid reste la porte de release.
+  echo "E2E_REUSE=1 — cluster existant conserve, re-applies incrementaux"
+else
+  for st in cni pki monitoring identity security storage; do
+    rm -f "stacks/${st}/terraform.tfstate" "stacks/${st}/terraform.tfstate.backup" \
+          "stacks/${st}/_local_backend_override.tf"
+  done
+  make local-docker-down "LOCAL_DOCKER_NAME=${E2E_NAME}" >/dev/null 2>&1 || true
+  KUBECONFIG_OUT="${KC}" SKIP_CILIUM=1 bash scripts/local-docker-up.sh "${E2E_NAME}"
+fi
 
 # ── Phase 2 : day-1 tofu, ordre de production ───────────────────────────
 phase "2. day-1 tofu (cni → pki → waves)"
@@ -90,6 +106,22 @@ while [ "$(date +%s)" -lt "${DEADLINE}" ]; do
     PENDING=$(printf '%s\n' "${HR_STATE}" | awk '$3!="True" {print $1"/"$2}')
     NON_ALLOWED=$(printf '%s\n' "${PENDING}" | grep -vxF "${ALLOWLIST_HR}" | grep -c . || true)
     [ "${NON_ALLOWED}" = "0" ] && break
+    # Levier 2 : un HR False a mi-fenetre a epuise ses retries sur un
+    # transitoire (course ES, timeout pull) — un suspend/resume le
+    # relance. Une seule fois par HR et par run.
+    ELAPSED=$(( E2E_TIMEOUT_MIN * 60 - (DEADLINE - $(date +%s)) ))
+    if [ "${ELAPSED}" -gt $(( E2E_TIMEOUT_MIN * 30 )) ]; then
+      for hr in ${PENDING}; do
+        case " ${KICKED:-} " in *" ${hr} "*) continue ;; esac
+        NS="${hr%%/*}"; HRNAME="${hr##*/}"
+        STATUS=$(printf '%s\n' "${HR_STATE}" | awk -v ns="${NS}" -v n="${HRNAME}" '$1==ns && $2==n {print $3}')
+        [ "${STATUS}" = "False" ] || continue
+        echo "  kick ${hr} (suspend/resume)"
+        flux --kubeconfig "${KC}" -n "${NS}" suspend hr "${HRNAME}" >/dev/null 2>&1 || true
+        flux --kubeconfig "${KC}" -n "${NS}" resume hr "${HRNAME}" --timeout 10s >/dev/null 2>&1 || true
+        KICKED="${KICKED:-} ${hr}"
+      done
+    fi
   fi
 done
 
