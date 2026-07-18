@@ -145,13 +145,21 @@ Extensions a caler, dans l'ordre de valeur :
    Valide en plus du 3.1 : l'ordre day-1, le handoff tofu→Flux
    (adoption des releases Helm), et les seeds reels (secrets.tf).
 
-   **AUTOMATISE (2026-07-17)** : `make e2e-local` compile tout le
-   runbook en une cible a assertions et code de sortie
-   (scripts/e2e-local.sh — preflight → cluster jetable → day-1 →
-   day-2 → convergence bornee → 4 assertions strictes + allowlist
-   documentee kubescape + teardown). Usage prevu : nightly, et porte
-   de release ADR-037 (pas de tag qa/prod sans E2E vert). La classe
-   « day-1 manquant / conflit SSA » passe de semi-auto a automatique.
+   **AUTOMATISE ET VALIDE — PASS au run 12 (2026-07-18)** :
+   `make e2e-local` compile tout le runbook en une cible a assertions
+   et code de sortie (preflight → cluster jetable 1 CP + 3 workers →
+   day-1 tofu → day-2 Flux → convergence bornee avec auto-kick →
+   4 assertions strictes + allowlist documentee kubescape → teardown).
+   Convergence mesuree : ~10 min avec le mirror hauler (auto-detecte
+   sur :5001 — `hauler store serve registry --store haul-arm64 -p 5001`).
+   Usage : nightly + porte de release ADR-037 (pas de tag qa/prod sans
+   E2E vert). La campagne de rodage (12 runs) a corrige 15 defauts
+   reels : ghost dependsOn, image arch-locked, PDB double-owner,
+   RBAC TokenRequest, chargement pki_int, set-eu/grep -c, course
+   login/init OpenBao, PushSecret non-atomique (propriete perdue),
+   refreshInterval 1h gelant les premieres synchros, timeouts HR
+   install-only, contextes talosconfig fantomes, OOM vmagent/vlogs,
+   PSA kubescape, deadline garage a froid, isolation d'etat E2E.
    Acquis du 2026-07-16 en attendant : la variante manuelle-fidele sur
    le cluster Flux-first a prouve TOUTE la chaine post-day-1 —
    issuer bootstrap Ready → Certificates emis → OpenBao Infra
