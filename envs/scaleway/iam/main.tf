@@ -40,6 +40,10 @@ locals {
     cluster = {
       description = "Deploys Talos cluster: instances, LB, VPC, security groups"
       permissions = [
+        # Elastic Metal : requis par le provider Karpenter (ADR-035/036,
+        # start/stop/list de serveurs EM) et par le banc M0. Porte par le
+        # role cluster — le provider s'authentifie avec ces creds.
+        "ElasticMetalFullAccess",
         "InstancesFullAccess",
         "BlockStorageFullAccess",
         "LoadBalancersFullAccess",
@@ -70,10 +74,10 @@ locals {
     bare-metal = {
       description = "Karpenter custom provider — Scaleway Elastic Metal lifecycle (Phase B)"
       permissions = [
-        "ElasticMetalFullAccess",       # CreateServer / RebootRescue / Delete
-        "PrivateNetworksFullAccess",    # attach EM to a tenant Private Network
-        "ObjectStorageReadOnly",        # pull Talos RAW image from Garage S3 mirror
-        "IPAMReadOnly",                 # introspect flexible IPs
+        "ElasticMetalFullAccess",    # CreateServer / RebootRescue / Delete
+        "PrivateNetworksFullAccess", # attach EM to a tenant Private Network
+        "ObjectStorageReadOnly",     # pull Talos RAW image from Garage S3 mirror
+        "IPAMReadOnly",              # introspect flexible IPs
       ]
     }
   }
