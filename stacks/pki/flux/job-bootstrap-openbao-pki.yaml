@@ -155,7 +155,20 @@ spec:
               # cluster-internal DNS only) doesn't need rewiring.
               # `-i` is required so heredoc stdin (bao policy write -)
               # reaches the pod.
-              BAO="kubectl -n secrets exec -i openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true"
+              # brc = bao-retry-call: kubectl exec transport is flaky under
+              # node load (websocket EOF mid-stream, E2E run 7) — every bao
+              # command gets 3 attempts, 5s apart, before set -eu kills us.
+              brc() {
+                n=0
+                until kubectl -n secrets exec -i openbao-infra-0 -c openbao -- \
+                    env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true "$@"; do
+                  n=$((n + 1))
+                  [ "$n" -ge 3 ] && return 1
+                  echo "  retry $n/3: bao $2 (exec transport)" >&2
+                  sleep 5
+                done
+              }
+              BAO="brc"
 
               # ─── 1. Wait for OpenBao Infra API ──────────────────────────
               # Pattern 1 (Phase F-bis): 1s polling, 300s budget, explicit
