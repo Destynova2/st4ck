@@ -4,6 +4,10 @@ metadata:
   name: victoria-logs-collector
   namespace: monitoring
 spec:
+  # Niveau spec = couvre install ET upgrade (le run 10 a echoue sur
+  # "upgrade action with timeout of 5m0s" alors que install: avait 15m).
+  # DaemonSet x N noeuds froids : pulls serialises > 5 min.
+  timeout: 15m
   interval: 30m
   # Failed upgrades: retry 3x then roll back (hardening 2026-07-12)
   upgrade:
@@ -25,10 +29,6 @@ spec:
   install:
     remediation:
       retries: 3
-    # DaemonSet x N noeuds : sur cluster froid les pulls serialises
-    # depassent les 5 min par defaut (E2E runs 6-7) — le DS finit PRES
-    # le timeout et le HR reste Failed retries epuises.
-    timeout: 15m
     createNamespace: false
   valuesFrom:
     - kind: ConfigMap

@@ -4,6 +4,9 @@ metadata:
   name: vm-k8s-stack
   namespace: monitoring
 spec:
+  # Niveau spec = install ET upgrade (run 10 E2E : upgrade partait avec
+  # le defaut 5m alors que install: avait 10m). Bundle massif.
+  timeout: 15m
   interval: 30m
   # Failed upgrades: retry 3x then roll back (hardening 2026-07-12)
   upgrade:
@@ -22,7 +25,6 @@ spec:
     remediation:
       retries: 3
     createNamespace: false
-    timeout: 10m
   valuesFrom:
     - kind: ConfigMap
       name: vm-k8s-stack-values
