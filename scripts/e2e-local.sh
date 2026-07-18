@@ -99,7 +99,16 @@ phase "5. assertions"
 BAD_HR=$(${K} get helmrelease -A -o custom-columns="NS:.metadata.namespace,NAME:.metadata.name,READY:.status.conditions[?(@.type=='Ready')].status" --no-headers \
   | awk '$3!="True" {print $1"/"$2}' | grep -vxF "${ALLOWLIST_HR}" || true)
 if [ -z "${BAD_HR}" ]; then echo "✅ HRs Ready (allowlist: ${ALLOWLIST_HR})"
-else echo "❌ HRs non-Ready: ${BAD_HR}"; FAIL=1; fi
+else
+  echo "❌ HRs non-Ready: ${BAD_HR}"; FAIL=1
+  # Messages d'echec — le teardown emporte le cluster, capturons le POURQUOI
+  for hr in ${BAD_HR}; do
+    NS="${hr%%/*}"; NAME="${hr##*/}"
+    MSG=$(${K} -n "${NS}" get helmrelease "${NAME}" \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}' 2>/dev/null | head -c 300)
+    echo "   ↳ ${hr}: ${MSG}"
+  done
+fi
 # 5b. Kustomizations enfants True (la racine depend de l'allowlist via
 # ses health checks — verifiee indirectement par 5a)
 BAD_KS=$(${K} get kustomizations -n flux-system -o custom-columns="NAME:.metadata.name,READY:.status.conditions[?(@.type=='Ready')].status" --no-headers \
