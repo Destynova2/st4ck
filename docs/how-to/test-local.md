@@ -9,7 +9,7 @@ hauler, ADR-038 kubescape, ADR-039 zot, mode local-docker arm64).
 | Niveau | Quoi | Duree | Prerequis | Etat |
 |---|---|---|---|---|
 | 0 | Statique (validate/render/tests unitaires) | ~3 min | rien | ✅ tout existe — a bundler en 1 cible |
-| 1 | Rendu + schemas (kubeconform, HR×values) | ~10 min | brew kubeconform | ⬜ a outiller |
+| 1 | Rendu + schemas (kubeconform, HR×values) | ~22 s | brew kubeconform | ✅ `make verify-render` (2026-07-18) — 17/17 HRs aux versions du registre, kubeconform -strict + catalog datree |
 | 2 | Bootstrap podman E2E (platform pod) | ~15-20 min | podman rootful | ✅ cible existante, a rejouer |
 | 3 | Cluster Talos local + stacks + Flux | ~10-30 min | local-docker-up, **VM podman 24 Gi / 12 vCPU** | ✅ 3.1 valide le 2026-07-15 (voir verdict) ; 3.2-3.4 ⬜ |
 | 4 | Mirror hauler → containerd Talos | ~30 min | niveaux 2+3 | ✅ mode connecte VALIDE (porte e2e, ~10 min de convergence) ; mono-segments fermes par double endpoint overridePath (2026-07-18) ; air-gap charts = phase 3 ADR-034 |

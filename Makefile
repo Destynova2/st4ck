@@ -1180,6 +1180,10 @@ bootstrap-update:
 verify-local: ## Run every local static check (validate/tests/kustomize/substitution/...)
 	bash scripts/verify-local.sh
 
+.PHONY: verify-render
+verify-render: ## Niveau 1 — helm template de chaque HelmRelease a sa version du registre + kubeconform (reseau requis)
+	bash scripts/verify-render.sh
+
 LOCAL_DOCKER_NAME ?= st4ck-local
 
 .PHONY: local-docker-up local-docker-down

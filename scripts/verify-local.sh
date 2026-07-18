@@ -68,19 +68,27 @@ done
 
 # ── 5. Substitution : zero placeholder residuel ──────────────────────────
 step "substitution Flux (registre + vars root)"
-# Export des variables de substitution dans l'environnement du script
-# (bash 3.2 de macOS + set -u rendent l'expansion de tableau fragile, et
-# un `env` qui echoue produirait des faux positifs silencieux).
-while IFS= read -r pair; do export "${pair?}"; done < <(python3 - <<'PYEOF'
+# Export des variables de substitution dans l'environnement du script.
+# PAS de heredoc dans une process substitution : bash 3.2 (macOS) le
+# parse mal — "ambiguous redirect" silencieux, ZERO variable exportee,
+# envsubst vide alors tous les placeholders et l'etape passait en FAUX
+# VERT (trouve par l'agent niveau-1, 2026-07-18). eval "$(...)" est
+# l'idiome sur 3.2.
+eval "$(python3 - <<'PYEOF'
 import yaml
 data = yaml.safe_load(open("clusters/management/versions-configmap.yaml"))["data"]
 data.update({"s3_url": "http://garage.garage.svc.cluster.local:3900",
               "velero_bucket": "velero-backups", "harbor_bucket": "unused",
               "cnpg_bucket": "cnpg-backups"})
 for k, v in data.items():
-    print(f"{k}={v}")
+    print(f"export {k}='{v}'")
 PYEOF
-)
+)"
+# Canari anti-faux-vert : si le registre n'est pas reellement exporte,
+# l'etape entiere est un noop — on echoue bruyamment plutot.
+if [ -z "${cilium_version:-}" ]; then
+  ko "substitution: export du registre KO (canari cilium_version vide) — l'etape ne testerait RIEN"
+fi
 for d in ${KUSTOM_DIRS}; do
   [ -f "$d/kustomization.yaml" ] || continue
   if ! kubectl kustomize "$d" >/dev/null 2>&1; then
