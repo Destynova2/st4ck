@@ -125,9 +125,14 @@ Extensions a caler, dans l'ordre de valeur :
    local) → `skopeo copy` push/pull + login htpasswd + pull anonyme.
    (zot Ready avec S3 Garage valide par la porte e2e-local — le smoke
    push/pull dedie reste optionnel.)
-3. **kubescape smoke — VALIDE sur le tier VM (2026-07-18)** : la stack
-   complete (operator, storage, node-agent eBPF + clamav) tourne 2/2
-   sur les VMs kvmlab. Confirme que l'echec du tier container
+3. **kubescape smoke — stack VALIDEE sur le tier VM (2026-07-18)** : la
+   stack complete (operator, storage, node-agent eBPF + clamav) tourne
+   2/2 sur les VMs kvmlab. NUANCE : le depot d'un EICAR (2 tentatives,
+   pod cree apres l'agent, fichier executable) n'a produit AUCUN
+   evenement observable (logs agent, logs clamav, pas de CRD alert) —
+   la detection demande un reglage du profil (periodicite du scan
+   clamav, exporteurs d'alertes, periode d'apprentissage) : follow-up
+   dedie avant de compter sur le pilier malware en prod. Confirme que l'echec du tier container
    (StartError — pas de /boot ni bpffs dans des noeuds conteneurises)
    est bien une limite du simulateur : l'allowlist e2e-local est
    legitime. Le banc Longhorn (ADR-041) est passe sur le meme cluster :
