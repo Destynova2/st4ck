@@ -75,6 +75,13 @@ if [ -z "${DOCKER_HOST:-}" ] && command -v podman >/dev/null 2>&1; then
 fi
 
 # ── Cluster ─────────────────────────────────────────────────────────────
+# Purge des contextes talosconfig homonymes : les cycles create/destroy
+# les accumulent et talosctl renomme alors le nouveau en NAME-<n> — le
+# lookup attrape un contexte mort ("failed to determine endpoints",
+# E2E run 11). destroy ne nettoie pas toujours derriere lui.
+for c in $(talosctl config contexts 2>/dev/null | awk 'NR>1 {print $2}' | grep -E "^${NAME}(-[0-9]+)?$" || true); do
+  talosctl config remove "$c" --noconfirm >/dev/null 2>&1 || true
+done
 log "creating Talos ${TALOS_VERSION} / K8s ${K8S_VERSION} cluster '${NAME}' (native arch)"
 # The built-in wait fails on coredns: expected — there is no CNI until
 # Cilium lands below. `|| true` tolerates exactly that.
@@ -123,7 +130,8 @@ for _ in $(seq 1 60); do
 done
 [ -n "${PORT}" ] || die "no published 6443 port on ${CP} — cluster create failed?"
 
-CTX=$(talosctl config contexts | awk -v n="${NAME}" '$0 ~ n {print $2}' | tail -1)
+CTX=$(talosctl config contexts | awk -v n="${NAME}" '$2 == n {print $2}' | tail -1)
+[ -n "${CTX}" ] || CTX=$(talosctl config contexts | awk -v n="${NAME}" '$2 ~ "^"n"-[0-9]+$" {print $2}' | tail -1)
 talosctl --context "${CTX}" -n 10.5.0.2 kubeconfig "${KUBECONFIG_OUT}" --force
 sed -i.bak "s|https://10.5.0.2:6443|https://127.0.0.1:${PORT}|" "${KUBECONFIG_OUT}" && rm -f "${KUBECONFIG_OUT}.bak"
 log "kubeconfig: ${KUBECONFIG_OUT}"
