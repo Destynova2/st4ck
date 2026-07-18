@@ -82,6 +82,25 @@ Nécessitent ≥ 1 serveur EM réel (EM-A116X-SSD, fr-par-2) pré-imagé par
 
 ### 3.1 Critère 1 — `provider-id` accepté par Talos v1.12 (Option A)
 
+**✅ VALIDÉ le 2026-07-18 — Option A CONFIRMÉE** (lab nested-KVM, VMs
+Talos v1.12.9 réelles ; la denylist et le passage du flag sont
+indépendants de la plateforme, seul le *contenu* référence un serveur) :
+
+- `talosctl patch mc --mode=reboot` avec
+  `machine.kubelet.extraArgs.provider-id: scaleway-em://fr-par-2/<uuid>`
+  → **accepté sans erreur de validation** (pas de denylist).
+- Flag présent dans le KubeletSpec rendu (`talosctl get kubeletspec`).
+- Après ré-enregistrement du Node :
+  `spec.providerID == scaleway-em://fr-par-2/<uuid>` **octet pour
+  octet** (contrat C3), node Ready.
+- Piège opérationnel : sur un Node PRÉEXISTANT, le kubelet ne pose pas
+  le providerID a posteriori — il faut `kubectl delete node` +
+  `talosctl service kubelet restart`. Sans objet pour les EM
+  pré-imagés (premier join avec le flag → providerID immédiat).
+
+Aucun repli Option B (talos-ccm/SMBIOS) nécessaire. Protocole original
+conservé ci-dessous pour re-jeu sur EM réel :
+
 Le premier test M0 du LLD §4 : la denylist kubelet de Talos v1.12
 autorise-t-elle `provider-id` dans `machine.kubelet.extraArgs` ?
 
