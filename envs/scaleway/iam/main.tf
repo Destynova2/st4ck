@@ -40,10 +40,6 @@ locals {
     cluster = {
       description = "Deploys Talos cluster: instances, LB, VPC, security groups"
       permissions = [
-        # Elastic Metal : requis par le provider Karpenter (ADR-035/036,
-        # start/stop/list de serveurs EM) et par le banc M0. Porte par le
-        # role cluster — le provider s'authentifie avec ces creds.
-        "ElasticMetalFullAccess",
         "InstancesFullAccess",
         "BlockStorageFullAccess",
         "LoadBalancersFullAccess",
