@@ -105,7 +105,15 @@ machine:
       public.ecr.aws:
         endpoints: ["http://${REGISTRY_MIRROR}"]
       registry.k8s.io:
-        endpoints: ["http://${REGISTRY_MIRROR}"]
+        # Ferme le trou mono-segment (ADR-034 point ouvert n°1, valide
+        # au curl 2026-07-18) : hauler normalise kube-* sous library/.
+        # Deux endpoints + overridePath : /v2/library sert les
+        # mono-segments, /v2 les 2-segments (coredns/...) — containerd
+        # bascule sur 404.
+        overridePath: true
+        endpoints:
+          - "http://${REGISTRY_MIRROR}/v2/library"
+          - "http://${REGISTRY_MIRROR}/v2"
 MEOF
   log "registry mirror actif: ${REGISTRY_MIRROR}"
 fi
