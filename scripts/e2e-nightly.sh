@@ -9,7 +9,7 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "${REPO_ROOT}"
+cd "${REPO_ROOT}" || exit 1
 
 VB_PORT="${VB_PORT:-8080}"
 GITEA_PORT="${GITEA_PORT:-3000}"
@@ -28,10 +28,12 @@ fi
 PASS=$(tofu -chdir=bootstrap output -raw admin_password 2>/dev/null || true)
 if [ -n "${PASS}" ]; then
   AUTH=$(printf 'talos:%s' "${PASS}" | base64)
-  git -c credential.helper= -c http.extraHeader="Authorization: Basic ${AUTH}" \
-    push "http://localhost:${GITEA_PORT}/talos/talos.git" HEAD:main >/dev/null 2>&1 \
-    && note "HEAD pousse sur le Gitea local" \
-    || note "WARN: push Gitea en echec (HEAD peut etre deja a jour)"
+  if git -c credential.helper= -c http.extraHeader="Authorization: Basic ${AUTH}" \
+      push "http://localhost:${GITEA_PORT}/talos/talos.git" HEAD:main >/dev/null 2>&1; then
+    note "HEAD pousse sur le Gitea local"
+  else
+    note "WARN: push Gitea en echec (HEAD peut etre deja a jour)"
+  fi
 fi
 
 note "lancement make e2e-local (VB_PORT=${VB_PORT} GITEA_PORT=${GITEA_PORT})"
