@@ -12,8 +12,8 @@ hauler, ADR-038 kubescape, ADR-039 zot, mode local-docker arm64).
 | 1 | Rendu + schemas (kubeconform, HR×values) | ~10 min | brew kubeconform | ⬜ a outiller |
 | 2 | Bootstrap podman E2E (platform pod) | ~15-20 min | podman rootful | ✅ cible existante, a rejouer |
 | 3 | Cluster Talos local + stacks + Flux | ~10-30 min | local-docker-up, **VM podman 24 Gi / 12 vCPU** | ✅ 3.1 valide le 2026-07-15 (voir verdict) ; 3.2-3.4 ⬜ |
-| 4 | Mirror hauler → containerd Talos | ~30 min | niveaux 2+3 | ⬜ **ferme le point ouvert ADR-034** |
-| 5 | Harnais kwok du provider karpenter | ~2-4 h build | brew kwok | ⬜ derniere marche avant EM reel |
+| 4 | Mirror hauler → containerd Talos | ~30 min | niveaux 2+3 | ✅ mode connecte VALIDE (porte e2e, ~10 min de convergence) ; mono-segments fermes par double endpoint overridePath (2026-07-18) ; air-gap charts = phase 3 ADR-034 |
+| 5 | Harnais kwok du provider karpenter | ~2-4 h build | brew kwok | ✅ VALIDE sur la branche karpenter (cycle NodeClaim complet) |
 
 ## Niveau 0 — Statique (a chaque commit, CI-able)
 
@@ -123,8 +123,16 @@ Extensions a caler, dans l'ordre de valeur :
      et l'auto-unseal du KMS bootstrap apres restart (volumes podman).
 2. **zot smoke** : HR zot avec un override filesystem (pas de Garage en
    local) → `skopeo copy` push/pull + login htpasswd + pull anonyme.
-3. **kubescape smoke** : deposer un fichier EICAR dans un pod → verifier
-   l'evenement malware du node-agent.
+   (zot Ready avec S3 Garage valide par la porte e2e-local — le smoke
+   push/pull dedie reste optionnel.)
+3. **kubescape smoke — VALIDE sur le tier VM (2026-07-18)** : la stack
+   complete (operator, storage, node-agent eBPF + clamav) tourne 2/2
+   sur les VMs kvmlab. Confirme que l'echec du tier container
+   (StartError — pas de /boot ni bpffs dans des noeuds conteneurises)
+   est bien une limite du simulateur : l'allowlist e2e-local est
+   legitime. Le banc Longhorn (ADR-041) est passe sur le meme cluster :
+   chart 1.11.3, PVC Bound sur la StorageClass longhorn, ecriture/
+   lecture prouvee via iscsi + extensions chargees par l'upgrade OS.
 4. **Golden path tofu-first** (l'ordre REEL du pipeline — leçon
    œuf-poule du run 3.1 : en Flux-first, cert-manager/openbao
    appartiennent a Flux avant que leurs preconditions tofu n'existent,
