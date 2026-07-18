@@ -163,9 +163,19 @@ resource "terraform_data" "seed_grafana_to_openbao" {
         exit 1
       fi
 
-      echo "Logging in..."
-      $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1 || \
-        { echo "ERROR: OpenBao login failed"; exit 1; }
+      # L'API repond AVANT que les blocs d'init declaratifs du chart
+      # (mount userpass, user admin) n'aient tourne — avec un registre
+      # mirror local le seed arrive pendant cette fenetre (E2E run 9).
+      # On attend le LOGIN, pas le status : 120 x 2s.
+      echo "Logging in (attente de l'init userpass)..."
+      logged=0
+      for i in $(seq 1 120); do
+        if $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1; then
+          logged=1; break
+        fi
+        sleep 2
+      done
+      [ "$logged" = "1" ] || { echo "ERROR: OpenBao login failed after 240s"; exit 1; }
 
       # Idempotent re-run: skip when the same key+value already present.
       EXISTING=$($BAO bao kv get -field=admin-password secret/monitoring/grafana 2>/dev/null || true)

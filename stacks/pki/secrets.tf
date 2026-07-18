@@ -176,9 +176,19 @@ resource "terraform_data" "seed_openbao_secrets" {
         exit 1
       fi
 
-      echo "Logging in..."
-      $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1 || \
-        { echo "ERROR: OpenBao login failed"; exit 1; }
+      # L'API repond AVANT que les blocs d'init declaratifs du chart
+      # (mount userpass, user admin) n'aient tourne — avec un registre
+      # mirror local le seed arrive pendant cette fenetre (E2E run 9).
+      # On attend le LOGIN, pas le status : 120 x 2s.
+      echo "Logging in (attente de l'init userpass)..."
+      logged=0
+      for i in $(seq 1 120); do
+        if $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1; then
+          logged=1; break
+        fi
+        sleep 2
+      done
+      [ "$logged" = "1" ] || { echo "ERROR: OpenBao login failed after 240s"; exit 1; }
 
       # Per-path idempotency: each block skips if already seeded. This
       # used to be a single guard on secret/identity/hydra but new paths
@@ -270,7 +280,14 @@ resource "terraform_data" "load_pki_int_ca" {
       done
       [ "$ready" = "1" ] || { echo "ERROR: OpenBao Infra API not ready after 300s"; exit 1; }
 
-      $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null
+      logged=0
+      for i in $(seq 1 120); do
+        if $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1; then
+          logged=1; break
+        fi
+        sleep 2
+      done
+      [ "$logged" = "1" ] || { echo "ERROR: OpenBao login failed after 240s"; exit 1; }
 
       if $BAO bao secrets list 2>/dev/null | grep -q '^pki_int/'; then
         echo "pki_int/ already mounted"
