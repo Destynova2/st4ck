@@ -52,7 +52,6 @@ TF_SECURITY   := stacks/security
 TF_STORAGE    := stacks/storage
 TF_FLUX       := stacks/flux-bootstrap
 GARAGE_CHART  := stacks/storage/chart
-LPP_CHART     := stacks/storage/chart-local-path
 
 # ─── Provider paths ──────────────────────────────────────────────────────
 
@@ -232,7 +231,7 @@ k8s-security-destroy: k8s-security-init
 
 # ─── k8s-storage ─────────────────────────────────────────────────────────
 
-.PHONY: k8s-storage-init k8s-storage-apply k8s-storage-destroy garage-chart lpp-chart
+.PHONY: k8s-storage-init k8s-storage-apply k8s-storage-destroy garage-chart
 
 garage-chart: ## Fetch Garage Helm chart (v2.2.0) from upstream
 	@mkdir -p $(GARAGE_CHART)
@@ -240,18 +239,10 @@ garage-chart: ## Fetch Garage Helm chart (v2.2.0) from upstream
 		tar -xz --strip-components=4 -C $(GARAGE_CHART) "garage/script/helm/garage/"
 	@echo "Garage Helm chart fetched to $(GARAGE_CHART)/"
 
-lpp-chart: ## Fetch local-path-provisioner Helm chart (v0.0.35) from Rancher upstream
-	@mkdir -p $(LPP_CHART)
-	@# strip-components=4 puts Chart.yaml directly in $(LPP_CHART)/ (matches what
-	# helm_release.local_path_provisioner expects via chart="${path.module}/chart-local-path")
-	@curl -sL "https://github.com/rancher/local-path-provisioner/archive/refs/tags/v0.0.35.tar.gz" | \
-		tar -xz --strip-components=4 -C $(LPP_CHART) "local-path-provisioner-0.0.35/deploy/chart/local-path-provisioner/"
-	@echo "local-path-provisioner Helm chart fetched to $(LPP_CHART)/"
-
-k8s-storage-init: garage-chart lpp-chart
+k8s-storage-init: garage-chart
 	$(call tf_init,$(TF_STORAGE),$(STATE_STORAGE))
 
-k8s-storage-apply: k8s-storage-init ## Deploy local-path + Garage + Velero + Harbor
+k8s-storage-apply: k8s-storage-init ## Deploy Garage + Velero + Harbor
 	$(TF) -chdir=$(TF_STORAGE) apply -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS)
 
 k8s-storage-destroy: k8s-storage-init

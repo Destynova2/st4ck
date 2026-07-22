@@ -278,8 +278,7 @@ sequenceDiagram
 graph TD
     B["make bootstrap<br/>(podman, one-time)"] --> |"kms-output/<br/>certs + tokens"| ENV
     ENV["make scaleway-apply<br/>(provision infra)"] --> |"kubeconfig<br/>~/.kube/talos-scaleway"| CNI
-    CNI["k8s-cni (Cilium)<br/>~30s"] --> STORAGE_LP["k8s-storage (local-path only)<br/>~10s"]
-    STORAGE_LP --> PKI["k8s-pki<br/>(OpenBao x2 + cert-manager)<br/>~2min"]
+    CNI["k8s-cni (Cilium + local-path)<br/>~30s"] --> PKI["k8s-pki<br/>(OpenBao x2 + cert-manager)<br/>~2min"]
     PKI --> MON["k8s-monitoring<br/>(vm-k8s-stack + VictoriaLogs)<br/>~2min"]
     MON --> IDENT["k8s-identity<br/>(Kratos + Hydra + Pomerium)<br/>~1min"]
     IDENT --> SEC["k8s-security<br/>(Trivy + Tetragon + Kyverno)<br/>~2min"]
@@ -568,7 +567,7 @@ OpenTofu needs an HTTP-accessible state backend. OpenBao does not natively provi
 Initial parallel deployment (`make -j2`) caused race conditions: PVCs stuck in `Pending` (local-path-provisioner not ready), Kyverno webhooks blocking deployments of other stacks.
 
 **Decision:**
-Strictly sequential pipeline: CNI -> local-path -> PKI -> monitoring -> identity -> security -> storage -> flux.
+Strictly sequential pipeline: CNI (including local-path) -> PKI -> monitoring -> identity -> security -> storage -> flux.
 
 **Consequences:**
 - Positive: Reproducible, deterministic, zero race conditions

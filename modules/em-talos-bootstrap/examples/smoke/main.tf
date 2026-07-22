@@ -90,8 +90,11 @@ variable "ssh_private_key_path" {
 }
 
 variable "talos_image_url" {
-  type    = string
-  default = "https://factory.talos.dev/image/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba/v1.10.4/metal-amd64.raw.xz"
+  type = string
+  # Aligned with the module/platform Talos target (v1.12.9): the smoke run
+  # is what proves the kubelet provider-id denylist behavior (M0 criterion
+  # #1) — validating it against another Talos major would prove nothing.
+  default = "https://factory.talos.dev/image/376567988ad370138ad8b2698212367b8edcb69b5fd68c80be1f2ec7d603b4ba/v1.12.9/metal-amd64.raw.xz"
 }
 
 variable "talos_machine_config" {

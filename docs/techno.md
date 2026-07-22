@@ -43,6 +43,7 @@ Cloud-init : installe podman, clone le repo, cree admin Gitea, OAuth Woodpecker,
 | Composant | Chart Version | Role | Notes |
 |---|---|---|---|
 | Cilium | 1.17.13 | CNI + Network Policies + Service Mesh | eBPF, remplace kube-proxy, mTLS, Hubble |
+| local-path-provisioner | 0.0.35 | StorageClass par defaut | Chart containeroo, namespace local-path-storage |
 
 ## Observabilite (stack k8s-monitoring)
 
@@ -129,7 +130,6 @@ OpenBao KMS local (3 noeuds Raft, Podman)
 
 | Composant | Chart Version | Role | Notes |
 |---|---|---|---|
-| local-path-provisioner | 0.0.35 | StorageClass par defaut | PVCs sur disque local |
 | Garage | v2.2.0 (app) | Stockage objet S3 | 3 pods StatefulSet, replication factor 3, ~300 MB RAM |
 | Velero | 11.4.0 | Backup/restore | Target: Garage S3, BSL Available |
 | Harbor | 1.16.2 | Registry conteneurs | S3 Garage backend, Trivy scan integre |
@@ -167,12 +167,12 @@ Deploy key : tofu output flux_ssh_public_key → Gitea Settings → Deploy Keys
 
 ```
 stacks/
-├── cni/            # Cilium (1 helm release + values + flux/)
+├── cni/            # Cilium + local-path (2 helm releases + values + flux/)
 ├── monitoring/     # vm-k8s-stack, VictoriaLogs, Headlamp (4 helm releases + dashboard + flux/)
 ├── pki/            # PKI, OpenBao x2, cert-manager (4 helm releases + secrets + ClusterIssuer + flux/)
 ├── identity/       # Kratos, Hydra, Pomerium (3 helm releases + OIDC client + flux/)
 ├── security/       # Trivy, Tetragon, Kyverno (3 helm releases + policy + flux/)
-├── storage/        # local-path, Garage, Velero, Harbor (4 helm releases + K8s Job setup + flux/)
+├── storage/        # Garage, Velero, Harbor (3 helm releases + K8s Job setup + flux/)
 ├── flux-bootstrap/ # Flux v2, SSH key, GitRepository, Kustomization
 └── external-secrets/ # ESO + ClusterSecretStore (flux only)
 

@@ -162,7 +162,7 @@ graph TB
             KYVERNO["Kyverno<br/>Policy engine"]
         end
 
-        subgraph "storage / garage"
+        subgraph "local-path-storage / garage / storage"
             LPP["local-path-provisioner<br/>StorageClass"]
             GARAGE["Garage<br/>S3-compatible"]
             HARBOR["Harbor<br/>Container registry"]
@@ -198,6 +198,7 @@ graph TB
 | Gitea | Gitea 1.22 rootless | Self-hosted Git, OAuth for WP | podman (bootstrap) | Single instance |
 | Woodpecker | Woodpecker v3 | CI/CD pipeline execution | podman (bootstrap) | Server + 1 agent |
 | Cilium | Cilium 1.17.13 | CNI + kube-proxy replacement (eBPF) | kube-system | DaemonSet |
+| local-path-provisioner | containeroo chart | Default StorageClass | local-path-storage | Deployment |
 | OpenBao Infra | OpenBao (Helm) | In-cluster PKI + infra secrets | secrets | StatefulSet x1 |
 | OpenBao App | OpenBao (Helm) | In-cluster application secrets | secrets | StatefulSet x1 |
 | cert-manager | cert-manager | Automatic TLS from infra sub-CA | cert-manager | Deployment |
@@ -210,7 +211,6 @@ graph TB
 | Trivy Operator | Trivy | Vulnerability + SBOM scanning | security | Deployment |
 | Tetragon | Tetragon | eBPF runtime security | security | DaemonSet |
 | Kyverno | Kyverno | Policy enforcement (Cosign verify) | security | Deployment |
-| local-path-provisioner | Rancher LPP | Default StorageClass | storage | Deployment |
 | Garage | Garage v2.2.0 | S3-compatible object storage | garage | StatefulSet x3 |
 | Harbor | Harbor | Container image registry | storage | Multiple deployments |
 | Velero | Velero | Backup/restore to Garage S3 | storage | Deployment |
@@ -1058,7 +1058,6 @@ graph TD
 
 | Component | Chart | Version | Namespace |
 |-----------|-------|---------|-----------|
-| local-path-provisioner | containeroo/local-path-provisioner | var.local_path_provisioner_version | storage |
 | Garage | Local chart (fetched from upstream) | v2.2.0 | garage |
 | Velero | vmware-tanzu/velero | var.velero_version | storage |
 | Harbor | goharbor/harbor | var.harbor_version | storage |
@@ -1327,7 +1326,7 @@ After initial deployment via OpenTofu, the handoff to Flux follows this pattern:
 | Scanning | Trivy Operator | 0.32.0 |
 | Runtime | Tetragon | 1.6.0 |
 | Storage | Garage | v2.2.0 (app) / 0.9.2 (chart) |
-| Storage | local-path-provisioner | 0.0.35 |
+| CNI storage dependency | local-path-provisioner | 0.0.35 |
 | Registry | Harbor | 1.16.2 |
 | Backup | Velero | 11.4.0 |
 | GitOps | Flux v2 | 2.14.1 |

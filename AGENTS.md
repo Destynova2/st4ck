@@ -16,7 +16,8 @@ Sovereign air-gapped Kubernetes platform built on Talos Linux v1.12, deploying a
 - **Identity**: Ory Kratos + Hydra + Pomerium (zero-trust proxy, OIDC)
 - **Monitoring**: victoria-metrics-k8s-stack + VictoriaLogs + Headlamp + Grafana
 - **Security**: Trivy + Tetragon + Kyverno + Cosign policy
-- **Storage**: local-path-provisioner + Garage S3 + Velero + Harbor
+- **Storage**: Garage S3 + Velero + Harbor
+- **Default StorageClass**: local-path-provisioner, installed by the CNI stack before PKI
 
 ## Architecture
 
@@ -64,7 +65,7 @@ make k8s-pki-apply              # OpenBao + cert-manager + PKI secrets
 make k8s-monitoring-apply       # VictoriaMetrics + VictoriaLogs + Headlamp
 make k8s-identity-apply         # Kratos + Hydra + Pomerium
 make k8s-security-apply         # Trivy + Tetragon + Kyverno
-make k8s-storage-apply          # local-path + Garage + Velero + Harbor
+make k8s-storage-apply          # Garage + Velero + Harbor
 make flux-bootstrap-apply       # Flux v2 GitOps
 
 # Teardown (correct order)

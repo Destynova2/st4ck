@@ -48,8 +48,10 @@ steps:
         exit "$FAIL"
 
   # ─── Tofu test (pass1 #7 / pass2 #10) — run .tftest.hcl ─────────────
-  # 4 tested dirs: envs/scaleway/{iam,image,ci,.}. The cluster tests
-  # (envs/scaleway/tests/cluster.tftest.hcl) run from envs/scaleway itself.
+  # Tested dirs: envs/scaleway/{iam,image,ci,.} + em-talos-bootstrap
+  # (offline provider_id golden — Karpenter providerID contract). The
+  # cluster tests (envs/scaleway/tests/cluster.tftest.hcl) run from
+  # envs/scaleway itself.
   - name: test-tftest
     image: *tofu_image
     commands:
@@ -59,6 +61,7 @@ steps:
           envs/scaleway/iam \
           envs/scaleway/image \
           envs/scaleway/ci \
+          modules/em-talos-bootstrap \
           envs/scaleway; do
           if [ ! -d "$dir/tests" ] || ! ls "$dir"/tests/*.tftest.hcl >/dev/null 2>&1; then
             echo "--- skipping $dir (no .tftest.hcl)"
@@ -69,6 +72,18 @@ steps:
         done
         exit "$FAIL"
     depends_on: [validate]
+
+  # ─── Karpenter EM provider (PR + push) — Go unit gate ───────────────
+  # Merge gate for karpenter-provider-scaleway (pre-mortem Tier 3 #3:
+  # "tests verts" must be CI-proven, not declarative). No secrets, no
+  # network beyond module downloads: the suite runs on the in-memory fake.
+  - name: karpenter-test
+    image: golang:1.26
+    commands:
+      - make -C karpenter-provider-scaleway fmt-check vet test
+    when:
+      - event: [push, pull_request]
+        path: "karpenter-provider-scaleway/**"
 
   # ─── Build image (phase 1: start builder VM) ────────────────────────
   # path: filter ensures we only spin up the billable Scaleway builder VM

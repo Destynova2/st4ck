@@ -55,12 +55,12 @@
 - [CI Pipeline](.woodpecker.yml): Woodpecker CI pipeline (validate + 8 deploy stages)
 
 ## Kubernetes Stacks
-- [cni](stacks/cni/main.tf): Cilium CNI deployment
+- [cni](stacks/cni/main.tf): Cilium CNI + local-path StorageClass
 - [pki](stacks/pki/main.tf): OpenBao + cert-manager + CA secrets
 - [monitoring](stacks/monitoring/main.tf): VictoriaMetrics + VictoriaLogs + Headlamp
 - [identity](stacks/identity/main.tf): Kratos + Hydra + Pomerium
 - [security](stacks/security/main.tf): Trivy + Tetragon + Kyverno
-- [storage](stacks/storage/main.tf): local-path + Garage + Velero + Harbor
+- [storage](stacks/storage/main.tf): Garage + Velero + Harbor
 - [flux-bootstrap](stacks/flux-bootstrap/main.tf): Flux v2 GitOps
 - [external-secrets](stacks/external-secrets/): ESO + ClusterSecretStore (Flux only)
 

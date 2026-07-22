@@ -1,0 +1,20 @@
+# NodePool statique de référence (LLD-002 §7) : replicas pilote
+# Create()/power-on et Delete()/power-off. Nécessite le feature gate
+# StaticCapacity=true (champ alpha spec.replicas, core v1.14).
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: metal
+spec:
+  replicas: 0
+  template:
+    spec:
+      nodeClassRef:
+        group: karpenter.scaleway.st4ck.io
+        kind: ScalewayEMNodeClass
+        name: metal-pool
+      expireAfter: Never
+      requirements:
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["EM-A116X-SSD"]

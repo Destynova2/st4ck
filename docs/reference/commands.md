@@ -142,7 +142,6 @@ Each stack has `-init`, `-apply`, and `-destroy` targets:
 |---------|-------------|
 | `make clean` | Remove all build artifacts |
 | `make garage-chart` | Fetch Garage Helm chart v2.2.0 |
-| `make lpp-chart` | Fetch local-path-provisioner Helm chart from upstream |
 | `make help` | Show all targets with descriptions |
 
 ## Environment Variables

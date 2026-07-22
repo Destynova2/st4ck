@@ -81,7 +81,9 @@ Stacks that read secrets from bootstrap OpenBao also accept:
 
 All Helm values files are co-located in each stack directory. Key configuration points:
 
-### CNI (stacks/cni/values.yaml)
+### CNI (stacks/cni/)
+
+Files: `values.yaml`, `values-local-path.yaml`
 
 | Setting | Value | Purpose |
 |---------|-------|---------|
@@ -89,6 +91,7 @@ All Helm values files are co-located in each stack directory. Key configuration 
 | `hubble.enabled` | true | Network observability |
 | `hubble.relay.enabled` | true | Hubble relay for remote access |
 | `ipam.mode` | kubernetes | Use Kubernetes IPAM |
+| `storageClass.defaultClass` | true | local-path is the default StorageClass before PKI |
 
 ### Monitoring (stacks/monitoring/)
 
@@ -129,7 +132,7 @@ Files: `values-kratos.yaml`, `values-hydra.yaml`, `values-pomerium.yaml`
 
 ### Storage (stacks/storage/)
 
-Files: `values-local-path.yaml`, `values-garage.yaml`, `values-velero.yaml`, `values-harbor.yaml`
+Files: `values-garage.yaml`, `values-velero.yaml`, `values-harbor.yaml`
 
 | Setting | File | Purpose |
 |---------|------|---------|
