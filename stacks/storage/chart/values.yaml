@@ -44,7 +44,7 @@ garage:
   # -- This is not required if you use the integrated kubernetes discovery
   bootstrapPeers: []
   # -- Set to true if you want to use k8s discovery but install the CRDs manually outside
-  # of the helm chart, for example if you operate at namespace level without cluster ressources
+  # of the helm chart, for example if you operate at namespace level without cluster resources
   kubernetesSkipCrd: false
   s3:
     api:
@@ -120,7 +120,7 @@ serviceAccount:
   # If not set and create is true, a name is generated using the fullname template
   name: ""
 
-# -- additonal pod annotations
+# -- additional pod annotations
 podAnnotations: {}
 
 podSecurityContext:
@@ -209,7 +209,7 @@ ingress:
       #      - kubernetes.docker.internal
 
 resources: {}
-  # The following are indicative for a small-size deployement, for anything serious double them.
+  # The following are indicative for a small-size deployment, for anything serious double them.
   # limits:
   #   cpu: 100m
   #   memory: 1024Mi
@@ -237,6 +237,10 @@ nodeSelector: {}
 tolerations: []
 
 affinity: {}
+
+# -- Optional priority class name to assign to the pods.
+# See https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/
+priorityClassName: ""
 
 environment: {}
 
