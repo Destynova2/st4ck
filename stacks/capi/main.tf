@@ -65,9 +65,9 @@ locals {
 
   # Provider CR namespaces — cluster-api-operator convention is one
   # namespace per provider, prefixed according to kind.
-  ns_core                   = "capi-system"
-  ns_bootstrap_talos        = "cabpt-system"
-  ns_controlplane_kamaji    = "capi-kamaji-system"
+  ns_core                    = "capi-system"
+  ns_bootstrap_talos         = "cabpt-system"
+  ns_controlplane_kamaji     = "capi-kamaji-system"
   ns_infrastructure_scaleway = "caps-system"
 
   # Scaleway CAPS credentials Secret — consumed by the InfrastructureProvider

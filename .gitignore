@@ -56,3 +56,5 @@ envs/scaleway/ci/files/
 haul/
 haul.tar.zst*
 stacks/kamaji/chart/
+haul-arm64/
+registry/

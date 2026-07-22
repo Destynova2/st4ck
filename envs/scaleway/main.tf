@@ -84,19 +84,19 @@ locals {
   ]
 
   # ─── Patches ──────────────────────────────────────────────────────────
-  cilium_patch              = file("${path.module}/../../patches/cilium-cni.yaml")
-  registry_mirror_patch     = file("${path.module}/../../patches/registry-mirror.yaml")
-  kubelet_nodeip_patch      = file("${path.module}/../../patches/kubelet-nodeip-vpc.yaml")
-  etcd_vpc_patch            = file("${path.module}/../../patches/etcd-vpc-cp-only.yaml")
-  volume_config_patch     = file("${path.module}/volume-config-patch.yaml")
+  cilium_patch          = file("${path.module}/../../patches/cilium-cni.yaml")
+  registry_mirror_patch = file("${path.module}/../../patches/registry-mirror.yaml")
+  kubelet_nodeip_patch  = file("${path.module}/../../patches/kubelet-nodeip-vpc.yaml")
+  etcd_vpc_patch        = file("${path.module}/../../patches/etcd-vpc-cp-only.yaml")
+  volume_config_patch   = file("${path.module}/volume-config-patch.yaml")
   # OIDC CA is produced by bootstrap (kms-output/) — absent during validate/plan pre-bootstrap.
-  oidc_ca_pem           = try(file("${path.module}/../../kms-output/root-ca.pem"), "")
-  oidc_enabled          = local.oidc_ca_pem != ""
+  oidc_ca_pem  = try(file("${path.module}/../../kms-output/root-ca.pem"), "")
+  oidc_enabled = local.oidc_ca_pem != ""
 
   # ─── Endpoint ─────────────────────────────────────────────────────────
-  dns_fqdn      = var.dns_zone == "" ? "" : "${var.dns_subdomain_prefix}-${local.env}-${local.instance}-${local.region}.${var.dns_zone}"
-  dns_enabled   = var.dns_zone != ""
-  api_endpoint  = local.dns_enabled ? "https://${local.dns_fqdn}:6443" : "https://${scaleway_lb_ip.k8s_api.ip_address}:6443"
+  dns_fqdn     = var.dns_zone == "" ? "" : "${var.dns_subdomain_prefix}-${local.env}-${local.instance}-${local.region}.${var.dns_zone}"
+  dns_enabled  = var.dns_zone != ""
+  api_endpoint = local.dns_enabled ? "https://${local.dns_fqdn}:6443" : "https://${scaleway_lb_ip.k8s_api.ip_address}:6443"
 }
 
 provider "scaleway" {
