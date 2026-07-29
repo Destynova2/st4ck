@@ -1,5 +1,5 @@
 # local-path-provisioner — default StorageClass
-# Upstream Rancher chart (deploy/chart/local-path-provisioner)
+# containeroo Helm chart wrapping Rancher's local-path-provisioner
 
 storageClass:
   name: local-path

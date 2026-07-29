@@ -6,7 +6,7 @@ variable "kubeconfig_path" {
 variable "flux_version" {
   description = "Flux2 Helm chart version"
   type        = string
-  default     = "2.14.1"
+  default     = null
 }
 
 variable "gitea_external_host" {
@@ -67,4 +67,10 @@ variable "gitea_repo_name" {
 variable "flux_deploy_key_suffix" {
   description = "Suffix appended to the Gitea deploy-key title so multiple clusters can register their own Flux key on the same repo without collision. Use the cluster context-id."
   type        = string
+}
+
+variable "flux_git_tag" {
+  description = "Pin Flux to a release tag of the management repo instead of the main branch. Empty = track main (dev). qa/prod pin a tag per ADR-037."
+  type        = string
+  default     = ""
 }

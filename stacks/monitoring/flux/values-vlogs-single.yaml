@@ -8,9 +8,12 @@ server:
   resources:
     requests:
       cpu: 100m
-      memory: 128Mi
+      memory: 256Mi
     limits:
-      memory: 512Mi
+      # 512Mi OOMKilled (exit 137) after ~13h of full-stack ingestion on
+      # the 5-node local E2E (2026-07-16) — same latent-prod class as
+      # the vmagent OOM fixed the same day.
+      memory: 1Gi
   extraArgs:
     envflag.enable: "true"
     envflag.prefix: VM_

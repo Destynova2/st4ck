@@ -12,7 +12,7 @@ variable "kubeconfig_path" {
 variable "gateway_api_version" {
   description = "kubernetes-sigs/gateway-api release tag (CRDs)"
   type        = string
-  default     = "v1.2.0"
+  default     = null
 }
 
 variable "gateway_api_channel" {

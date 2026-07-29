@@ -35,8 +35,18 @@ PROVIDER ?= scaleway
 # HTTP on :8080 (localhost or tunnelled from remote CI VM).
 KMS_OUTPUT         := kms-output
 VB_HOST            ?= localhost
+# Ports hote du platform pod — surchargables si un autre projet local les
+# occupe (ex.: make bootstrap VB_PORT=18080 GITEA_PORT=13000).
 VB_PORT            ?= 8080
+KMS_PORT           ?= 8200
+KMS_CLUSTER_PORT   ?= 8201
+GITEA_PORT         ?= 3000
+GITEA_SSH_PORT     ?= 2222
+WP_PORT            ?= 8000
+WP_GRPC_PORT       ?= 9000
+BOOTSTRAP_PORTS    := $(VB_PORT) $(KMS_PORT) $(KMS_CLUSTER_PORT) $(GITEA_PORT) $(GITEA_SSH_PORT) $(WP_PORT) $(WP_GRPC_PORT)
 VB_URL             := http://$(VB_HOST):$(VB_PORT)
+KMS_URL            := http://127.0.0.1:$(KMS_PORT)
 # Lazy (=, not :=) so each sub-make/tofu call re-reads from disk. Critical
 # during scaleway-bootstrap-vm where kms-output/ is populated mid-run.
 export TF_HTTP_USERNAME = $(shell cat $(KMS_OUTPUT)/approle-role-id.txt 2>/dev/null)
@@ -52,7 +62,6 @@ TF_SECURITY   := stacks/security
 TF_STORAGE    := stacks/storage
 TF_FLUX       := stacks/flux-bootstrap
 GARAGE_CHART  := stacks/storage/chart
-LPP_CHART     := stacks/storage/chart-local-path
 
 # ─── Provider paths ──────────────────────────────────────────────────────
 
@@ -196,19 +205,16 @@ k8s-pki-destroy: k8s-pki-init
 k8s-identity-init:
 	$(call tf_init,$(TF_IDENTITY),$(STATE_IDENTITY))
 
-k8s-identity-apply: k8s-identity-init ## Deploy Kratos + Hydra + Pomerium
-	@echo "[identity] phase 1/3: deploy CNPG operator + identity-pg cluster CR"
-	$(TF) -chdir=$(TF_IDENTITY) apply -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS) \
-		-target=helm_release.cnpg_operator \
-		-target=kubectl_manifest.identity_pg_cluster \
-		-target=kubernetes_namespace.identity
-	@echo "[identity] phase 2/3: wait for CNPG to materialise the identity-pg-app secret (~60s)"
-	@KUBECONFIG=$(KC_FILE) kubectl -n identity wait --for=create secret/identity-pg-app --timeout=180s
-	@echo "[identity] phase 3/3: full apply (Kratos/Hydra/Pomerium consume the now-existing PG DSN)"
-	$(TF) -chdir=$(TF_IDENTITY) apply -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS)
+# Single apply since 2026-07-12 (hanoi pass 2 #2/#5): the 3-phase
+# -target + kubectl-wait choreography guarded a CNPG secret that no tofu
+# resource reads anymore (DSN flows through OpenBao/ESO, ADR-028), and
+# the pki remote_state it fed is gone. Cert-before-Cluster ordering is
+# in the graph (depends_on), not the -target.
+k8s-identity-apply: k8s-identity-init ## Deploy CNPG operator + certs (Kratos/Hydra/Pomerium = Flux)
+	$(TF) -chdir=$(TF_IDENTITY) apply -auto-approve $(K8S_COMMON_VARS)
 
 k8s-identity-destroy: k8s-identity-init
-	$(TF) -chdir=$(TF_IDENTITY) destroy -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS)
+	$(TF) -chdir=$(TF_IDENTITY) destroy -auto-approve $(K8S_COMMON_VARS)
 
 # ─── k8s-security ────────────────────────────────────────────────────────
 
@@ -217,14 +223,11 @@ k8s-identity-destroy: k8s-identity-init
 k8s-security-init:
 	$(call tf_init,$(TF_SECURITY),$(STATE_SECURITY))
 
-k8s-security-apply: k8s-security-init ## Deploy Trivy + Tetragon + Kyverno + OpenClarity
-	@echo "[security] phase 1/3: namespace + CNPG cluster CR for OpenClarity"
-	$(TF) -chdir=$(TF_SECURITY) apply -auto-approve $(K8S_COMMON_VARS) \
-		-target=kubernetes_namespace.security \
-		-target=kubectl_manifest.openclarity_pg_cluster
-	@echo "[security] phase 2/3: wait for CNPG to materialise openclarity-pg-app secret"
-	@KUBECONFIG=$(KC_FILE) kubectl -n security wait --for=create secret/openclarity-pg-app --timeout=180s
-	@echo "[security] phase 3/3: full apply (Trivy + Tetragon + Kyverno + OpenClarity)"
+# Single apply since 2026-07-12 (hanoi pass 2 #2): the CNPG-secret wait
+# guarded nothing tofu reads (ESO retries on refreshInterval — see
+# main.tf comment). The identity→security CRD edge now lives in the
+# stack (terraform_data.wait_cnpg_crd).
+k8s-security-apply: k8s-security-init ## Deploy security namespace + CNPG CR + seeds (Trivy/Tetragon/Kyverno = Flux)
 	$(TF) -chdir=$(TF_SECURITY) apply -auto-approve $(K8S_COMMON_VARS)
 
 k8s-security-destroy: k8s-security-init
@@ -232,26 +235,23 @@ k8s-security-destroy: k8s-security-init
 
 # ─── k8s-storage ─────────────────────────────────────────────────────────
 
-.PHONY: k8s-storage-init k8s-storage-apply k8s-storage-destroy garage-chart lpp-chart
+.PHONY: k8s-storage-init k8s-storage-apply k8s-storage-destroy garage-chart
 
-garage-chart: ## Fetch Garage Helm chart (v2.2.0) from upstream
+# Pin read from the platform version registry (hanoi 2026-07-12 #3 — was
+# hardcoded here, invisible to the registry and to hauler).
+GARAGE_CHART_VERSION := $(shell sed -n 's/^ *garage_chart_version: "\(.*\)"/\1/p' clusters/management/versions-configmap.yaml)
+
+garage-chart: ## Fetch Garage Helm chart (pin: versions-configmap.yaml) from upstream
+	@test -n "$(GARAGE_CHART_VERSION)" || { echo "Error: garage_chart_version missing from clusters/management/versions-configmap.yaml"; exit 1; }
 	@mkdir -p $(GARAGE_CHART)
-	@curl -sL "https://git.deuxfleurs.fr/Deuxfleurs/garage/archive/v2.2.0.tar.gz" | \
+	@curl -sL "https://git.deuxfleurs.fr/Deuxfleurs/garage/archive/$(GARAGE_CHART_VERSION).tar.gz" | \
 		tar -xz --strip-components=4 -C $(GARAGE_CHART) "garage/script/helm/garage/"
-	@echo "Garage Helm chart fetched to $(GARAGE_CHART)/"
+	@echo "Garage Helm chart $(GARAGE_CHART_VERSION) fetched to $(GARAGE_CHART)/"
 
-lpp-chart: ## Fetch local-path-provisioner Helm chart (v0.0.35) from Rancher upstream
-	@mkdir -p $(LPP_CHART)
-	@# strip-components=4 puts Chart.yaml directly in $(LPP_CHART)/ (matches what
-	# helm_release.local_path_provisioner expects via chart="${path.module}/chart-local-path")
-	@curl -sL "https://github.com/rancher/local-path-provisioner/archive/refs/tags/v0.0.35.tar.gz" | \
-		tar -xz --strip-components=4 -C $(LPP_CHART) "local-path-provisioner-0.0.35/deploy/chart/local-path-provisioner/"
-	@echo "local-path-provisioner Helm chart fetched to $(LPP_CHART)/"
-
-k8s-storage-init: garage-chart lpp-chart
+k8s-storage-init: garage-chart
 	$(call tf_init,$(TF_STORAGE),$(STATE_STORAGE))
 
-k8s-storage-apply: k8s-storage-init ## Deploy local-path + Garage + Velero + Harbor
+k8s-storage-apply: k8s-storage-init ## Deploy Garage + Velero + zot
 	$(TF) -chdir=$(TF_STORAGE) apply -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS)
 
 k8s-storage-destroy: k8s-storage-init
@@ -315,11 +315,7 @@ oidc-register: ## Register Kubernetes OIDC client in Hydra (post-Flux step)
 	@KUBECONFIG=$(KC_FILE) kubectl -n identity wait --for=condition=Ready pod \
 		-l app.kubernetes.io/name=hydra,app.kubernetes.io/component=admin \
 		--timeout=300s
-	@OIDC_CLIENT_SECRET=$$(TF_HTTP_USERNAME='$(TF_HTTP_USERNAME)' TF_HTTP_PASSWORD='$(TF_HTTP_PASSWORD)' \
-		$(TF) -chdir=$(TF_IDENTITY) output -raw oidc_client_secret 2>/dev/null) ; \
-	test -n "$$OIDC_CLIENT_SECRET" || { echo "ERROR: oidc_client_secret not in identity tofu output — run k8s-identity-apply first"; exit 1; } ; \
-	KUBECONFIG=$(KC_FILE) OIDC_CLIENT_SECRET="$$OIDC_CLIENT_SECRET" \
-		bash scripts/register-hydra-oidc-client.sh
+	@KUBECONFIG=$(KC_FILE) bash scripts/register-hydra-oidc-client.sh
 
 # ─── KaaS stacks — Kamaji + CAPI + autoscaling + gateway (management cluster) ──
 
@@ -354,9 +350,23 @@ k8s-capi-destroy: k8s-capi-init
 		-var="scw_project_id=$(SCW_PROJECT_ID)" \
 		-var="scw_region=$(REGION)"
 
-.PHONY: k8s-kamaji-init k8s-kamaji-apply k8s-kamaji-destroy
+# Chart Kamaji vendore depuis le repo git public (le chart OCI ghcr et
+# l'image ghcr de l'operateur sont fermes aux anonymes depuis 2026-07-14 ;
+# l'image vit sur quay, le chart source dans git — pin par SHA au registre).
+KAMAJI_GIT_REF := $(shell sed -n 's/^ *kamaji_git_ref: "\(.*\)"/\1/p' clusters/management/versions-configmap.yaml)
+KAMAJI_CHART   := stacks/kamaji/chart
 
-k8s-kamaji-init:
+.PHONY: kamaji-chart k8s-kamaji-init k8s-kamaji-apply k8s-kamaji-destroy
+
+kamaji-chart: ## Vendor the Kamaji operator chart from git (pin: versions-configmap.yaml)
+	@test -n "$(KAMAJI_GIT_REF)" || { echo "Error: kamaji_git_ref missing from versions-configmap.yaml"; exit 1; }
+	@rm -rf $(KAMAJI_CHART) && mkdir -p $(KAMAJI_CHART)
+	@curl -sL "https://github.com/clastix/kamaji/archive/$(KAMAJI_GIT_REF).tar.gz" | \
+		tar -xz --strip-components=3 -C $(KAMAJI_CHART) "kamaji-$(KAMAJI_GIT_REF)/charts/kamaji/"
+	@helm dependency update $(KAMAJI_CHART) >/dev/null
+	@echo "Kamaji chart $(KAMAJI_GIT_REF) vendored to $(KAMAJI_CHART)/"
+
+k8s-kamaji-init: kamaji-chart
 	$(call tf_init,$(TF_KAMAJI),$(STATE_KAMAJI))
 
 k8s-kamaji-apply: k8s-kamaji-init ## Install Kamaji operator + Ænix etcd-operator
@@ -430,22 +440,25 @@ kaas-down: ## Tear down the KaaS control plane (keeps core k8s stacks)
 
 k8s-init: k8s-cni-init k8s-monitoring-init k8s-pki-init k8s-identity-init k8s-security-init k8s-storage-init flux-bootstrap-init ## terraform init every k8s stack
 
-k8s-up: ## Deploy every k8s stack to the current context (ENV, INSTANCE, REGION)
+# Parallel waves since 2026-07-12 (pipeline audit): the races that
+# forced sequential mode are dead — local-path lives in cni (Fix #4),
+# Kyverno/VictoriaMetrics are Flux-owned (ADR-028), no webhook is alive
+# during the applies. Real DAG: cni → pki → {monitoring ∥ identity ∥
+# security} → storage → flux. The security→identity CNPG edge died with
+# OpenClarity (ADR-038); storage still writes into the identity ns
+# (created idempotently, but sequenced after identity to stay clean).
+# The old pre-apply of ns.storage was a Fix #4 fossil (hanoi pass 2 #3).
+k8s-up: ## Deploy every k8s stack to the current context (parallel waves)
 	@curl -so /dev/null -w '%{http_code}' $(VB_URL)/state/test 2>/dev/null | grep -qE '^(2|4)' || { echo "ERROR: vault-backend not reachable at $(VB_URL). Run 'make bootstrap' or 'make bootstrap-tunnel'."; exit 1; }
 	$(MAKE) k8s-cni-apply
-	$(MAKE) k8s-storage-init
-	@# Pre-create storage namespace before pki (cnpg-s3 secret target ns).
-	@# Fix #4 (commit 9acf931) moved local-path-provisioner from storage to
-	@# cni stack — k8s-cni-apply above now installs it. Removed broken
-	@# -target=helm_release.local_path_provisioner that referenced a
-	@# resource no longer in the storage stack.
-	$(TF) -chdir=$(TF_STORAGE) apply -auto-approve $(K8S_COMMON_VARS) $(K8S_PKI_REMOTE_STATE_VARS) -target=kubernetes_namespace.storage
 	$(MAKE) k8s-pki-apply
-	$(MAKE) k8s-monitoring-apply
-	$(MAKE) k8s-identity-apply
-	$(MAKE) k8s-security-apply
-	$(MAKE) k8s-storage-apply
+	$(MAKE) -j3 k8s-wave1
+	$(MAKE) -j2 k8s-wave2
 	$(MAKE) flux-bootstrap-apply
+
+.PHONY: k8s-wave1 k8s-wave2
+k8s-wave1: k8s-monitoring-apply k8s-identity-apply k8s-security-apply ## (internal) post-pki independent stacks
+k8s-wave2: k8s-storage-apply                       ## (internal) writes into the identity ns
 
 k8s-down: ## Destroy every k8s stack on the current context (correct order)
 	@curl -so /dev/null -w '%{http_code}' $(VB_URL)/state/test 2>/dev/null | grep -qE '^(2|4)' || { echo "ERROR: vault-backend not reachable at $(VB_URL)."; exit 1; }
@@ -936,12 +949,19 @@ scaleway-up: scaleway-apply scaleway-wait scaleway-kubeconfig k8s-up scaleway-se
 
 scaleway-wait: ## Wait for K8s API server of the current context to be reachable
 	@echo "Waiting for API server ($(CTX_ID))..."
-	@for i in $$(seq 1 30); do \
-		$(TF) -chdir=$(TF_SCALEWAY) output -raw kubeconfig 2>/dev/null \
-			| kubectl --kubeconfig /dev/stdin get nodes >/dev/null 2>&1 && break; \
+	@ready=0; \
+	for i in $$(seq 1 30); do \
+		if $(TF) -chdir=$(TF_SCALEWAY) output -raw kubeconfig 2>/dev/null \
+			| kubectl --kubeconfig /dev/stdin get nodes >/dev/null 2>&1; then \
+			ready=1; break; \
+		fi; \
 		echo "  attempt $$i/30..."; sleep 10; \
-	done
-	@echo "API server ready."
+	done; \
+	if [ $$ready -ne 1 ]; then \
+		echo "ERROR: API server ($(CTX_ID)) not reachable after 300s" >&2; \
+		exit 1; \
+	fi; \
+	echo "API server ready."
 
 scaleway-kubeconfig: ## Export kubeconfig to $(KC_FILE)
 	@mkdir -p $(dir $(KC_FILE))
@@ -1006,10 +1026,18 @@ bootstrap-init:
 
 bootstrap: bootstrap-init ## Start the platform pod locally (podman)
 	@command -v podman >/dev/null 2>&1 || { echo "Error: podman required"; exit 1; }
+	@for port in $(BOOTSTRAP_PORTS); do \
+		if lsof -nP -iTCP:$$port -sTCP:LISTEN >/dev/null 2>&1; then \
+			echo "ERROR: port $$port deja occupe :"; lsof -nP -iTCP:$$port -sTCP:LISTEN | tail -1; \
+			echo "Surcharge possible: make bootstrap VB_PORT=18080 KMS_PORT=18200 GITEA_PORT=13000 ..."; \
+			exit 1; \
+		fi; \
+	done
 	@mkdir -p $(BOOTSTRAP_DIR)
 	$(TF) -chdir=$(TF_BOOTSTRAP) apply -auto-approve \
 		-var="source_dir=$(CURDIR)" \
-		-var="bootstrap_dir=$(BOOTSTRAP_DIR)"
+		-var="bootstrap_dir=$(BOOTSTRAP_DIR)" \
+		-var='host_ports={kms=$(KMS_PORT),kms_cluster=$(KMS_CLUSTER_PORT),vb=$(VB_PORT),gitea_http=$(GITEA_PORT),gitea_ssh=$(GITEA_SSH_PORT),wp_http=$(WP_PORT),wp_grpc=$(WP_GRPC_PORT)}'
 	@$(TF) -chdir=$(TF_BOOTSTRAP) output -raw status
 
 bootstrap-export: ## Copy tokens + certs from PVC to kms-output/
@@ -1032,10 +1060,19 @@ bootstrap-tunnel: ## SSH tunnel to remote bootstrap (forwards :8080 + :8200 to l
 bootstrap-stop: ## Stop the platform pod
 	@podman play kube --down $(BOOTSTRAP_DIR)/platform-pod.yaml 2>/dev/null || true
 
+# Reset COMPLET : stop + purge des volumes (KMS/Gitea/CI perdus !). Les
+# volumes persistent volontairement a travers bootstrap-stop — mais un
+# re-run avec un admin_password different echoue alors sur le login
+# OpenBao (constate au E2E local 2026-07-14 : le KMS garde l'ancien
+# credential). Fresh start = ce target.
+bootstrap-reset: bootstrap-stop ## DESTRUCTIVE: stop pod + delete platform volumes (fresh state)
+	@podman volume ls --format "{{.Name}}" | grep "^platform-" | xargs -I{} podman volume rm -f {} 2>/dev/null || true
+	@echo "Platform volumes purged - next make bootstrap starts from scratch."
+
 state-snapshot: ## Backup OpenBao Raft snapshot (all states)
 	@ROOT_TOKEN=$$(cat $(KMS_OUTPUT)/root-token.txt) && \
 		curl -sf -H "X-Vault-Token: $$ROOT_TOKEN" \
-			http://127.0.0.1:8200/v1/sys/storage/raft/snapshot \
+			$(KMS_URL)/v1/sys/storage/raft/snapshot \
 			-o $(KMS_OUTPUT)/raft-snapshot-$$(date +%Y%m%d-%H%M%S).snap && \
 		echo "Raft snapshot saved to $(KMS_OUTPUT)/"
 
@@ -1044,7 +1081,7 @@ state-restore: ## Restore OpenBao Raft snapshot (SNAPSHOT=path)
 	@ROOT_TOKEN=$$(cat $(KMS_OUTPUT)/root-token.txt) && \
 		curl -sf -X PUT -H "X-Vault-Token: $$ROOT_TOKEN" \
 			--data-binary @$(SNAPSHOT) \
-			http://127.0.0.1:8200/v1/sys/storage/raft/snapshot && \
+			$(KMS_URL)/v1/sys/storage/raft/snapshot && \
 		echo "Raft snapshot restored from $(SNAPSHOT)"
 
 # ─── Disaster Recovery ──────────────────────────────────────────────────
@@ -1059,7 +1096,7 @@ dr-backup-kms:
 		cp -r $(KMS_OUTPUT) $$BACKUP_DIR/kms-output && \
 		ROOT_TOKEN=$$(cat $(KMS_OUTPUT)/root-token.txt) && \
 		curl -sf -H "X-Vault-Token: $$ROOT_TOKEN" \
-			http://127.0.0.1:8200/v1/sys/storage/raft/snapshot \
+			$(KMS_URL)/v1/sys/storage/raft/snapshot \
 			-o $$BACKUP_DIR/raft.snap && \
 		echo "DR backup saved to $$BACKUP_DIR/"
 
@@ -1131,68 +1168,76 @@ bootstrap-update:
 		--configmap=$(BOOTSTRAP_DIR)/configmap.yaml
 
 # ═══════════════════════════════════════════════════════════════════════
-# Arbor — unchanged (pre-stage images, charts, git)
+# Local docker mode — Talos-in-containers on podman (arm64-native on
+# Apple Silicon). Validated 2026-07-13: Cilium kube-proxy-free + coredns
+# green with the platform values. NOT the real Talos OS surface — for
+# that use envs/local (KVM host). Requires ROOTFUL podman machine.
 # ═══════════════════════════════════════════════════════════════════════
 
-ARBOR_DIR := arbor
+# Niveau 0 du plan docs/how-to/test-local.md : toutes les verifications
+# statiques en une passe (~2-3 min a chaud). SKIP_TFTEST=1 pour aller vite.
+.PHONY: verify-local
+verify-local: ## Run every local static check (validate/tests/kustomize/substitution/...)
+	bash scripts/verify-local.sh
+
+.PHONY: verify-render
+verify-render: ## Niveau 1 — helm template de chaque HelmRelease a sa version du registre + kubeconform (reseau requis)
+	bash scripts/verify-render.sh
+
+LOCAL_DOCKER_NAME ?= st4ck-local
+
+.PHONY: local-docker-up local-docker-down
+
+local-docker-up: ## Disposable Talos-in-containers cluster + Cilium (native arch)
+	bash scripts/local-docker-up.sh $(LOCAL_DOCKER_NAME)
+
+e2e-local: ## Golden path E2E automatise — cluster jetable, day-1 tofu, day-2 Flux, assertions (nightly / porte de release ADR-037)
+	bash scripts/e2e-local.sh
+
+local-docker-down: ## Destroy the local docker-mode cluster
+	@SOCK=$$(podman machine inspect --format '{{ .ConnectionInfo.PodmanSocket.Path }}' 2>/dev/null); \
+	DOCKER_HOST="unix://$$SOCK" talosctl cluster destroy --name $(LOCAL_DOCKER_NAME)
+
+# ═══════════════════════════════════════════════════════════════════════
+# Arbor — DEPRECATED, superseded by Hauler (ADR-034)
+# ═══════════════════════════════════════════════════════════════════════
+# The old inline recipes are gone: they resolved chart versions by
+# grepping `default = "..."` in stacks/*/variables.tf, and every default
+# moved to null when the platform version registry landed (ADR-033/034).
+# The targets now delegate to their hauler successors.
 
 .PHONY: arbor arbor-verify
 
-arbor: vault-backend-build ## Pre-stage images, Helm charts, and git repo for deployment
-	@echo "=== Arbor: staging deployment artifacts ==="
-	@mkdir -p $(ARBOR_DIR)/charts
-	@echo "--- Pulling container images from platform-pod.yaml ---"
-	@grep -E '^\s+image:' bootstrap/platform-pod.yaml \
-		| sed 's/.*image:\s*//' | sort -u | while read -r img; do \
-		echo "  podman pull $$img"; podman pull "$$img"; \
-	done
-	@echo "--- Pulling Helm charts from stacks ---"
-	@for dir in stacks/*/; do \
-		main="$$dir/main.tf"; vars="$$dir/variables.tf"; [ -f "$$main" ] || continue; \
-		grep -E 'repository\s*=' "$$main" | sed 's/.*=\s*"\(.*\)"/\1/' | while read -r repo; do \
-			chart=$$(grep -A1 "repository.*$$repo" "$$main" | grep 'chart\s*=' | head -1 | sed 's/.*=\s*"\(.*\)"/\1/'); \
-			[ -z "$$chart" ] && continue; \
-			echo "$$chart" | grep -q '/' && continue; \
-			version=$$(grep -B5 "chart.*$$chart" "$$main" | grep 'version\s*=' | head -1 | sed 's/.*=\s*"\{0,1\}\(var\.\)\{0,1\}//;s/"\{0,1\}\s*$$//'); \
-			if echo "$$version" | grep -q '^var\.'; then \
-				varname=$$(echo "$$version" | sed 's/var\.//'); \
-				version=$$(grep -A3 "variable.*$$varname" "$$vars" | grep 'default' | sed 's/.*=\s*"\(.*\)"/\1/'); \
-			fi; \
-			[ -z "$$version" ] && continue; \
-			echo "  helm pull $$chart ($$version) from $$repo"; \
-			helm pull "$$chart" --repo "$$repo" --version "$$version" -d $(ARBOR_DIR)/charts 2>/dev/null \
-				|| echo "    WARN: failed to pull $$chart $$version"; \
-		done; \
-	done
-	@echo "--- Generating manifest ---"
-	@{ echo '{'; echo '  "generated": "'$$(date -u +%Y-%m-%dT%H:%M:%SZ)'",'; \
-		echo '  "images": ['; \
-		grep -E '^\s+image:' bootstrap/platform-pod.yaml | sed 's/.*image:\s*//' | sort -u | while read -r img; do \
-			digest=$$(podman image inspect "$$img" --format '{{index .Digest}}' 2>/dev/null || echo "unknown"); \
-			echo "    {\"image\": \"$$img\", \"sha256\": \"$$digest\"},"; \
-		done; echo '    null'; echo '  ],'; \
-		echo '  "charts": ['; \
-		for f in $(ARBOR_DIR)/charts/*.tgz; do [ -f "$$f" ] || continue; \
-			sha=$$(shasum -a 256 "$$f" | cut -d' ' -f1); \
-			echo "    {\"file\": \"$$(basename $$f)\", \"sha256\": \"$$sha\"},"; \
-		done; echo '    null'; echo '  ]'; echo '}'; \
-	} > $(ARBOR_DIR)/manifest.json
-	@echo "=== Arbor staging complete ==="
+arbor: hauler-manifest hauler-sync ## DEPRECATED alias — use hauler-manifest + hauler-sync
+	@echo "NOTE: arbor is deprecated (ADR-034) — this ran hauler-manifest + hauler-sync."
 
-arbor-verify:
-	@FAIL=0; \
-	grep -E '^\s+image:' bootstrap/platform-pod.yaml | sed 's/.*image:\s*//' | sort -u | while read -r img; do \
-		printf "  %-60s" "$$img:"; \
-		if podman image exists "$$img" 2>/dev/null; then echo "OK"; else echo "MISSING"; FAIL=1; fi; \
-	done; \
-	test -f "$(ARBOR_DIR)/manifest.json" || { echo "FAIL: $(ARBOR_DIR)/manifest.json not found"; exit 1; }; \
-	for f in $(ARBOR_DIR)/charts/*.tgz; do [ -f "$$f" ] || continue; \
-		sha_actual=$$(shasum -a 256 "$$f" | cut -d' ' -f1); \
-		sha_expected=$$(grep "$$(basename $$f)" $(ARBOR_DIR)/manifest.json | sed 's/.*sha256.*: *"\([a-f0-9]*\)".*/\1/' | head -1); \
-		printf "  %-60s" "$$(basename $$f):"; \
-		if [ "$$sha_actual" = "$$sha_expected" ]; then echo "OK"; else echo "SHA256 MISMATCH"; FAIL=1; fi; \
-	done; \
-	[ $$FAIL -eq 0 ]
+arbor-verify: hauler-verify ## DEPRECATED alias — use hauler-verify
+	@echo "NOTE: arbor-verify is deprecated (ADR-034) — this ran hauler-verify."
+
+# ═══════════════════════════════════════════════════════════════════════
+# Hauler — declarative artifact store, successor to arbor (ADR-034)
+# ═══════════════════════════════════════════════════════════════════════
+
+HAULER_STORE := haul
+HAULER_MANIFEST := hauler-manifest.yaml
+
+.PHONY: hauler-manifest hauler-sync hauler-verify hauler-save hauler-serve
+
+hauler-manifest: ## Regenerate hauler-manifest.yaml from repo sources of truth
+	python3 scripts/hauler-manifest-gen.py -o $(HAULER_MANIFEST)
+
+hauler-sync: ## Pull all artifacts (images, charts, files) into the local store
+	@command -v hauler >/dev/null 2>&1 || { echo "Error: hauler required — https://docs.hauler.dev (curl -sfL https://get.hauler.dev | bash)"; exit 1; }
+	hauler store sync --store $(HAULER_STORE) --filename $(HAULER_MANIFEST)
+
+hauler-verify: ## List store contents (digest-addressed OCI layout)
+	hauler store info --store $(HAULER_STORE)
+
+hauler-save: ## Export store to chunked tarball for air-gap transfer
+	hauler store save --store $(HAULER_STORE) --filename haul.tar.zst
+
+hauler-serve: ## Serve store as OCI registry on :5000 (registry-mirror endpoint candidate)
+	hauler store serve registry --store $(HAULER_STORE) --port 5000
 
 # ═══════════════════════════════════════════════════════════════════════
 # VMware airgap (scripts, not Terraform)
@@ -1219,7 +1264,7 @@ vmware-bootstrap:
 STACKS := envs/scaleway/iam envs/scaleway/image envs/scaleway envs/scaleway/ci \
 	stacks/cni stacks/monitoring stacks/pki \
 	stacks/identity stacks/security stacks/storage \
-	stacks/flux-bootstrap stacks/external-secrets \
+	stacks/flux-bootstrap \
 	stacks/capi stacks/kamaji stacks/autoscaling stacks/gateway-api \
 	stacks/managed-cluster \
 	modules/naming modules/context
@@ -1260,7 +1305,7 @@ velero-test: ## Run Velero backup/restore e2e test (Chainsaw)
 	@command -v chainsaw >/dev/null 2>&1 || { echo "Error: chainsaw required"; exit 1; }
 	KUBECONFIG=$(KC_FILE) chainsaw test tests/velero/
 
-test: validate scaleway-test ## Run validation + tofu test + e2e tests
+test: validate scaleway-test ## Run validation + OpenTofu tests (E2E: make velero-test)
 
 clean: ## Remove all build artifacts
 	rm -rf $(OUT_DIR)
@@ -1270,7 +1315,7 @@ clean: ## Remove all build artifacts
 # UI Access
 # ═══════════════════════════════════════════════════════════════════════
 
-.PHONY: scaleway-headlamp scaleway-grafana scaleway-harbor
+.PHONY: scaleway-headlamp scaleway-grafana scaleway-zot
 
 scaleway-headlamp: scaleway-kubeconfig ## Open Headlamp UI (token to clipboard)
 	@KUBECONFIG=$(KC_FILE) kubectl create serviceaccount headlamp-admin -n kube-system 2>/dev/null || true
@@ -1280,11 +1325,11 @@ scaleway-headlamp: scaleway-kubeconfig ## Open Headlamp UI (token to clipboard)
 		KUBECONFIG=$(KC_FILE) kubectl port-forward -n monitoring svc/headlamp 4466:80 >/dev/null 2>&1 & \
 		sleep 2 && open http://localhost:4466
 
-scaleway-harbor: scaleway-kubeconfig
-	@PASSWORD=$$($(TF) -chdir=$(TF_STORAGE) output -raw harbor_admin_password) && \
+scaleway-zot: scaleway-kubeconfig ## Open zot UI (admin password to clipboard)
+	@PASSWORD=$$($(TF) -chdir=$(TF_STORAGE) output -raw zot_admin_password) && \
 		echo "$$PASSWORD" | pbcopy && \
-		KUBECONFIG=$(KC_FILE) kubectl port-forward -n storage svc/harbor 8080:80 >/dev/null 2>&1 & \
-		sleep 2 && open http://localhost:8080
+		KUBECONFIG=$(KC_FILE) kubectl port-forward -n storage svc/zot 5000:5000 >/dev/null 2>&1 & \
+		sleep 2 && open http://localhost:5000
 
 scaleway-grafana: scaleway-kubeconfig
 	@KUBECONFIG=$(KC_FILE) kubectl port-forward -n monitoring svc/grafana 3000:80 >/dev/null 2>&1 & \

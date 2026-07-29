@@ -24,7 +24,7 @@ graph LR
 ```mermaid
 graph TB
     subgraph "Phase 0 — Local"
-        KMS[kms-bootstrap<br/>OpenBao Podman]
+        KMS[bootstrap<br/>OpenBao KMS Podman]
     end
 
     subgraph "Phase 1 — Infrastructure"
@@ -39,7 +39,7 @@ graph TB
         MON[3. k8s-monitoring<br/>VictoriaMetrics ~2min]
         IDN[4. k8s-identity<br/>Kratos + Hydra ~1min]
         SEC[5. k8s-security<br/>Trivy + Tetragon + Kyverno ~2min]
-        STO[6. k8s-storage<br/>Garage + Velero + Harbor ~2min]
+        STO[6. k8s-storage<br/>Garage + Velero + zot ~2min]
         FLUXB[7. flux-bootstrap<br/>Flux SSH ~30s]
 
         CNI --> PKI --> MON --> IDN --> SEC --> STO --> FLUXB
@@ -67,8 +67,8 @@ graph TB
 ```mermaid
 graph LR
     TF[OpenTofu] -->|HTTP backend| VB[vault-backend<br/>:8080]
-    VB -->|KV v2| BAO[OpenBao<br/>:8200]
-    VB -->|Transit| BAO
+    VB -->|KV v2| BAO[OpenBao KMS<br/>:8200]
+    VB -->|state backend| BAO
 
     subgraph "Paths KV v2"
         S1[state/k8s-cni]
@@ -94,18 +94,19 @@ Les secrets ne passent jamais par Git.
 
 ```mermaid
 graph LR
-    TF[OpenTofu<br/>random_id] -->|genere| SEC[Secrets]
-    SEC -->|stockes dans| STATE[State chiffre<br/>OpenBao KV v2]
-    SEC -->|injectes via| TPL[templatefile]
-    TPL --> HELM[Helm values]
-    HELM --> K8S[K8s Secrets]
+    TF[Terraform<br/>random_password / random_bytes / tls_private_key] -->|genere| SEC[Secrets]
+    SEC -->|stockes dans| STATE[State chiffre<br/>OpenBao KMS KV v2]
+    SEC -->|seed idempotent| INFRA[OpenBao Infra<br/>secret/ KV v2]
+    INFRA -->|ClusterSecretStore| ESO[External Secrets Operator]
+    ESO --> K8S[K8s Secrets]
 
     style SEC fill:#f90,stroke:#333,color:#fff
 ```
 
-- `random_id.*.hex` (64 chars) : tokens, passwords, RPC secrets
-- `random_id.*.b64_std` (base64) : Pomerium shared/cookie secrets (strict 32 bytes)
-- Jamais en clair sur disque — uniquement dans le state Terraform chiffre
+- `random_password` : passwords, client secrets, admin tokens
+- `random_bytes` : secrets binaires stricts, seal keys, RPC secrets
+- `tls_private_key` : CA, Flux SSH, Cosign
+- Jamais en clair dans Git ; le day-2 passe par OpenBao Infra + ESO
 
 ## Architecture PKI
 
@@ -160,12 +161,12 @@ Toutes les stacks K8s sont provider-agnostiques — elles recoivent uniquement u
 
 | Stack | Composants | Namespace |
 |---|---|---|
-| k8s-cni | Cilium + Hubble | kube-system |
+| k8s-cni | Cilium + Hubble + local-path StorageClass | kube-system, local-path-storage |
 | k8s-pki | OpenBao x2, cert-manager, CA secrets | secrets |
 | k8s-monitoring | VictoriaMetrics, VictoriaLogs, Grafana, Headlamp | monitoring |
 | k8s-identity | Kratos, Hydra, Pomerium | identity |
 | k8s-security | Trivy, Tetragon, Kyverno, Cosign policy | security |
-| k8s-storage | local-path, Garage, Velero, Harbor | garage, storage |
+| k8s-storage | Garage, Velero, zot | garage, storage |
 | flux-bootstrap | Flux v2, GitRepository, root Kustomization | flux-system |
 
 ## Cluster K8s — vue composants
@@ -199,7 +200,7 @@ graph TB
         LP[local-path-provisioner]
         GAR[Garage S3 x3<br/>replication factor 3]
         VEL[Velero<br/>backup → Garage]
-        HAR[Harbor<br/>registry → Garage]
+        HAR[zot<br/>registre OCI → Garage]
     end
 
     subgraph "Identite"
@@ -221,14 +222,15 @@ Apres le deploiement initial, Flux reconcilie depuis `clusters/management/` :
 
 ```
 clusters/management/
-    kustomization.yaml          # Root : reference toutes les stacks
-    k8s-cni/                    # HelmRelease Cilium
-    k8s-monitoring/             # HelmReleases monitoring
-    k8s-pki/                    # HelmReleases PKI
-    k8s-identity/               # HelmReleases identity
-    k8s-security/               # HelmReleases security
-    k8s-storage/                # HelmReleases storage
+    kustomization.yaml          # Root : reference stacks/*/flux* + fichiers ci-dessous
+    versions-configmap.yaml     # Registre de versions (postBuild.substituteFrom)
+    monitoring-vm.yaml          # Two-phase : vm-k8s-stack -> VMRule flux-alerts
+    security-kyverno.yaml       # Two-phase : HelmRelease -> ClusterPolicies
+    storage-zot.yaml            # Two-phase : ESO -> HelmRelease (ADR-039)
 ```
+
+Les HelmReleases eux-memes vivent dans `stacks/*/flux*/` (co-localises avec
+le code tofu de chaque stack) et sont references par le kustomization root.
 
 ## Workload Clusters (CAPI)
 

@@ -38,6 +38,14 @@ provider "helm" {
 # under ./templates/.
 # ═══════════════════════════════════════════════════════════════════════
 
+# Version pins come from the platform version registry (single source of
+# truth shared with Flux postBuild.substituteFrom and the Hauler manifest):
+# clusters/management/versions-configmap.yaml. Variables stay as optional
+# overrides (default null).
+locals {
+  platform_versions = yamldecode(file("${path.module}/../../clusters/management/versions-configmap.yaml")).data
+}
+
 locals {
   labels_common = {
     "app.kubernetes.io/part-of"    = "st4ck"
@@ -62,14 +70,37 @@ resource "kubernetes_namespace" "kamaji" {
 # Webhook serving cert is issued by cert-manager via ClusterIssuer "internal-ca".
 
 resource "helm_release" "kamaji" {
-  name             = "kamaji"
-  repository       = "oci://ghcr.io/clastix/charts"
-  chart            = "kamaji"
-  version          = var.kamaji_version
+  name = "kamaji"
+  # ⚠ 2026-07-14 (delimitation finale apres deux contre-verifications) :
+  # SEULS les artefacts ghcr de l'operateur sont fermes aux anonymes
+  # (ghcr.io/clastix/charts/kamaji et ghcr.io/clastix/kamaji → 401).
+  # Restent publics : le provider CAPI sur ghcr, l'image operateur sur
+  # docker.io/clastix/kamaji ET quay.io/clastix/kamaji (26.7.x-edge),
+  # le chart source dans github.com/clastix/kamaji, et kamaji-etcd sur
+  # clastix.github.io. Deblocage : chart vendore depuis git
+  # (make kamaji-chart, SHA pinne au registre) + image en override —
+  # quay retenu plutot que Docker Hub (rate limits anonymes du Hub).
+  # Chart vendore par `make kamaji-chart` (pin kamaji_git_ref au registre).
+  chart            = "${path.module}/chart"
   namespace        = kubernetes_namespace.kamaji.metadata[0].name
   create_namespace = false
 
   values = [file("${path.module}/values.yaml")]
+
+  # Image operateur depuis quay (le default du chart pointe sur des
+  # registres fermes aux anonymes).
+  set {
+    name  = "image.repository"
+    value = "quay.io/clastix/kamaji"
+  }
+  set {
+    name  = "image.tag"
+    value = coalesce(var.kamaji_image_tag, local.platform_versions.kamaji_image_tag)
+  }
+  set {
+    name  = "image.pullPolicy"
+    value = "IfNotPresent"
+  }
 
   depends_on = [kubernetes_namespace.kamaji]
 }
@@ -93,7 +124,7 @@ resource "helm_release" "etcd_operator" {
   name             = "etcd-operator"
   repository       = "oci://ghcr.io/aenix-io/charts"
   chart            = "etcd-operator"
-  version          = var.etcd_operator_version
+  version          = coalesce(var.etcd_operator_version, local.platform_versions.etcd_operator_version)
   namespace        = kubernetes_namespace.etcd_operator.metadata[0].name
   create_namespace = false
 

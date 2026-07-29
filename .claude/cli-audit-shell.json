@@ -1,0 +1,158 @@
+{
+  "skill": "cli-audit-shell",
+  "schema_version": 1,
+  "generated_at": "2026-07-12T00:00:00Z",
+  "scope": "scripts/ + envs/scaleway/ci/launch.sh + Makefile inline recipes (garage-chart, k8s-up, hauler-*) + modules/em-talos-bootstrap provisioners",
+  "score": { "value": 7.4, "scale": 10, "label": "SQI" },
+  "shellcheck": { "version": "0.11.0", "errors": 0, "warnings": 0 },
+  "findings": [
+    {
+      "id": "S1-001",
+      "tier": 2,
+      "dimension": "strict-mode",
+      "file": "modules/em-talos-bootstrap/main.tf",
+      "line": 138,
+      "description": "dd|strings|head -n 500 sous set -euxo pipefail : SIGPIPE de head fait avorter le garde-fou anti-wipe de façon intermittente (fail-safe mais bloque le bootstrap EM)",
+      "confidence": "high",
+      "effort": "low"
+    },
+    {
+      "id": "S2-001",
+      "tier": 2,
+      "dimension": "error-surfaces",
+      "file": "scripts/brigade-setup-worktrees.sh",
+      "line": 28,
+      "description": "git worktree add >/dev/null 2>&1 avale l'erreur reelle (AP3 Silent Swallower) — l'operateur voit FAILED sans cause",
+      "confidence": "high",
+      "effort": "low"
+    },
+    {
+      "id": "S2-002",
+      "tier": 2,
+      "dimension": "error-surfaces",
+      "file": "Makefile",
+      "line": 243,
+      "description": "garage-chart : curl -sL sans -f pipe vers tar (erreur trompeuse sur 404), pas de verification SHA du chart tiers, re-telechargement reseau a chaque k8s-storage-init",
+      "confidence": "high",
+      "effort": "low"
+    },
+    {
+      "id": "S1-002",
+      "tier": 2,
+      "dimension": "strict-mode",
+      "file": "Makefile",
+      "line": 1,
+      "description": "Aucune directive SHELL/.SHELLFLAGS/.DELETE_ON_ERROR : les segments gauches des pipelines de recettes echouent silencieusement (sh sans pipefail)",
+      "confidence": "high",
+      "effort": "medium"
+    },
+    {
+      "id": "S12-001",
+      "tier": 2,
+      "dimension": "security",
+      "file": "envs/scaleway/ci/launch.sh",
+      "line": 69,
+      "description": "pod-with-secrets.yaml ecrit en 0644 (umask defaut) et jamais supprime apres podman play kube — secrets en clair persistants sur la VM CI",
+      "confidence": "high",
+      "effort": "low"
+    },
+    {
+      "id": "S10-001",
+      "tier": 2,
+      "dimension": "idempotency",
+      "file": "scripts/mirror-images-to-scr.sh",
+      "line": 147,
+      "description": "Fallback docker/podman casse sur une entree @sha256: (docker tag/push refusent une reference digest en cible) — latent, mirror-images.txt sans digest aujourd'hui",
+      "confidence": "medium",
+      "effort": "low"
+    },
+    {
+      "id": "S12-002",
+      "tier": 2,
+      "dimension": "security",
+      "file": "envs/scaleway/ci/main.tf",
+      "line": 417,
+      "description": "Interpolation TF dans du shell single-quote (gitea_admin_user, et IMAGE_URL dans em-talos-bootstrap/main.tf:181) — un quote simple casse/injecte ; mitige (special=false) mais aucune validation TF ne l'impose",
+      "confidence": "medium",
+      "effort": "low"
+    },
+    {
+      "id": "S11-001",
+      "tier": 2,
+      "dimension": "namespace",
+      "file": "scripts/brigade-launch-agent.sh",
+      "line": 15,
+      "description": "Racine projet codee en dur /Users/ludwig/workspace/st4ck (aussi brigade-setup-worktrees.sh:6) — AP10 Lazy Default machine-specifique",
+      "confidence": "high",
+      "effort": "low"
+    },
+    {
+      "id": "S4-001",
+      "tier": 1,
+      "dimension": "stderr-hygiene",
+      "file": "scripts/cosign-sign.sh",
+      "line": 24,
+      "description": "Messages ERROR: sur stdout au lieu de stderr (lignes 24-25)",
+      "confidence": "high",
+      "effort": "low"
+    },
+    {
+      "id": "S2-003",
+      "tier": 1,
+      "dimension": "error-surfaces",
+      "file": "Makefile",
+      "line": 1213,
+      "description": "hauler-verify/save/serve sans garde command -v hauler (presente sur hauler-sync) ; hauler-manifest sans garde python3",
+      "confidence": "high",
+      "effort": "low"
+    },
+    {
+      "id": "S2-004",
+      "tier": 1,
+      "dimension": "error-surfaces",
+      "file": "scripts/mirror-images-to-scr.sh",
+      "line": 94,
+      "description": "auth_check branche skopeo est un no-op — le commentaire promet une verification de joignabilite que le code ne fait pas",
+      "confidence": "high",
+      "effort": "low"
+    },
+    {
+      "id": "S7-001",
+      "tier": 1,
+      "dimension": "structure",
+      "file": "scripts/mirror-images-to-scr.sh",
+      "line": 78,
+      "description": "Pas de main() (201 l.) et code executable entrelace entre definitions de fonctions (l.78, 107) ; idem register-hydra-oidc-client.sh (152 l. lineaires)",
+      "confidence": "high",
+      "effort": "medium"
+    },
+    {
+      "id": "S8-001",
+      "tier": 1,
+      "dimension": "naming",
+      "file": "scripts/mirror-images-to-scr.sh",
+      "line": 35,
+      "description": "Aucune constante readonly dans le corpus (SCRIPT_DIR, SCR_HOST, SCR_BASE, WORKDIR launch.sh:22)",
+      "confidence": "high",
+      "effort": "low"
+    },
+    {
+      "id": "S9-001",
+      "tier": 1,
+      "dimension": "cli-ergonomics",
+      "file": "scripts/mirror-images-to-scr.sh",
+      "line": 45,
+      "description": "usage() auto-parse l'en-tete via sed + head -n 30 — tronquera l'aide quand la liste d'options s'allongera",
+      "confidence": "high",
+      "effort": "low"
+    }
+  ],
+  "strengths": [
+    { "dimension": "strict-mode", "note": "set -euo pipefail partout, deviation set -eu documentee (worktrees:4), idiome tableau-vide sous set -u (brigade-launch:45)" },
+    { "dimension": "idempotency", "note": "Seal key never-overwrite + garde 32 octets (launch.sh), signature disque avant wipefs/dd (EM), 201/409 toleres, mktemp+trap, boucles d'attente bornees avec deadline" },
+    { "dimension": "security", "note": "Zero eval ; secret OIDC monte en fichier et jamais interpole (register-hydra) ; machine config via mktemp 0600 ; heredocs distants single-quotes" },
+    { "dimension": "cli-ergonomics", "note": "mirror-images-to-scr.sh exemplaire : --help/--dry-run/--filter/--tool, echelle skopeo->docker->podman, rapport final, exit 2 partiel" },
+    { "dimension": "linting", "note": "6 scripts, 0 finding shellcheck -S style (v0.11.0)" }
+  ],
+  "handoffs": []
+}

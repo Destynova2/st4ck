@@ -82,7 +82,7 @@ resource "random_password" "garage_admin_token" {
   }
 }
 
-resource "random_password" "harbor_admin_password" {
+resource "random_password" "zot_admin_password" {
   length  = 24
   special = false
 
@@ -118,10 +118,11 @@ resource "terraform_data" "seed_openbao_secrets" {
   # additions are deliberately NOT in the input hash: ignore_changes = all
   # locks them, so they only flip on a state-loss reseed (which we want to
   # detect via the `bao kv get` idempotency guards below, not a hash diff).
-  input = sha256(join(",", [
+  triggers_replace = [sha256(join(",", [
     random_password.hydra_system_secret.result,
+    random_password.oidc_client_secret.result,
     random_password.garage_admin_token.result,
-  ]))
+  ]))]
 
   provisioner "local-exec" {
     environment = {
@@ -134,7 +135,10 @@ resource "terraform_data" "seed_openbao_secrets" {
       OIDC_CLIENT_SECRET     = random_password.oidc_client_secret.result
       GARAGE_RPC_SECRET      = random_bytes.garage_rpc_secret.hex
       GARAGE_ADMIN_TOKEN     = random_password.garage_admin_token.result
-      HARBOR_ADMIN_PASSWORD  = random_password.harbor_admin_password.result
+      ZOT_ADMIN_PASSWORD     = random_password.zot_admin_password.result
+      # bcrypt() re-salts on every eval — harmless: seed_if_absent only
+      # writes the FIRST value, OpenBao keeps it stable afterwards.
+      ZOT_HTPASSWD = "admin:${bcrypt(random_password.zot_admin_password.result)}"
       # Cosign keypair (Phase 1a-1). PEMs go through env vars, never on
       # the kubectl exec command line where they'd hit ps + audit logs.
       COSIGN_PUB = tls_private_key.cosign.public_key_pem
@@ -172,9 +176,19 @@ resource "terraform_data" "seed_openbao_secrets" {
         exit 1
       fi
 
-      echo "Logging in..."
-      $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1 || \
-        { echo "ERROR: OpenBao login failed"; exit 1; }
+      # L'API repond AVANT que les blocs d'init declaratifs du chart
+      # (mount userpass, user admin) n'aient tourne — avec un registre
+      # mirror local le seed arrive pendant cette fenetre (E2E run 9).
+      # On attend le LOGIN, pas le status : 120 x 2s.
+      echo "Logging in (attente de l'init userpass)..."
+      logged=0
+      for i in $(seq 1 120); do
+        if $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1; then
+          logged=1; break
+        fi
+        sleep 2
+      done
+      [ "$logged" = "1" ] || { echo "ERROR: OpenBao login failed after 240s"; exit 1; }
 
       # Per-path idempotency: each block skips if already seeded. This
       # used to be a single guard on secret/identity/hydra but new paths
@@ -191,8 +205,16 @@ resource "terraform_data" "seed_openbao_secrets" {
       }
 
       echo "Seeding identity secrets..."
-      seed_if_absent secret/identity/hydra \
-        system_secret="$HYDRA_SYSTEM_SECRET"
+      if $BAO bao kv get secret/identity/hydra >/dev/null 2>&1; then
+        echo "  secret/identity/hydra: patching managed fields"
+        $BAO bao kv patch secret/identity/hydra \
+          system_secret="$HYDRA_SYSTEM_SECRET" \
+          client_secret="$OIDC_CLIENT_SECRET"
+      else
+        seed_if_absent secret/identity/hydra \
+          system_secret="$HYDRA_SYSTEM_SECRET" \
+          client_secret="$OIDC_CLIENT_SECRET"
+      fi
 
       seed_if_absent secret/identity/pomerium \
         shared_secret="$POMERIUM_SHARED_SECRET" \
@@ -204,8 +226,9 @@ resource "terraform_data" "seed_openbao_secrets" {
         rpc_secret="$GARAGE_RPC_SECRET" \
         admin_token="$GARAGE_ADMIN_TOKEN"
 
-      seed_if_absent secret/storage/harbor \
-        admin_password="$HARBOR_ADMIN_PASSWORD"
+      seed_if_absent secret/storage/zot \
+        admin_password="$ZOT_ADMIN_PASSWORD" \
+        htpasswd="$ZOT_HTPASSWD"
 
       echo "Seeding security secrets..."
       # Cosign keypair: Kyverno verifyImages reads cosign-public-key from
@@ -217,6 +240,70 @@ resource "terraform_data" "seed_openbao_secrets" {
         cosign.key="$COSIGN_KEY"
 
       echo "OpenBao Infra seeded."
+    EOT
+  }
+}
+
+# ─── Load the VM-signed intermediate CA into pki_int/ ─────────────────
+# Closes the Phase F-bis-2 v3 "TBD" (see the WARN branch in
+# flux/job-bootstrap-openbao-pki.yaml): the day-2 Job deliberately has
+# NO access to the intermediate KEY, so the one-shot `config/ca` load
+# belongs here — tofu day-1 IS the privileged context (it holds
+# kms-output/ directly). Mount enable is idempotent on both sides, so
+# ordering doesn't matter: tofu-first loads the CA before the Job adds
+# roles+auth; on Job-first (legacy) clusters the next pki apply fills
+# the CA in. Without this, ClusterIssuer internal-ca authenticates but
+# CANNOT SIGN — the entire identity chain stalls (golden-path finding
+# 2026-07-16, was the last red segment of the local E2E graph).
+resource "terraform_data" "load_pki_int_ca" {
+  depends_on = [helm_release.openbao_infra]
+
+  triggers_replace = [sha256(local.infra_ca_chain)]
+
+  provisioner "local-exec" {
+    environment = {
+      KUBECONFIG         = var.kubeconfig_path
+      BAO_ADMIN_PASSWORD = random_password.openbao_admin.result
+      # PEMs via env, never on the command line (ps + audit logs).
+      INFRA_CA_KEY   = local.infra_ca_key
+      INFRA_CA_CHAIN = local.infra_ca_chain
+    }
+    command = <<-EOT
+      set -eu
+      BAO="kubectl -n secrets exec -i openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true"
+
+      echo "Waiting for OpenBao Infra API..."
+      ready=0
+      for i in $(seq 1 300); do
+        if $BAO bao status >/dev/null 2>&1; then ready=1; break; fi
+        sleep 1
+      done
+      [ "$ready" = "1" ] || { echo "ERROR: OpenBao Infra API not ready after 300s"; exit 1; }
+
+      logged=0
+      for i in $(seq 1 120); do
+        if $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1; then
+          logged=1; break
+        fi
+        sleep 2
+      done
+      [ "$logged" = "1" ] || { echo "ERROR: OpenBao login failed after 240s"; exit 1; }
+
+      if $BAO bao secrets list 2>/dev/null | grep -q '^pki_int/'; then
+        echo "pki_int/ already mounted"
+      else
+        echo "Enabling pki_int/ (5y max-lease)..."
+        $BAO bao secrets enable -path=pki_int -max-lease-ttl=43800h pki >/dev/null
+      fi
+
+      if $BAO bao read pki_int/cert/ca 2>/dev/null | grep -q -- "-----BEGIN CERTIFICATE-----"; then
+        echo "pki_int/ CA already loaded, skipping"
+      else
+        echo "Loading VM-signed intermediate into pki_int/config/ca..."
+        printf '%s\n%s\n' "$INFRA_CA_KEY" "$INFRA_CA_CHAIN" \
+          | $BAO bao write pki_int/config/ca pem_bundle=- >/dev/null
+        echo "pki_int/ CA loaded."
+      fi
     EOT
   }
 }
@@ -327,11 +414,6 @@ output "pomerium_client_secret" {
   sensitive = true
 }
 
-output "oidc_client_secret" {
-  value     = random_password.oidc_client_secret.result
-  sensitive = true
-}
-
 output "garage_rpc_secret" {
   value     = random_bytes.garage_rpc_secret.hex
   sensitive = true
@@ -342,7 +424,7 @@ output "garage_admin_token" {
   sensitive = true
 }
 
-output "harbor_admin_password" {
-  value     = random_password.harbor_admin_password.result
+output "zot_admin_password" {
+  value     = random_password.zot_admin_password.result
   sensitive = true
 }

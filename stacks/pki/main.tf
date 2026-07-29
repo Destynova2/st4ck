@@ -49,6 +49,14 @@ provider "kubectl" {
 # Prerequisites: make kms-bootstrap (generates certs in kms-output/)
 # ═══════════════════════════════════════════════════════════════════════
 
+# Version pins come from the platform version registry (single source of
+# truth shared with Flux postBuild.substituteFrom and the Hauler manifest):
+# clusters/management/versions-configmap.yaml. Variables stay as optional
+# overrides (default null).
+locals {
+  platform_versions = yamldecode(file("${path.module}/../../clusters/management/versions-configmap.yaml")).data
+}
+
 locals {
   kms = var.kms_output_dir
 
@@ -179,7 +187,7 @@ resource "helm_release" "openbao_infra" {
   name             = "openbao-infra"
   repository       = "https://openbao.github.io/openbao-helm"
   chart            = "openbao"
-  version          = var.openbao_version
+  version          = coalesce(var.openbao_version, local.platform_versions.openbao_version)
   namespace        = "secrets"
   create_namespace = false
 
@@ -363,7 +371,7 @@ resource "helm_release" "openbao_app" {
   name             = "openbao-app"
   repository       = "https://openbao.github.io/openbao-helm"
   chart            = "openbao"
-  version          = var.openbao_version
+  version          = coalesce(var.openbao_version, local.platform_versions.openbao_version)
   namespace        = "secrets"
   create_namespace = false
 
@@ -538,7 +546,7 @@ resource "helm_release" "cert_manager" {
   name             = "cert-manager"
   repository       = "https://charts.jetstack.io"
   chart            = "cert-manager"
-  version          = var.cert_manager_version
+  version          = coalesce(var.cert_manager_version, local.platform_versions.cert_manager_version)
   namespace        = "cert-manager"
   create_namespace = false
 
@@ -556,7 +564,8 @@ resource "helm_release" "cert_manager" {
 resource "kubernetes_namespace" "external_secrets" {
   metadata {
     name = "external-secrets"
-    # PSA labels MUST mirror stacks/external-secrets/flux/namespace.yaml.
+    # PSA labels: tofu is the sole owner of this namespace (the former
+    # Flux-owned stacks/external-secrets/flux/ was purged 2026-07-12).
     # Same SSA idempotency reasoning as cert_manager above — both
     # sources must declare baseline to prevent silent label stripping
     # on Flux reconcile. Postmortem 2026-04-29 (#14).
@@ -571,7 +580,7 @@ resource "helm_release" "external_secrets" {
   name             = "external-secrets"
   repository       = "https://charts.external-secrets.io"
   chart            = "external-secrets"
-  version          = var.external_secrets_version
+  version          = coalesce(var.external_secrets_version, local.platform_versions.external_secrets_version)
   namespace        = "external-secrets"
   create_namespace = false
 
@@ -680,6 +689,49 @@ resource "kubectl_manifest" "cluster_issuer_bootstrap" {
     helm_release.cert_manager,
     kubernetes_secret.cert_manager_ca,
   ]
+}
+
+# ─── TokenRequest RBAC for the Vault issuer ──────────────────────────
+# cert-manager's Vault auth mints a token FOR the referenced SA via the
+# TokenRequest API — without this Role the issuer fails with
+# `serviceaccounts "cert-manager" is forbidden` and every Certificate
+# behind internal-ca stalls (identity chain incl. CNPG — golden-path
+# finding 2026-07-16, keystone of the whole identity dependency tree).
+resource "kubectl_manifest" "cert_manager_tokenrequest_role" {
+  yaml_body = <<-YAML
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: Role
+    metadata:
+      name: cert-manager-tokenrequest
+      namespace: cert-manager
+    rules:
+      - apiGroups: [""]
+        resources: ["serviceaccounts/token"]
+        resourceNames: ["cert-manager"]
+        verbs: ["create"]
+  YAML
+
+  depends_on = [helm_release.cert_manager]
+}
+
+resource "kubectl_manifest" "cert_manager_tokenrequest_binding" {
+  yaml_body = <<-YAML
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: cert-manager-tokenrequest
+      namespace: cert-manager
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: Role
+      name: cert-manager-tokenrequest
+    subjects:
+      - kind: ServiceAccount
+        name: cert-manager
+        namespace: cert-manager
+  YAML
+
+  depends_on = [kubectl_manifest.cert_manager_tokenrequest_role]
 }
 
 # ─── Day-2 ClusterIssuer (Vault kind, OpenBao PKI backend) ───────────

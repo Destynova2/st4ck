@@ -1,7 +1,9 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# ESO post-install config — depends on the CRDs created by
-# ../flux/helmrelease.yaml. Applied by the `management` Flux
-# Kustomization (which dependsOn: management-eso).
+# ESO post-install config. The ClusterSecretStore CRD is installed by
+# the tofu-owned ESO release (stacks/pki/main.tf, ADR-033 — the former
+# Flux-owned ESO + `management-eso` Kustomization were removed in the
+# 2026-04-27 postmortem). Applied by the `management` Flux Kustomization,
+# which only reconciles after tofu day-1 has installed ESO.
 resources:
   - cluster-secret-store.yaml

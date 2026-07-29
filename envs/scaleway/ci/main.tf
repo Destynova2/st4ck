@@ -199,7 +199,7 @@ resource "local_sensitive_file" "platform_secrets" {
 }
 
 resource "local_sensitive_file" "platform_unseal_key" {
-  content_base64       = random_bytes.bao_seal_key.base64
+  content_base64 = random_bytes.bao_seal_key.base64
   # `.bin` suffix (not .tf) — the TF file provisioner silently drops files
   # with .tf extension on upload (probably a guard against accidentally
   # shipping TF sources). The provisioner DOES preserve source basename

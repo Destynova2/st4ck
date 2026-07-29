@@ -10,22 +10,22 @@ output "capi_operator_version" {
 
 output "capi_core_version" {
   description = "Pinned CAPI core provider version"
-  value       = var.capi_core_version
+  value       = coalesce(var.capi_core_version, local.platform_versions.capi_core_version)
 }
 
 output "capi_bootstrap_talos_version" {
   description = "Pinned CABPT (Talos bootstrap provider) version"
-  value       = var.capi_bootstrap_talos_version
+  value       = coalesce(var.capi_bootstrap_talos_version, local.platform_versions.capi_bootstrap_talos_version)
 }
 
 output "capi_controlplane_kamaji_version" {
   description = "Pinned Kamaji control plane provider version"
-  value       = var.capi_controlplane_kamaji_version
+  value       = coalesce(var.capi_controlplane_kamaji_version, local.platform_versions.capi_controlplane_kamaji_version)
 }
 
 output "capi_infrastructure_scaleway_version" {
   description = "Pinned Scaleway infrastructure provider (CAPS) version"
-  value       = var.capi_infrastructure_scaleway_version
+  value       = coalesce(var.capi_infrastructure_scaleway_version, local.platform_versions.capi_infrastructure_scaleway_version)
 }
 
 output "scaleway_credentials_secret" {

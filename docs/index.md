@@ -16,7 +16,7 @@ Deploying a hardened Kubernetes platform in defense/sovereign contexts requires 
 
 ```mermaid
 graph LR
-    KMS[kms-bootstrap<br/>PKI + state backend] --> INFRA[Infrastructure<br/>cluster 6 noeuds]
+    KMS[bootstrap<br/>OpenBao KMS + PKI + state backend] --> INFRA[Infrastructure<br/>cluster 6 noeuds]
     INFRA --> STACKS[8 core stacks K8s<br/>sequentiel ~25min<br/>+ 5 KaaS optionnels]
     STACKS --> FLUX[Flux day-2<br/>GitOps self-healing]
 ```
@@ -33,7 +33,8 @@ graph LR
 
 ```bash
 # 1. Bootstrap local KMS (once, needs podman)
-make kms-bootstrap
+make bootstrap
+make bootstrap-export
 
 # 2. Deploy a cluster (pick your provider)
 make scaleway-up        # Cloud
@@ -54,6 +55,7 @@ See [Getting Started](tutorials/getting-started.md) for a detailed walkthrough.
 | Deploy to a specific environment | [How to Deploy](how-to/deploy.md) |
 | Understand the architecture | [Architecture](explanation/architecture.md) |
 | Bootstrap chicken-and-egg | [Bootstrap Mechanics](explanation/bootstrap.md) |
+| Full deployment order, laptop to baremetal | [Deploy Order](explanation/deploy-order.md) |
 | Security model and threat assumptions | [Security Model](explanation/security.md) |
 | All Makefile targets and config options | [Command Reference](reference/commands.md) |
 | All configurable parameters | [Configuration Reference](reference/config.md) |

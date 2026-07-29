@@ -10,7 +10,7 @@
 
 The Talos platform is a multi-environment Kubernetes deployment system (Scaleway, local KVM, VMware air-gapped) built on Talos Linux v1.12 -- an immutable, minimal, and secure OS dedicated to Kubernetes. The system is entirely driven by Infrastructure-as-Code (OpenTofu) and GitOps (Flux v2), with zero plaintext secrets in Git.
 
-The architecture relies on three tiers of OpenBao (open-source fork of HashiCorp Vault): a **bootstrap** (podman, off-cluster) for Terraform state storage and root PKI, an **infra** (in-cluster) for infrastructure secrets and auto-unseal, and an **app** (in-cluster) for application secrets. This three-tier model ensures separation of concerns, at-rest encryption for all states, and a hierarchical PKI trust chain (Root CA -> Infra Sub-CA + App Sub-CA).
+The architecture relies on three OpenBao domains (open-source fork of HashiCorp Vault): a **bootstrap KMS** (podman, off-cluster) for OpenTofu state storage and root PKI material, **OpenBao Infra** (in-cluster) for platform secrets, PKI and ESO, and **OpenBao App** (in-cluster) as the future application-secret boundary. This model separates bootstrap state, platform operations, and application secrets while preserving a hierarchical PKI trust chain (Root CA -> Infra Sub-CA + App Sub-CA).
 
 Key tradeoffs are: higher bootstrap complexity in exchange for full zero-trust on secrets; sequential deployment (not parallel) to avoid race conditions; and a dependency on podman for the bootstrap platform.
 
@@ -21,7 +21,7 @@ Key tradeoffs are: higher bootstrap complexity in exchange for full zero-trust o
 ### Goals
 
 - **G1**: Deploy a Kubernetes cluster with 3 control planes + 3 workers on any provider with a single command (`make scaleway-up`)
-- **G2**: Zero secrets in Git -- all secrets are auto-generated (`random_id`/`random_password`) and stored in encrypted state (OpenBao KV v2)
+- **G2**: Zero secrets in Git -- all secrets are auto-generated (`random_password`, `random_bytes`, `tls_private_key`), stored in encrypted state, seeded into OpenBao Infra, then reconciled by ESO
 - **G3**: Complete hierarchical PKI chain (Root CA 10 years -> Infra/App Sub-CA 5 years -> leaf certificates 1 year with automatic renewal)
 - **G4**: Automated Day-1 (OpenTofu) to Day-2 (Flux GitOps) transition -- `tofu state rm` after first deployment, Flux reconciles afterward
 - **G5**: Multi-provider support without code duplication -- K8s stacks are provider-agnostic, only the kubeconfig changes
@@ -133,7 +133,7 @@ graph TB
     TOFU_SETUP -->|"WP secrets"| WP_SRV
     FLUX -->|"SSH clone"| GITEA
     ESO -->|"KV v2 read"| BAO_INFRA
-    BAO_INFRA -->|"Transit auto-unseal"| BAO_KMS
+    BAO_KMS -->|"Root/Sub-CA material"| BAO_INFRA
     CM -->|"Signs certs"| BAO_INFRA
     CM -->|"Signs certs"| BAO_APP
 
@@ -146,14 +146,14 @@ graph TB
 
 | Container | Technology | Responsibility | Deployment |
 |-----------|------------|----------------|------------|
-| OpenBao KMS | OpenBao 2.5.1 (Raft) | tfstate storage, Root CA PKI, Transit auto-unseal | Podman pod (off-cluster) |
+| OpenBao KMS | OpenBao 2.5.1 (single-node Raft) | tfstate storage via vault-backend, Root/Sub-CA bootstrap material | Podman pod (off-cluster) |
 | vault-backend | gherynos/vault-backend | HTTP proxy for `tofu` backend -> OpenBao KV v2 | Podman pod |
 | Gitea | Gitea 1.22 (rootless) | Git forge, CI webhook | Podman pod |
 | Woodpecker | Woodpecker v3 | CI/CD pipeline | Podman pod |
-| OpenBao Infra | OpenBao (Helm 0.25.6) | Infrastructure secrets, Transit engine, ESO source | K8s StatefulSet (ns: secrets) |
-| OpenBao App | OpenBao (Helm 0.25.6) | Application secrets | K8s StatefulSet (ns: secrets) |
+| OpenBao Infra | OpenBao (Helm 0.28.4) | Platform KV v2, PKI, Transit, SSH CA, ESO source | K8s StatefulSet (ns: secrets) |
+| OpenBao App | OpenBao (Helm 0.28.4) | Application-secret boundary, reserved until `ClusterSecretStore openbao-app` is wired | K8s StatefulSet (ns: secrets) |
 | Cilium | Cilium 1.17.13 | CNI, kube-proxy replacement (eBPF) | K8s DaemonSet |
-| cert-manager | cert-manager v1.19.4 | Automatic TLS issuance/renewal | K8s Deployment |
+| cert-manager | cert-manager v1.21.0 | Automatic TLS issuance/renewal | K8s Deployment |
 | vm-k8s-stack | VictoriaMetrics stack | Metrics, Grafana dashboards | K8s Helm release |
 | Flux v2 | FluxCD | GitOps Day-2 reconciliation | K8s Deployment |
 | ESO | External Secrets Operator | Sync OpenBao -> K8s Secrets | K8s Deployment |
@@ -190,10 +190,10 @@ graph TB
     subgraph "Tier 1: Bootstrap (podman)"
         BKMS["OpenBao KMS<br/>Raft single-node"]
         BKMS_KV["KV v2: secret/data/tfstate/*<br/>(Terraform states)"]
-        BKMS_TRANSIT["Transit: autounseal<br/>(AES-256-GCM96 key)"]
+        BKMS_AUTH["AppRole + policies<br/>(vault-backend)"]
         BKMS_PKI["PKI Root CA<br/>(via TLS provider, files)"]
         BKMS --> BKMS_KV
-        BKMS --> BKMS_TRANSIT
+        BKMS --> BKMS_AUTH
         BKMS --> BKMS_PKI
     end
 
@@ -211,8 +211,8 @@ graph TB
         APP --> APP_KV
     end
 
-    BKMS_TRANSIT -->|"Auto-unseal"| INFRA
-    BKMS_TRANSIT -->|"Auto-unseal"| APP
+    BKMS_PKI -->|"Root/Sub-CA material"| INFRA
+    BKMS_PKI -.->|"App CA reserved"| APP
 
     style BKMS fill:#8B4513,color:#fff
     style INFRA fill:#d4a017,color:#000
@@ -277,9 +277,8 @@ sequenceDiagram
 ```mermaid
 graph TD
     B["make bootstrap<br/>(podman, one-time)"] --> |"kms-output/<br/>certs + tokens"| ENV
-    ENV["make scaleway-apply<br/>(provision infra)"] --> |"kubeconfig<br/>~/.kube/talos-scaleway"| CNI
-    CNI["k8s-cni (Cilium)<br/>~30s"] --> STORAGE_LP["k8s-storage (local-path only)<br/>~10s"]
-    STORAGE_LP --> PKI["k8s-pki<br/>(OpenBao x2 + cert-manager)<br/>~2min"]
+    ENV["make scaleway-apply<br/>(provision infra)"] --> |"kubeconfig<br/>~/.kube/$(CTX_ID)"| CNI
+    CNI["k8s-cni (Cilium + local-path)<br/>~30s"] --> PKI["k8s-pki<br/>(OpenBao x2 + cert-manager)<br/>~2min"]
     PKI --> MON["k8s-monitoring<br/>(vm-k8s-stack + VictoriaLogs)<br/>~2min"]
     MON --> IDENT["k8s-identity<br/>(Kratos + Hydra + Pomerium)<br/>~1min"]
     IDENT --> SEC["k8s-security<br/>(Trivy + Tetragon + Kyverno)<br/>~2min"]
@@ -346,7 +345,7 @@ graph TD
 | **K8s authentication** | OIDC (Hydra) | apiServer configured with `--oidc-issuer-url` at boot |
 | **Encryption at rest** | Raft (OpenBao) | Native encrypted storage for all states |
 | **Encryption in transit** | TLS (cert-manager) | All internal services use TLS via ClusterIssuer |
-| **Secrets** | Zero secrets in Git | `random_id`/`random_password` -> encrypted tfstate -> OpenBao KV v2 |
+| **Secrets** | Zero secrets in Git | Terraform entropy -> encrypted tfstate -> OpenBao Infra KV v2 -> ESO -> K8s Secret |
 | **Network** | Cilium eBPF | kube-proxy replacement, network policies, VXLAN overlay |
 | **Network segmentation** | Security Group | `inbound_default_policy = drop`, explicit whitelist |
 | **Vulnerability scanning** | Trivy | Container image scanning |
@@ -418,8 +417,8 @@ graph TB
 
 All K8s stacks are **identical** regardless of provider. Only the `kubeconfig_path` variable changes:
 ```
-~/.kube/talos-scaleway
-~/.kube/talos-local
+~/.kube/$(CTX_ID)
+~/.kube/$(CTX_ID)
 ```
 
 ---
@@ -430,7 +429,7 @@ All K8s stacks are **identical** regardless of provider. Only the `kubeconfig_pa
 
 | Pillar | Tool | Namespace | Retention |
 |--------|------|-----------|-----------|
-| **Metrics** | VictoriaMetrics (vm-k8s-stack v0.72.4) | monitoring | Configurable |
+| **Metrics** | VictoriaMetrics (vm-k8s-stack v0.86.0) | monitoring | Configurable |
 | **Logs** | VictoriaLogs + Collector | monitoring | Configurable |
 | **Dashboards** | Grafana (bundled with vm-k8s-stack) | monitoring | N/A |
 | **Cluster UI** | Headlamp | monitoring | N/A |
@@ -482,13 +481,13 @@ Three separate OpenBao instances:
 
 | Option | Pros | Cons |
 |--------|------|------|
-| Three-tier OpenBao (chosen) | No circular dependency, clear separation, auto-unseal via Transit | Setup complexity, 3 instances to maintain |
+| Three-domain OpenBao (chosen) | No circular dependency, clear bootstrap/infra/app separation, ESO source in-cluster | Setup complexity, 3 instances to maintain |
 | Single OpenBao (off-cluster) | Simple, single management point | Network dependency for pods, SPOF |
 | SOPS + age | Zero additional infra | Secrets in Git (encrypted), manual rotation |
 | Kubernetes Secrets only | Native, zero dependency | No at-rest encryption by default, no versioning |
 
 **Consequences:**
-- Positive: Separation of concerns, zero circular dependency, auto-unseal
+- Positive: Separation of concerns, zero circular dependency, explicit bootstrap boundary
 - Negative: Higher initial complexity
 - Risk: If bootstrap is lost without a snapshot, all states are lost
 
@@ -568,7 +567,7 @@ OpenTofu needs an HTTP-accessible state backend. OpenBao does not natively provi
 Initial parallel deployment (`make -j2`) caused race conditions: PVCs stuck in `Pending` (local-path-provisioner not ready), Kyverno webhooks blocking deployments of other stacks.
 
 **Decision:**
-Strictly sequential pipeline: CNI -> local-path -> PKI -> monitoring -> identity -> security -> storage -> flux.
+Strictly sequential pipeline: CNI (including local-path) -> PKI -> monitoring -> identity -> security -> storage -> flux.
 
 **Consequences:**
 - Positive: Reproducible, deterministic, zero race conditions
@@ -623,7 +622,7 @@ Flux v2 with a root Kustomization pointing to `clusters/management/`. OpenTofu p
 | **Cilium** | eBPF-based Kubernetes CNI |
 | **Raft** | Distributed consensus algorithm (used by OpenBao for storage) |
 | **Static seal** | OpenBao mechanism where the decryption key is a local file (not Shamir) |
-| **Auto-unseal** | Mechanism where OpenBao uses an external Transit engine to decrypt itself at startup |
+| **Auto-unseal** | Deferred alternative where OpenBao would use an external Transit engine; current clusters use static seal (ADR-026) |
 
 ### References
 
@@ -638,12 +637,12 @@ Flux v2 with a root Kustomization pointing to `clusters/management/`. OpenTofu p
 
 | Component | Version |
 |-----------|---------|
-| Talos Linux | v1.12.6 |
-| Kubernetes | 1.35.4 |
+| Talos Linux | v1.12.9 |
+| Kubernetes | 1.35.6 |
 | Cilium | 1.17.13 |
 | OpenBao (bootstrap) | 2.5.1 |
-| OpenBao Helm chart | 0.25.6 |
-| cert-manager | v1.19.4 |
+| OpenBao Helm chart | 0.28.4 |
+| cert-manager | v1.21.0 |
 | OpenTofu | 1.9 |
 | Gitea | 1.22 |
 | Woodpecker CI | v3 |

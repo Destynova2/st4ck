@@ -58,6 +58,14 @@ provider "kubectl" {
   load_config_file = true
 }
 
+# Version pins come from the platform version registry (single source of
+# truth shared with Flux postBuild.substituteFrom and the Hauler manifest):
+# clusters/management/versions-configmap.yaml. Variables stay as optional
+# overrides (default null).
+locals {
+  platform_versions = yamldecode(file("${path.module}/../../clusters/management/versions-configmap.yaml")).data
+}
+
 locals {
   labels_common = {
     "app.kubernetes.io/part-of"    = "st4ck"
@@ -71,7 +79,7 @@ locals {
   # the standard one and includes TLSRoute, which we need for SNI.
   crd_install_url = format(
     "https://github.com/kubernetes-sigs/gateway-api/releases/download/%s/%s-install.yaml",
-    var.gateway_api_version,
+    coalesce(var.gateway_api_version, local.platform_versions.gateway_api_version),
     var.gateway_api_channel,
   )
 }

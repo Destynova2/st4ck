@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Phase 2 of the two-phase monitoring split: VMRule CRs, gated on
+# phase 1 (monitoring-vm-stack Kustomization) having installed the
+# operator.victoriametrics.com CRDs. Previously a count-gated
+# kubectl_manifest in stacks/monitoring/main.tf — which left fresh
+# clusters with NO Flux alerts until a human re-ran
+# `make k8s-monitoring-apply` (hanoi audit 2026-07-12, finding #6).
+resources:
+  - vmrule-flux.yaml
+  - vmrule-workloads.yaml

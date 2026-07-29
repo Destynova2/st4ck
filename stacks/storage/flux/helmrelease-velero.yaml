@@ -5,18 +5,27 @@ metadata:
   namespace: storage
 spec:
   interval: 30m
-  dependsOn:
-    - name: garage
-      namespace: garage
+  # Failed upgrades: retry 3x then roll back (hardening 2026-07-12)
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+  # NOTE: no dependsOn garage — Garage is tofu-owned since 2026-04-29
+  # (helm_release.garage, see ../main.tf); a HelmRelease CR garage/garage
+  # never exists, so a dependsOn here would gate velero forever (bug caught
+  # by the local Flux E2E 2026-07-15). Day-1 ordering (garage before flux)
+  # is guaranteed by the deploy pipeline; the BSL tolerates a late bucket.
   chart:
     spec:
       chart: velero
-      version: "11.4.0"
+      version: "${velero_version}"
       sourceRef:
         kind: HelmRepository
         name: vmware-tanzu
         namespace: flux-system
   install:
+    remediation:
+      retries: 3
     createNamespace: false
     timeout: 10m
   valuesFrom:

@@ -7,35 +7,18 @@ variable "kubeconfig_path" {
 # Allows identity to reach the same vault-backend path that hosts the
 # pki state for the current (env, instance, region) context.
 
-variable "pki_state_address" {
-  description = "vault-backend HTTP URL of the pki stack's state for the current context."
-  type        = string
-}
-
-variable "pki_state_username" {
-  description = "AppRole role-id for pki state read (= TF_HTTP_USERNAME)."
-  type        = string
-  sensitive   = true
-}
-
-variable "pki_state_password" {
-  description = "AppRole secret-id for pki state read (= TF_HTTP_PASSWORD)."
-  type        = string
-  sensitive   = true
-}
-
 # ─── Ory ─────────────────────────────────────────────────────────────
 
 variable "kratos_version" {
   description = "Ory Kratos Helm chart version"
   type        = string
-  default     = "0.60.1"
+  default     = null
 }
 
 variable "hydra_version" {
   description = "Ory Hydra Helm chart version"
   type        = string
-  default     = "0.60.1"
+  default     = null
 }
 
 # ─── CloudNativePG ─────────────────────────────────────────────────
@@ -43,7 +26,7 @@ variable "hydra_version" {
 variable "cnpg_version" {
   description = "CloudNativePG operator Helm chart version"
   type        = string
-  default     = "0.25.0"
+  default     = null
 }
 
 # ─── CNPG Backup ──────────────────────────────────────────────────────
@@ -65,5 +48,5 @@ variable "cnpg_s3_url" {
 variable "pomerium_version" {
   description = "Pomerium Helm chart version"
   type        = string
-  default     = "34.0.1"
+  default     = null
 }

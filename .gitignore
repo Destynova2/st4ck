@@ -25,8 +25,7 @@ _out/
 kms-output/
 
 # Fetched Helm charts (upstream dependencies)
-# stacks/storage/chart/  # vendored — needed by Flux GitRepository chart ref
-# stacks/storage/chart-local-path/  # vendored — same reason
+# stacks/storage/chart/  # vendored — needed by the storage tofu stack
 
 # Arbor staging tree (pre-pulled images + charts)
 arbor/
@@ -54,3 +53,8 @@ images.txt
 # bootstrap and destroy of the CI VM — never commit).
 **/_local_backend_override.tf
 envs/scaleway/ci/files/
+haul/
+haul.tar.zst*
+stacks/kamaji/chart/
+haul-arm64/
+registry/

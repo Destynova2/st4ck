@@ -20,7 +20,7 @@
 
 2. Management Cluster (3 CP + 3 workers Talos)
    ├── etcd (integre a Talos)
-   ├── Kubernetes v1.35.4
+   ├── Kubernetes v1.35.6
    └── Cilium CNI 1.17 + Hubble
        ├── eBPF (remplace kube-proxy)
        ├── Network Policies L3/L4/L7
@@ -32,8 +32,9 @@
 
 **Livrable** : cluster 6 noeuds fonctionnel, reseau securise, DNS operationnel.
 
-- [x] Talos v1.12.6 + Kubernetes v1.35.4 (Scaleway)
+- [x] Talos v1.12.9 + Kubernetes v1.35.6 (Scaleway)
 - [x] Cilium 1.17.13 + Hubble relay
+- [x] local-path-provisioner 0.0.37 (StorageClass defaut, stack CNI)
 - [x] Talos Factory schematic avec extension DRBD
 
 ### Phase 1.2 — CI/CD & Registry (S2-S3)
@@ -65,7 +66,7 @@
 
 - [x] Gitea (deploye sur CI VM avec Woodpecker)
 - [x] Woodpecker CI (pipeline complet : validate → image → cluster → wait-api → addons → secrets → security → storage)
-- [x] Harbor 1.16.2 (registry S3 Garage backend, Helm, Trivy scan integre)
+- [x] Harbor 1.19.1 (registry S3 Garage backend, Helm, Trivy scan integre)
 
 ### Phase 1.3 — Secrets & Identite (S3-S4)
 
@@ -90,21 +91,20 @@
     └── SSO tous composants
 ```
 
-**Decision** : Secrets auto-generes via `random_id` Terraform. Voir ADR-008.
+**Decision** : Secrets auto-generes via Terraform. Voir ADR-008 et ADR-033.
 - Plus de `secret.tfvars` manuels — chaque deploy genere des secrets uniques
-- `random_id.*.hex` (64 chars) pour tokens/secrets generiques
-- `random_id.*.b64_std` (base64, 32 raw bytes) pour Pomerium shared/cookie secrets
-- Secrets injectes via `templatefile()` dans les Helm values
-- Stockes dans le state Terraform (chiffre), jamais en clair sur disque
+- `random_password`, `random_bytes`, `tls_private_key` selon le format attendu
+- Secrets stockes dans le state chiffre via OpenBao KMS
+- Secrets plateforme seedes dans OpenBao Infra puis synchronises par ESO
 
 **Livrable** : zero secret en clair, authentification centralisee, PKI automatisee, secrets auto-generes.
 
 - [x] OpenBao infra + app (2 instances Helm separees)
 - [x] PKI Terraform (Root CA + Intermediate CA, pure TLS provider)
-- [x] cert-manager v1.19.4 + ClusterIssuer internal-ca
+- [x] cert-manager v1.21.0 + ClusterIssuer internal-ca
 - [x] Ory Kratos + Hydra (TLS public, OIDC kubernetes client auto-enregistre) + Pomerium
-- [x] Secrets auto-generes (`random_id` Terraform, zero intervention manuelle)
-- [x] OIDC K8s (Hydra → apiServer, `make scaleway-oidc` pour appliquer le patch talosctl)
+- [x] Secrets auto-generes (Terraform entropy resources, zero intervention manuelle)
+- [x] OIDC K8s (Hydra → apiServer, `make oidc-register` pour appliquer le patch talosctl)
 
 ### Phase 1.4 — Observabilite & Dashboard (S4-S5)
 
@@ -138,9 +138,9 @@
 
 **Livrable** : observabilite complete (metriques, logs, alertes, dashboards, UI live).
 
-- [x] victoria-metrics-k8s-stack 0.72.4 (VMSingle + VMAgent + VMAlert + Alertmanager + Grafana + kube-state-metrics + node-exporter)
+- [x] victoria-metrics-k8s-stack 0.86.0 (VMSingle + VMAgent + VMAlert + Alertmanager + Grafana + kube-state-metrics + node-exporter)
 - [x] VictoriaLogs single 0.14.3 + collector 0.14.3 (remplace Loki + Alloy)
-- [x] Headlamp 0.40.0 (auto-open dans `make scaleway-up`)
+- [x] Headlamp 0.43.0 (auto-open dans `make scaleway-up`)
 - [x] Platform Overview dashboard (ConfigMap sidecar)
 
 ### Phase 1.5 — Securite & Scanning (S5-S6)
@@ -171,9 +171,9 @@
 
 **Livrable** : supply chain securisee, detection runtime, policies appliquees.
 
-- [x] Trivy Operator 0.32.0 (node-collector desactive — ADR-011 : `scanNodeCollectorLimit: 0`)
-- [x] Tetragon 1.6.0 (avec fix Talos tracefs)
-- [x] Kyverno 3.7.1
+- [x] Trivy Operator 0.34.0 (node-collector desactive — ADR-011 : `scanNodeCollectorLimit: 0`)
+- [x] Tetragon 1.7.0 (avec fix Talos tracefs)
+- [x] Kyverno 3.8.2
 - [x] Cosign verifyImages policy (Kyverno ClusterPolicy, mode audit, pret pour enforce)
 
 ### Phase 1.6 — Stockage & Backup (S6-S7)
@@ -181,18 +181,18 @@
 **Depends** : Phase 1.5
 
 ```
-20. local-path provisioner
-    └── StorageClass par defaut
-
-21. Garage
+20. Garage
     ├── Stockage objet S3-compatible (Rust, leger)
     ├── 3 pods StatefulSet, PVCs sur local-path
     ├── replication_factor = 3 (replication applicative)
     └── ~100 MB RAM par pod
 
-22. Velero
+21. Velero
     ├── Backup application-aware
     └── Target: Garage S3
+
+22. Harbor
+    └── Registry conteneurs avec backend Garage S3
 ```
 
 **Decision** : Garage seul (sans Longhorn) retenu. Voir ADR-002 et ADR-003.
@@ -203,10 +203,9 @@
 
 **Livrable** : stockage objet S3 + backups automatises.
 
-- [x] local-path-provisioner 0.0.35 (StorageClass defaut)
-- [x] Garage v2.2.0 (3 pods, S3-compatible, PVCs local-path, cluster layout configure)
+- [x] Garage v2.3.0 (3 pods, S3-compatible, PVCs local-path, cluster layout configure)
 - [x] Velero 11.4.0 (backup → Garage S3, BackupStorageLocation available, backup/restore teste)
-- [x] Harbor 1.16.2 (registry conteneurs, S3 Garage backend, Trivy scan integre)
+- [x] Harbor 1.19.1 (registry conteneurs, S3 Garage backend, Trivy scan integre)
 
 ### Phase 1.7 — Workload Clusters via CAPI (S7-S8)
 
@@ -239,7 +238,7 @@
 - [x] OIDC K8s fonctionnel (Hydra TLS + client auto-enregistre + patch talosctl)
 - [x] Cosign (Kyverno verifyImages ClusterPolicy, mode audit)
 - [x] Velero backup/restore teste (`make velero-test` — backup + restore namespace)
-- [x] 1 workload cluster cree/detruit via CAPI (demo Scaleway: `make capi-init && make capi-create && make capi-delete`)
+- [x] 1 workload cluster cree/detruit via CAPI (demo Scaleway: `make k8s-capi-init && make k8s-capi-apply && make managed-cluster-apply`)
 
 
 ---
@@ -752,7 +751,7 @@ bao-operator community) trop risque (projet jeune, pas de support officiel).
 **Insight 2026-04-30 (idee user)** : decoupler Root et Sub-CAs.
 - Root CA reste sur VM (DEJA present : `bootstrap/tofu/pki.tf`, ECDSA P-384,
   10 yr, idempotent via `lifecycle.ignore_changes = all`).
-- Sub-CAs crees dans cluster OpenBao via Helm post-install Job au lieu de
+- Sub-CAs configurees dans cluster OpenBao via Job Flux/Kustomize au lieu de
   `terraform_data.bootstrap_openbao_pki` (~180 LOC bash inline fragile).
 
 **Architecture cible** :
@@ -764,7 +763,7 @@ CI VM (bootstrap/tofu/pki.tf)
   └── Distribution      : K8s Secret pki-root-ca (ns secrets) via tofu
        │
        ▼
-Cluster (Helm post-install Job)
+Cluster (Flux/Kustomize Job)
   └── stacks/pki/flux/job-bootstrap-openbao-pki.yaml
       ├── ServiceAccount + Role + RoleBinding (RBAC scoped)
       ├── Wait OpenBao API (300s budget)
@@ -795,15 +794,15 @@ Cluster (Helm post-install Job)
 
 **Impact estime** :
 - -180 LOC bash dans Tofu (provisioner inline supprime)
-- +280 LOC YAML Helm Job (artefact K8s standard, lisible/auditable)
-- Pattern K8s-natif (Job + Helm hook + RBAC scoped)
+- +280 LOC YAML Kubernetes Job (artefact K8s standard, lisible/auditable)
+- Pattern K8s-natif (Job Flux/Kustomize + RBAC scoped)
 - RBAC scope reduit : Job lit 2 secrets + exec sur openbao-infra-0 only
   (vs Tofu kubeconfig full)
 - Failure visibility : `kubectl logs` au lieu de Tofu output tronque
-- Idempotence Helm-native : si Helm release inchangee, Job ne re-tourne pas
+- Idempotence K8s-native : probes `bao`, re-run safe si Flux recrée le Job
 
-**ADR-032** : "PKI hierarchy — Root CA on VM, sub-CAs in cluster via Helm Job"
-(creee 2026-04-30).
+**ADR-032** : "PKI hierarchy — Root CA on VM, sub-CAs in cluster via Flux/Kustomize Job"
+(creee 2026-04-30, amendee par ADR-033 le 2026-06-14).
 
 **Sequencement** : Source-only OK pendant Agent #10 rebuild (ne touche pas
 `stacks/pki/main.tf`). Deploy + validation post-demo.
@@ -852,8 +851,8 @@ stacks). Merger sans rebase = regressions Phase D.
 | GitOps/CD | FluxCD | Woodpecker + OpenTofu (ADR-004) | Flux = chicken-and-egg avec Cilium, 2 systemes de deploiement |
 | VM CI runtime | Docker Compose | Podman Quadlet (ADR-005) | systemd natif, daemonless, un seul runtime |
 | Flux auth Gitea | HTTPS basic auth | SSH ed25519 (ADR-006) | SSH CA OpenBao pret mais go-git incompatible certs |
-| Secrets manager | Vault BSL | OpenBao (ADR-007) | Apache 2.0, Linux Foundation, ESO et step-ca retires |
-| Gestion secrets | `secret.tfvars` manuels | `random_id` Terraform (ADR-008) | Zero intervention manuelle, secrets dans state chiffre |
+| Secrets manager | Vault BSL | OpenBao + ESO (ADR-007/033) | MPL-2.0, Linux Foundation, OpenBao Helm officiel, ESO pour la sync K8s |
+| Gestion secrets | `secret.tfvars` manuels | Terraform entropy resources (ADR-008) | Zero intervention manuelle, secrets dans state chiffre puis OpenBao Infra |
 | State backend | Local tfstate | HTTP -> OpenBao KV v2 (ADR-009) | Chiffre Transit, locking, zero dependance cloud |
 | Observabilite | Prometheus + Loki + Alloy | vm-k8s-stack + VictoriaLogs (ADR-010) | Chart consolide, collecteurs natifs VM |
 | Trivy node-collector | Active | Desactive (ADR-011) | Incompatible Talos (no shell, no systemd). Talos durci par design |
@@ -886,17 +885,17 @@ stacks). Merger sans rebase = regressions Phase D.
 ```
 make k8s-up (~15 minutes end-to-end, sequentiel strict)
 │
-├── 1. k8s-cni-apply        (~30s)  — Cilium CNI
+├── 1. k8s-cni-apply        (~30s)  — Cilium CNI + local-path
 ├── 2. k8s-pki-apply        (~1 min) — PKI + OpenBao x2 + cert-manager
 ├── 3. k8s-monitoring-apply (~2 min) — vm-k8s-stack + VictoriaLogs + Headlamp
 ├── 4. k8s-identity-apply   (~1 min) — Kratos + Hydra + Pomerium
-│       └── Secrets auto-generes via random_id (zero tfvars)
+│       └── Secrets synchronises via OpenBao Infra + ESO (zero tfvars)
 ├── 5. k8s-security-apply   (~2 min) — Trivy + Tetragon + Kyverno + Cosign
-├── 6. k8s-storage-apply    (~2 min) — local-path + Garage + Velero + Harbor
+├── 6. k8s-storage-apply    (~2 min) — Garage + Velero + Harbor
 └── 7. flux-bootstrap-apply (~30s)   — Flux SSH + GitRepository
 
 Post-deploy (optionnel) :
-├── make scaleway-oidc       — Configure apiServer OIDC (Hydra, talosctl patch)
+├── make oidc-register       — Configure apiServer OIDC (Hydra, talosctl patch)
 ├── make velero-test         — Valide backup/restore end-to-end
 ├── make scaleway-harbor     — Ouvre Harbor UI (password dans clipboard)
 └── make scaleway-grafana    — Ouvre Grafana UI

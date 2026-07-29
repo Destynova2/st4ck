@@ -20,7 +20,7 @@ Tout est detruit. Vous clonez le depot Git et reconstruisez la plateforme a part
 | Images Harbor | Garage bucket `harbor-registry/` | Partiellement (rebuild CI) | Moyenne |
 | Backups Velero | Garage bucket `velero-backups/` | Non | Haute |
 | Donnees Gitea | PVC bootstrap pod | Rebuild depuis Git upstream | Moyenne |
-| Secrets applicatifs (Hydra, Pomerium...) | tfstate (random_id dans state) | Oui si tfstate restaure | Critique |
+| Secrets applicatifs (Hydra, Pomerium...) | tfstate + OpenBao Infra (Terraform entropy, sync ESO) | Oui si tfstate/OpenBao restaure | Critique |
 | Configs Kubernetes (manifests) | Depot Git | Oui (deterministe) | Faible |
 | Machine secrets Talos | tfstate env | Oui si tfstate restaure | Critique |
 
@@ -174,7 +174,7 @@ make bootstrap
 # Re-initialiser tous les backends
 make k8s-init
 
-# Les stacks vont creer de nouveaux secrets (random_id)
+# Les stacks vont creer de nouveaux secrets (Terraform entropy resources)
 # Les anciennes donnees CNPG ne seront PAS recuperables
 # (nouvelles cles CA = anciens certificats invalides)
 ```
@@ -200,7 +200,7 @@ make scaleway-kubeconfig         # Exporter kubeconfig
 make k8s-up
 ```
 
-Ceci deploie dans l'ordre : CNI -> storage (local-path) -> PKI -> monitoring -> identity -> security -> storage (complet) -> Flux.
+Ceci deploie dans l'ordre : CNI (Cilium + local-path) -> PKI -> monitoring -> identity -> security -> storage -> Flux.
 
 ### Etape 5 : Restaurer PostgreSQL depuis barman
 
@@ -269,8 +269,7 @@ Sauvegarde DR (hors-site)
     |
     v
 [5] make k8s-up                 <- tous les stacks K8s
-    |   |-- cni (Cilium)
-    |   |-- storage (local-path)
+    |   |-- cni (Cilium + local-path)
     |   |-- pki (CA + cert-manager + OpenBao in-cluster)
     |   |-- monitoring
     |   |-- identity (CNPG + Kratos + Hydra + Pomerium)

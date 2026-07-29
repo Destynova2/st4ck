@@ -1,0 +1,25 @@
+# ADR-038 option malware/FIM — Kubescape reduced to the node-agent.
+# Everything that duplicates trivy-operator (vuln/SBOM/config/posture),
+# Kyverno (admission) or Tetragon (runtime detection) is DISABLED.
+# Rendered profile (verified 2026-07-14, chart 1.40.2): node-agent
+# DaemonSet + operator + storage only.
+clusterName: st4ck-management
+capabilities:
+  configurationScan: disable
+  continuousScan: disable
+  nodeScan: disable
+  nodeSbomGeneration: disable
+  scanEmbeddedSBOMs: disable
+  vulnerabilityScan: disable
+  relevancy: disable
+  vexGeneration: disable
+  runtimeObservability: disable
+  networkPolicyService: disable
+  networkEventsStreaming: disable
+  runtimeDetection: disable
+  malwareDetection: enable
+  nodeProfileService: disable
+  admissionController: disable
+  httpDetection: disable
+  seccompProfileService: disable
+  manageWorkloads: disable

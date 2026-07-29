@@ -5,7 +5,9 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - helmrepository.yaml
-  - helmrelease-vm-stack.yaml
+  # vm-k8s-stack lives in ../flux-vm/ (phase 1 of the two-phase split,
+  # clusters/management/monitoring-vm.yaml) so the VMRule in
+  # ../flux-alerts/ can be gated on its CRDs.
   - helmrelease-vlogs-single.yaml
   - helmrelease-vlogs-collector.yaml
   - helmrelease-headlamp.yaml
@@ -14,10 +16,6 @@ resources:
   # secret/monitoring/grafana, seeded by stacks/monitoring/main.tf).
   - external-secret-grafana.yaml
 configMapGenerator:
-  - name: vm-k8s-stack-values
-    namespace: monitoring
-    files:
-      - values.yaml=values-vm-stack.yaml
   - name: vlogs-single-values
     namespace: monitoring
     files:

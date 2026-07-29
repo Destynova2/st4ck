@@ -5,10 +5,18 @@ metadata:
   namespace: kube-system
 spec:
   interval: 30m
+  # Failed upgrades: retry 3x then roll back (hardening 2026-07-12)
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+  install:
+    remediation:
+      retries: 3
   chart:
     spec:
       chart: cilium
-      version: "1.17.13"
+      version: "${cilium_version}"
       sourceRef:
         kind: HelmRepository
         name: cilium

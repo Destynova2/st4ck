@@ -53,6 +53,14 @@ provider "gitea" {
 # which doesn't support SSH CA certs — that's why this is a per-key
 # trust, not a CA-signed cert.
 
+# Version pins come from the platform version registry (single source of
+# truth shared with Flux postBuild.substituteFrom and the Hauler manifest):
+# clusters/management/versions-configmap.yaml. Variables stay as optional
+# overrides (default null).
+locals {
+  platform_versions = yamldecode(file("${path.module}/../../clusters/management/versions-configmap.yaml")).data
+}
+
 resource "tls_private_key" "flux_ssh" {
   algorithm = "ED25519"
 
@@ -136,10 +144,12 @@ data "kubernetes_secret" "openbao_admin_password" {
 #   the trigger to avoid rewriting state on every refresh; the pubkey
 #   uniquely identifies the keypair.
 resource "terraform_data" "seed_flux_ssh_to_openbao" {
-  input = sha256(join(",", [
+  # triggers_replace, pas input : le commentaire ci-dessus promet un re-run
+  # sur rotation du known_hosts — input ne le fait pas (update in-place).
+  triggers_replace = [sha256(join(",", [
     tls_private_key.flux_ssh.public_key_openssh,
     var.gitea_known_hosts,
-  ]))
+  ]))]
 
   provisioner "local-exec" {
     environment = {
@@ -256,7 +266,7 @@ resource "helm_release" "flux" {
   name             = "flux2"
   repository       = "https://fluxcd-community.github.io/helm-charts"
   chart            = "flux2"
-  version          = var.flux_version
+  version          = coalesce(var.flux_version, local.platform_versions.flux_version)
   namespace        = "flux-system"
   create_namespace = false
 
@@ -339,8 +349,16 @@ resource "kubectl_manifest" "flux_git_repo" {
     spec:
       interval: 5m
       url: ${local.gitea_ssh_url}
+      # Env-promotion model (ADR-037): dev tracks the main branch;
+      # qa/prod live in SEPARATE Scaleway projects and pin a release
+      # tag of the same branch (end-to-end tested per env). Set
+      # -var="flux_git_tag=vX.Y.Z" to pin.
       ref:
+        %{~if var.flux_git_tag != ""~}
+        tag: ${var.flux_git_tag}
+        %{~else~}
         branch: main
+        %{~endif~}
       secretRef:
         name: flux-ssh-identity
   YAML
@@ -356,22 +374,18 @@ resource "kubectl_manifest" "flux_git_repo" {
   ]
 }
 
-# ─── Root Kustomizations: ESO first, then everything else ────────
+# ─── Root Kustomization ──────────────────────────────────────────
 #
-# Two-phase split: ESO must be installed BEFORE the management
-# Kustomization can apply the ClusterSecretStore CR (which references
-# the ESO-provided CRD). Without this split, server-side dry-run on the
-# CR fails because the CRD doesn't exist yet.
-#
-# Phase 1 — `management-eso`:
-#   path:  ./clusters/management-eso/  (just external-secrets/flux/)
-#   wait:  true  → blocks until the ESO HelmRelease reports Ready,
-#                  i.e. the CRDs are installed.
-#
-# Phase 2 — `management`:
-#   path:        ./clusters/management/  (all stacks INCLUDING
-#                external-secrets/flux-config which has the CSS)
-# NOTE: management-eso Kustomization removed in postmortem 2026-04-27.
+# Single root: `management` applies ./clusters/management/ (all stacks,
+# including external-secrets/flux-config which holds the
+# ClusterSecretStore). ESO itself is tofu-owned (stacks/pki/main.tf,
+# ADR-033): the CRDs exist before Flux ever reconciles, so no ESO
+# ordering phase is needed here.
+# History: a `management-eso` phase-1 Kustomization (+ a Flux-owned ESO
+# HelmRelease) existed until postmortem 2026-04-27 — two controllers
+# managing the same Helm release conflicted on every upgrade. The dead
+# clusters/management-eso/ + stacks/external-secrets/flux/ leftovers
+# were purged 2026-07-12 (hanoi audit finding #5).
 # ESO is now tofu-managed (in stacks/pki/main.tf alongside cert-manager
 # + ClusterSecretStore — required to break the Flux/CSS catch-22).
 # Two controllers managing the same Helm release conflicts on every
@@ -407,7 +421,26 @@ resource "kubectl_manifest" "flux_root_kustomization" {
           velero_bucket: "velero-backups"
           harbor_bucket: "harbor-registry"
           cnpg_bucket: "cnpg-backups"
+        # Chart/provider version pins ($${x_version} placeholders in
+        # HelmRelease/OCIRepository manifests) resolve against the
+        # platform version registry — single source of truth shared with
+        # tofu (local.platform_versions) and the Hauler manifest.
+        substituteFrom:
+          - kind: ConfigMap
+            name: platform-versions
   YAML
 
-  depends_on = [kubectl_manifest.flux_git_repo]
+  depends_on = [
+    kubectl_manifest.flux_git_repo,
+    kubectl_manifest.platform_versions,
+  ]
+}
+
+# Day-1 seed of the version registry (same file Flux reconciles day-2 from
+# git via clusters/management/kustomization.yaml). Without it, the first
+# root-Kustomization reconcile would fail substituteFrom (ConfigMap absent).
+resource "kubectl_manifest" "platform_versions" {
+  yaml_body = file("${path.module}/../../clusters/management/versions-configmap.yaml")
+
+  depends_on = [kubernetes_namespace.flux_system]
 }

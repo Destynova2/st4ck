@@ -35,7 +35,7 @@
 
 The Talos Sovereign Kubernetes Platform is a multi-environment, infrastructure-as-code system that deploys hardened Kubernetes clusters on Talos Linux v1.12 across multiple providers (Scaleway, local KVM/libvirt, VMware airgap). It provides a complete platform stack covering networking (Cilium eBPF), PKI (OpenBao + cert-manager), identity (Kratos/Hydra/Pomerium), security (Trivy/Tetragon/Kyverno), storage (Garage S3/Harbor/Velero), monitoring (VictoriaMetrics/VictoriaLogs/Headlamp), and GitOps (Flux v2).
 
-The design prioritizes sovereign operation: all secrets are auto-generated (zero manual input), state is stored in OpenBao KMS with Raft consensus (no external cloud state backends), PKI uses a private three-tier CA hierarchy, and the system supports fully air-gapped deployments on VMware. OpenTofu handles initial deployment; Flux v2 manages day-2 reconciliation. A single podman pod bootstraps the entire platform (OpenBao 3-node, vault-backend, Gitea, Woodpecker CI) before any cluster exists.
+The design prioritizes sovereign operation: all secrets are auto-generated (zero manual input), state is stored in the bootstrap OpenBao KMS (no external cloud state backends), PKI uses a private three-tier CA hierarchy, and the system supports fully air-gapped deployments on VMware. OpenTofu handles initial deployment; Flux v2 manages day-2 reconciliation. A single podman pod bootstraps the platform (OpenBao KMS, vault-backend, Gitea, Woodpecker CI) before any cluster exists.
 
 Key tradeoffs: sequential deployment over parallel (reliability over speed), OpenBao over HashiCorp Vault (open-source sovereignty), Talos Linux over traditional distributions (immutability over flexibility), and self-hosted CI/Git over SaaS (data sovereignty over convenience).
 
@@ -46,7 +46,7 @@ Key tradeoffs: sequential deployment over parallel (reliability over speed), Ope
 ### Goals
 
 - **G1:** Deploy a production-grade Kubernetes cluster (3 CP + 3 workers) on any supported provider with a single `make` command
-- **G2:** Zero manual secret management -- all secrets auto-generated via `random_id`/`random_password` and stored in encrypted OpenBao KMS
+- **G2:** Zero manual secret management -- all secrets auto-generated via Terraform entropy resources, stored in encrypted state, seeded into OpenBao Infra, then reconciled by ESO
 - **G3:** Private PKI with three-tier CA hierarchy (Root CA > Infra CA / App CA) for all internal TLS
 - **G4:** Full observability stack (metrics, logs, dashboards) deployed automatically
 - **G5:** OIDC-based identity with zero-trust access proxy (Pomerium) for service access
@@ -162,7 +162,7 @@ graph TB
             KYVERNO["Kyverno<br/>Policy engine"]
         end
 
-        subgraph "storage / garage"
+        subgraph "local-path-storage / garage / storage"
             LPP["local-path-provisioner<br/>StorageClass"]
             GARAGE["Garage<br/>S3-compatible"]
             HARBOR["Harbor<br/>Container registry"]
@@ -198,6 +198,7 @@ graph TB
 | Gitea | Gitea 1.22 rootless | Self-hosted Git, OAuth for WP | podman (bootstrap) | Single instance |
 | Woodpecker | Woodpecker v3 | CI/CD pipeline execution | podman (bootstrap) | Server + 1 agent |
 | Cilium | Cilium 1.17.13 | CNI + kube-proxy replacement (eBPF) | kube-system | DaemonSet |
+| local-path-provisioner | containeroo chart | Default StorageClass | local-path-storage | Deployment |
 | OpenBao Infra | OpenBao (Helm) | In-cluster PKI + infra secrets | secrets | StatefulSet x1 |
 | OpenBao App | OpenBao (Helm) | In-cluster application secrets | secrets | StatefulSet x1 |
 | cert-manager | cert-manager | Automatic TLS from infra sub-CA | cert-manager | Deployment |
@@ -210,8 +211,7 @@ graph TB
 | Trivy Operator | Trivy | Vulnerability + SBOM scanning | security | Deployment |
 | Tetragon | Tetragon | eBPF runtime security | security | DaemonSet |
 | Kyverno | Kyverno | Policy enforcement (Cosign verify) | security | Deployment |
-| local-path-provisioner | Rancher LPP | Default StorageClass | storage | Deployment |
-| Garage | Garage v2.2.0 | S3-compatible object storage | garage | StatefulSet x3 |
+| Garage | Garage v2.3.0 | S3-compatible object storage | garage | StatefulSet x3 |
 | Harbor | Harbor | Container image registry | storage | Multiple deployments |
 | Velero | Velero | Backup/restore to Garage S3 | storage | Deployment |
 | Flux v2 | Flux | GitOps reconciliation | flux-system | Multiple controllers |
@@ -287,7 +287,7 @@ graph LR
     end
 
     subgraph "Secret Generation"
-        SETUP["tofu-setup"] -->|random_id / random_password| BAO
+        SETUP["tofu-setup"] -->|Terraform entropy resources| BAO
         SETUP -->|TLS provider| PKI_FILES["kms-output/<br/>root-ca.pem<br/>infra-ca-*.pem<br/>app-ca-*.pem"]
     end
 
@@ -930,7 +930,7 @@ sequenceDiagram
     TF->>Talos: Bootstrap CP-1
     Talos-->>TF: etcd initialized
     TF->>Talos: Get kubeconfig
-    Talos-->>TF: kubeconfig (written to ~/.kube/talos-scaleway)
+    Talos-->>TF: kubeconfig (written to ~/.kube/$(CTX_ID))
 ```
 
 ### Provider-Specific Sequence: Local (libvirt)
@@ -1036,12 +1036,11 @@ graph TD
 | Hydra TLS cert | Certificate CRD | N/A | identity |
 | OIDC client registration | K8s Job | N/A | identity |
 
-**Secret injection flow:**
-1. `identity` stack reads `secret/cluster/identity` from bootstrap OpenBao via vault provider
-2. Secrets injected into Helm values via `templatefile()`:
-   - Hydra: `system_secret` from vault
-   - Pomerium: `client_secret`, `shared_secret`, `cookie_secret` from vault
-3. OIDC client registration Job runs after Hydra is ready, creates `kubernetes` OAuth client
+**Secret flow:**
+1. `stacks/pki/secrets.tf` generates identity secrets and seeds them into OpenBao Infra.
+2. ESO reconciles `ExternalSecret` manifests from OpenBao Infra to Kubernetes Secrets.
+3. Helm values reference those Kubernetes Secrets; Flux owns day-2 reconciliation.
+4. OIDC client registration Job runs after Hydra is ready, creates `kubernetes` OAuth client.
 
 ### Stack: Security (stacks/security/)
 
@@ -1058,8 +1057,7 @@ graph TD
 
 | Component | Chart | Version | Namespace |
 |-----------|-------|---------|-----------|
-| local-path-provisioner | containeroo/local-path-provisioner | var.local_path_provisioner_version | storage |
-| Garage | Local chart (fetched from upstream) | v2.2.0 | garage |
+| Garage | Local chart (fetched from upstream) | v2.3.0 | garage |
 | Velero | vmware-tanzu/velero | var.velero_version | storage |
 | Harbor | goharbor/harbor | var.harbor_version | storage |
 
@@ -1218,7 +1216,7 @@ graph TD
     end
 
     subgraph "Stack Flux Manifests"
-        ESO_F["stacks/external-secrets/flux/<br/>HelmRepository + HelmRelease + ClusterSecretStore"]
+        ESO_F["stacks/external-secrets/flux-config/<br/>ClusterSecretStore (chart ESO : stacks/pki, ADR-033)"]
         CNI_F["stacks/cni/flux/"]
         MON_F["stacks/monitoring/flux/"]
         PKI_F["stacks/pki/flux/"]
@@ -1309,28 +1307,28 @@ After initial deployment via OpenTofu, the handoff to Flux follows this pattern:
 
 | Layer | Technology | Version |
 |-------|-----------|---------|
-| OS | Talos Linux | v1.12.6 |
-| Kubernetes | Kubernetes | 1.35.4 |
+| OS | Talos Linux | v1.12.9 |
+| Kubernetes | Kubernetes | 1.35.6 |
 | IaC | OpenTofu | 1.9 |
 | CNI | Cilium | 1.17.13 |
 | KMS | OpenBao (bootstrap) | 2.5.1 |
-| PKI | cert-manager | v1.19.4 |
-| PKI | OpenBao (in-cluster) | 0.25.6 (chart) |
-| Metrics | vm-k8s-stack | 0.72.4 |
-| Logs | victoria-logs-single | 0.11.28 |
-| Logs | victoria-logs-collector | 0.2.11 |
-| Dashboard | Headlamp | 0.40.0 |
-| Identity | Ory Kratos | 0.60.1 |
-| Identity | Ory Hydra | 0.60.1 |
+| PKI | cert-manager | v1.21.0 |
+| PKI | OpenBao (in-cluster) | 0.28.4 (chart) |
+| Metrics | vm-k8s-stack | 0.86.0 |
+| Logs | victoria-logs-single | 0.13.8 |
+| Logs | victoria-logs-collector | 0.3.6 |
+| Dashboard | Headlamp | 0.43.0 |
+| Identity | Ory Kratos | 0.62.1 |
+| Identity | Ory Hydra | 0.62.1 |
 | Identity | Pomerium | 34.0.1 |
-| Policy | Kyverno | 3.7.1 |
-| Scanning | Trivy Operator | 0.32.0 |
-| Runtime | Tetragon | 1.6.0 |
-| Storage | Garage | v2.2.0 (app) / 0.9.2 (chart) |
-| Storage | local-path-provisioner | 0.0.35 |
-| Registry | Harbor | 1.16.2 |
+| Policy | Kyverno | 3.8.2 |
+| Scanning | Trivy Operator | 0.34.0 |
+| Runtime | Tetragon | 1.7.0 |
+| Storage | Garage | v2.3.0 (app) / 0.9.2 (chart) |
+| CNI storage dependency | local-path-provisioner | 0.0.37 |
+| Registry | Harbor | 1.19.1 |
 | Backup | Velero | 11.4.0 |
-| GitOps | Flux v2 | 2.14.1 |
+| GitOps | Flux v2 | 2.18.4 |
 | Git | Gitea | 1.22-rootless |
 | CI | Woodpecker | v3 |
 

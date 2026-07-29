@@ -1,0 +1,30 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kubescape
+  namespace: security
+spec:
+  interval: 30m
+  install:
+    remediation:
+      retries: 3
+    createNamespace: true
+  # Failed upgrades: retry 3x then roll back (hardening 2026-07-12)
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+  chart:
+    spec:
+      chart: kubescape-operator
+      version: "${kubescape_version}"
+      sourceRef:
+        kind: HelmRepository
+        name: kubescape
+        namespace: flux-system
+  # The chart expects its own namespace (storage APIService binding).
+  targetNamespace: kubescape
+  valuesFrom:
+    - kind: ConfigMap
+      name: kubescape-values
+      valuesKey: values.yaml

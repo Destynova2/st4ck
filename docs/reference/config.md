@@ -2,15 +2,20 @@
 
 All configurable parameters for the Talos platform, organized by layer.
 
-## Version Variables (vars.mk)
+## Version Pins
+
+Chart and provider versions live in ONE file:
+`clusters/management/versions-configmap.yaml` (consumed by tofu via
+`local.platform_versions`, by Flux via `postBuild.substituteFrom`, and by
+the hauler manifest generator). Talos/Kubernetes machine versions live in
+`contexts/_defaults.yaml`. `vars.mk` only holds `OUT_DIR` (build artifacts
+directory, default `_out`).
+
+## Env Promotion (ADR-037)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TALOS_VERSION` | v1.12.6 | Talos Linux OS version |
-| `KUBERNETES_VERSION` | 1.35.4 | Kubernetes version |
-| `CILIUM_VERSION` | 1.17.13 | Cilium CNI Helm chart version |
-| `IMAGER_IMAGE` | ghcr.io/siderolabs/imager:$(TALOS_VERSION) | Talos image builder container |
-| `OUT_DIR` | _out | Build artifacts directory |
+| `flux_git_tag` (stacks/flux-bootstrap) | `""` | Empty = Flux tracks `main` (dev). qa/prod run in separate Scaleway projects and pin a release tag: `-var="flux_git_tag=vX.Y.Z"`. Rollback = re-point the previous tag. |
 
 ## Makefile Variables
 
@@ -18,7 +23,7 @@ All configurable parameters for the Talos platform, organized by layer.
 |----------|---------|-------------|
 | `ENV` | scaleway | Provider selection: `scaleway`, `local` |
 | `TF` | tofu | Terraform/OpenTofu binary |
-| `KC_FILE` | ~/.kube/talos-$(ENV) | Kubeconfig file path |
+| `KC_FILE` | ~/.kube/$(CTX_ID) | Kubeconfig file path |
 | `KMS_OUTPUT` | kms-output | Directory for exported tokens and certificates |
 | `BOOTSTRAP_DIR` | /tmp/platform-local | Working directory for bootstrap generated files |
 | `BOOTSTRAP_HOST` | localhost | Remote bootstrap host (for `bootstrap-tunnel`) |
@@ -81,7 +86,9 @@ Stacks that read secrets from bootstrap OpenBao also accept:
 
 All Helm values files are co-located in each stack directory. Key configuration points:
 
-### CNI (stacks/cni/values.yaml)
+### CNI (stacks/cni/)
+
+Files: `flux/values.yaml` (Cilium), `values-local-path.yaml` (tofu day-1)
 
 | Setting | Value | Purpose |
 |---------|-------|---------|
@@ -89,10 +96,11 @@ All Helm values files are co-located in each stack directory. Key configuration 
 | `hubble.enabled` | true | Network observability |
 | `hubble.relay.enabled` | true | Hubble relay for remote access |
 | `ipam.mode` | kubernetes | Use Kubernetes IPAM |
+| `storageClass.defaultClass` | true | local-path is the default StorageClass before PKI |
 
 ### Monitoring (stacks/monitoring/)
 
-Files: `values-vm-stack.yaml`, `values-vlogs-single.yaml`, `values-vlogs-collector.yaml`, `values-headlamp.yaml`
+Files: `flux-vm/values-vm-stack.yaml`, `flux/values-vlogs-single.yaml`, `flux/values-vlogs-collector.yaml`, `flux/values-headlamp.yaml`
 
 | Setting | File | Purpose |
 |---------|------|---------|
@@ -102,17 +110,18 @@ Files: `values-vm-stack.yaml`, `values-vlogs-single.yaml`, `values-vlogs-collect
 
 ### PKI (stacks/pki/)
 
-Files: `values-openbao-infra.yaml`, `values-openbao-app.yaml`, `values-cert-manager.yaml`
+Files: `flux/values-openbao-infra.yaml`, `flux/values-openbao-app.yaml`, `flux/values-cert-manager.yaml`
 
 | Setting | File | Purpose |
 |---------|------|---------|
-| `server.standalone.enabled` | values-openbao-*.yaml | OpenBao runs in standalone mode |
-| `injector.enabled` | values-openbao-infra.yaml | Agent Injector for secret injection |
+| `server.ha.enabled` | values-openbao-*.yaml | OpenBao runs in HA/Raft mode |
+| `server.ha.replicas` | values-openbao-*.yaml | Infra targets 3 replicas; App bootstraps at 1 then scales after quorum is safe |
+| `injector.enabled` | values-openbao-infra.yaml | Agent Injector state; ESO is the canonical secret-sync path |
 | `installCRDs` | values-cert-manager.yaml | Install cert-manager CRDs |
 
 ### Identity (stacks/identity/)
 
-Files: `values-kratos.yaml`, `values-hydra.yaml`, `values-pomerium.yaml`
+Files: `flux/values-kratos.yaml`, `flux/values-hydra.yaml`, `flux/values-pomerium.yaml`
 
 | Setting | File | Purpose |
 |---------|------|---------|
@@ -129,13 +138,13 @@ Files: `values-kratos.yaml`, `values-hydra.yaml`, `values-pomerium.yaml`
 
 ### Storage (stacks/storage/)
 
-Files: `values-local-path.yaml`, `values-garage.yaml`, `values-velero.yaml`, `values-harbor.yaml`
+Files: `flux/values-garage.yaml`, `flux/values-velero.yaml`, `flux-zot/values-zot.yaml`
 
 | Setting | File | Purpose |
 |---------|------|---------|
 | `garage.replication_mode` | values-garage.yaml | Replication factor (default: 3) |
 | `velero.configuration.backupStorageLocation` | values-velero.yaml | Garage S3 endpoint |
-| `harbor.persistence.imageChartStorage.s3` | values-harbor.yaml | S3 backend config |
+| `configFiles.config.json` storage.storageDriver | values-zot.yaml | zot S3 (Garage) backend config |
 
 ## Scaleway-Specific Configuration
 

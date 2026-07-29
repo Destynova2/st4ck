@@ -1,0 +1,40 @@
+# Source + Kustomization racine du day-2 E2E (e2e-local.sh phase 3).
+# __GITEA_URL__ est substitue par le script (host gvproxy + port).
+# Miroir volontaire de ce que stacks/flux-bootstrap pose en prod (URL
+# SSH CI VM la-bas, HTTP bootstrap ici) — memes substitutions racine.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: management
+  namespace: flux-system
+spec:
+  interval: 1m
+  url: __GITEA_URL__
+  ref:
+    branch: main
+  secretRef:
+    name: flux-git-auth
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: management
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: management
+  path: ./clusters/management
+  prune: true
+  wait: true
+  timeout: 5m
+  postBuild:
+    substitute:
+      s3_url: "http://garage.garage.svc.cluster.local:3900"
+      velero_bucket: "velero-backups"
+      harbor_bucket: "unused"
+      cnpg_bucket: "cnpg-backups"
+    substituteFrom:
+      - kind: ConfigMap
+        name: platform-versions

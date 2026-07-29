@@ -1,0 +1,57 @@
+---
+# Two-phase zot split — same pattern as security-kyverno.yaml and
+# monitoring-vm.yaml (Fix #7 / postmortem Bug #41): a HelmRelease that
+# mounts a Secret rendered by ESO cannot live in the same Kustomization
+# (the HR install fires before the ExternalSecret's first cycle).
+#
+#   Phase 1 — storage-zot-eso applies the zot-secret ExternalSecret
+#     with `wait: true`, blocking until the Secret is rendered from
+#     OpenBao (secret/storage/zot, seeded by tofu pki).
+#   Phase 2 — storage-zot applies the HelmRelease, gated on phase 1.
+#     The S3 credentials (zot-s3-credentials) are created by the
+#     storage stack's garage_buckets_keys — present since day-1.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: storage-zot-eso
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 2m
+  sourceRef:
+    kind: GitRepository
+    name: management
+    namespace: flux-system
+  path: ./stacks/storage/flux-zot-eso
+  prune: true
+  wait: true
+  timeout: 5m
+  # postBuild is NOT inherited from the root `management` Kustomization —
+  # declared on every child so ${x_version} pins resolve wherever used.
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: platform-versions
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: storage-zot
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 2m
+  dependsOn:
+    - name: storage-zot-eso
+  sourceRef:
+    kind: GitRepository
+    name: management
+    namespace: flux-system
+  path: ./stacks/storage/flux-zot
+  prune: true
+  wait: true
+  timeout: 10m
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: platform-versions

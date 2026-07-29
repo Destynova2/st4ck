@@ -1,7 +1,7 @@
 # ADR-027 — OpenClarity for multi-scanner vulnerability + SBOM
 
 **Date**: 2026-04-25
-**Status**: Accepted
+**Status**: Superseded by ADR-038 (2026-07-13 — OpenClarity archived upstream 2026-05-29)
 **Deciders**: ludwig
 **Supersedes**: nothing (Trivy operator stays during transition)
 

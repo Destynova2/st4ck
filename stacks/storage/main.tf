@@ -26,9 +26,9 @@ data "terraform_remote_state" "pki" {
 
 locals {
   secrets = {
-    garage_rpc_secret     = data.terraform_remote_state.pki.outputs.garage_rpc_secret
-    garage_admin_token    = data.terraform_remote_state.pki.outputs.garage_admin_token
-    harbor_admin_password = data.terraform_remote_state.pki.outputs.harbor_admin_password
+    garage_rpc_secret  = data.terraform_remote_state.pki.outputs.garage_rpc_secret
+    garage_admin_token = data.terraform_remote_state.pki.outputs.garage_admin_token
+    zot_admin_password = data.terraform_remote_state.pki.outputs.zot_admin_password
   }
 }
 
@@ -132,28 +132,34 @@ resource "terraform_data" "garage_wait" {
     # at 1s intervals (vs 5s) catches the transition ~5x faster.
     #
     # Pattern 1 (Phase F-bis): drop `|| echo 0` — Bug #18 in the postmortem
-    # notes that `grep -c` always exits 1 when no match, AND emits "0\n0"
+    # `grep -c` exits 1 when count=0 (printing "0") — under set -eu a bare
+    # VAR=$(...|grep -c) assignment DIES instantly (E2E runs 2-5 all failed
+    # here before the loop even started). `|| true` keeps the printed "0"
     # via the `||` fallback (count line + fallback line), giving wrong
     # arithmetic. Use `${VAR:-0}` at use site, with explicit timeout exit.
     command = <<-EOT
       set -eu
       echo "Waiting for 3 Garage pods Running AND 3 nodes registered (RPC)..."
-      for i in $(seq 1 300); do
-        RUNNING=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{.items[*].status.phase}' 2>/dev/null | tr ' ' '\n' | grep -c Running)
+      # 20 min : sur un cluster froid les pulls de TOUTE la stack (waves
+      # -j3) saturent le lien — Garage materialise a ~16-18 min en E2E
+      # local (runs 2-4). Sortie anticipee des que pret : zero cout au
+      # chaud. Un cluster prod sur reseau lent a le meme profil.
+      for i in $(seq 1 1200); do
+        RUNNING=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{.items[*].status.phase}' 2>/dev/null | tr ' ' '\n' | grep -c Running || true)
         # garage status only callable once garage-0 is Running; tolerate the
         # exec failure during the first ~10s by suppressing stderr.
-        NODES=$(kubectl -n garage exec garage-0 -c garage -- ./garage status 2>/dev/null | grep -cE '^[a-f0-9]{16}')
+        NODES=$(kubectl -n garage exec garage-0 -c garage -- /garage status 2>/dev/null | grep -cE '^[a-f0-9]{16}' || true)
         if [ "$${RUNNING:-0}" -ge 3 ] && [ "$${NODES:-0}" -ge 3 ]; then
           echo "All 3 Garage pods Running and 3 nodes registered."
           exit 0
         fi
         # Reduce log noise: print a heartbeat every 10s instead of every iteration
         if [ $((i % 10)) -eq 0 ]; then
-          echo "  pods=$${RUNNING:-0}/3 nodes=$${NODES:-0}/3 (attempt $i/300)..."
+          echo "  pods=$${RUNNING:-0}/3 nodes=$${NODES:-0}/3 (attempt $i/1200)..."
         fi
         sleep 1
       done
-      echo "ERROR: Garage not ready after 5 min (pods=$${RUNNING:-0}/3 nodes=$${NODES:-0}/3)"
+      echo "ERROR: Garage not ready after 20 min (pods=$${RUNNING:-0}/3 nodes=$${NODES:-0}/3)"
       exit 1
     EOT
   }
@@ -178,7 +184,7 @@ resource "terraform_data" "garage_layout" {
       # within ~5s; polling 1s catches it almost immediately.
       echo "Waiting for node discovery..."
       for i in $(seq 1 150); do
-        COUNT=$($GARAGE ./garage status 2>/dev/null | grep -c "HEALTHY\|NO ROLE")
+        COUNT=$($GARAGE /garage status 2>/dev/null | grep -c "HEALTHY\|NO ROLE" || true)
         [ "$${COUNT:-0}" -ge 3 ] && break
         if [ $((i % 10)) -eq 0 ]; then
           echo "  $${COUNT:-0}/3 nodes (attempt $i/150)..."
@@ -187,13 +193,13 @@ resource "terraform_data" "garage_layout" {
       done
       [ "$${COUNT:-0}" -ge 3 ] || { echo "ERROR: node discovery timeout (got $${COUNT:-0}/3 after 150s)"; exit 1; }
 
-      NODES=$($GARAGE ./garage status 2>/dev/null | grep "NO ROLE" | awk '{print $1}')
+      NODES=$($GARAGE /garage status 2>/dev/null | grep "NO ROLE" | awk '{print $1}')
       if [ -n "$NODES" ]; then
         echo "Assigning layout..."
         for NODE_ID in $NODES; do
-          $GARAGE ./garage layout assign -z dc1 -c 5G "$NODE_ID" 2>&1 | tail -1
+          $GARAGE /garage layout assign -z dc1 -c 5G "$NODE_ID" 2>&1 | tail -1
         done
-        CURRENT_VER=$($GARAGE ./garage layout show 2>/dev/null | grep "layout version" | awk '{print $NF}' || echo 0)
+        CURRENT_VER=$($GARAGE /garage layout show 2>/dev/null | grep "layout version" | awk '{print $NF}' || echo 0)
         # Postmortem 2026-04-29 (#18): the `|| echo 0` fallback only fires
         # when the WHOLE pipeline fails (grep+awk). awk happily emits an
         # empty string when grep matches no line (output format change
@@ -208,7 +214,7 @@ resource "terraform_data" "garage_layout" {
           exit 1
         fi
         NEXT_VER=$((CURRENT_VER + 1))
-        $GARAGE ./garage layout apply --version $NEXT_VER 2>&1 | tail -2
+        $GARAGE /garage layout apply --version $NEXT_VER 2>&1 | tail -2
       else
         echo "Layout already configured."
       fi
@@ -232,27 +238,27 @@ resource "terraform_data" "garage_buckets_keys" {
       # Pattern 1 (Phase F-bis): sleep 1 vs 5, drop `|| echo 0`, explicit
       # timeout. After garage_layout, readinessProbe flips to ready in <10s.
       echo "Waiting for Garage ready (post-layout)..."
-      for i in $(seq 1 300); do
-        READY=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{range .items[*]}{.status.containerStatuses[0].ready}{"\n"}{end}' 2>/dev/null | grep -c true)
+      for i in $(seq 1 600); do
+        READY=$(kubectl -n garage get pods -l app.kubernetes.io/name=garage -o jsonpath='{range .items[*]}{.status.containerStatuses[0].ready}{"\n"}{end}' 2>/dev/null | grep -c true || true)
         if [ "$${READY:-0}" -ge 3 ]; then
           echo "All 3 Garage pods ready."
           break
         fi
         if [ $((i % 10)) -eq 0 ]; then
-          echo "  $${READY:-0}/3 ready (attempt $i/300)..."
+          echo "  $${READY:-0}/3 ready (attempt $i/600)..."
         fi
         sleep 1
       done
       [ "$${READY:-0}" -ge 3 ] || { echo "ERROR: Garage pods not ready after 5 min (got $${READY:-0}/3)"; exit 1; }
 
       echo "Creating buckets..."
-      for BUCKET in velero-backups harbor-registry cnpg-backups; do
-        $GARAGE ./garage bucket create "$BUCKET" 2>/dev/null || true
+      for BUCKET in velero-backups zot-registry cnpg-backups; do
+        $GARAGE /garage bucket create "$BUCKET" 2>/dev/null || true
       done
 
       echo "Creating keys and K8s secrets..."
       for ENTRY in "velero-key:velero-backups:storage:velero-s3-credentials:ini" \
-                    "harbor-key:harbor-registry:storage:harbor-s3-credentials:plain" \
+                    "zot-key:zot-registry:storage:zot-s3-credentials:plain" \
                     "cnpg-key:cnpg-backups:identity:cnpg-s3-credentials:plain"; do
         KEY_NAME=$(echo "$ENTRY" | cut -d: -f1)
         BUCKET=$(echo "$ENTRY" | cut -d: -f2)
@@ -287,11 +293,11 @@ resource "terraform_data" "garage_buckets_keys" {
           continue
         fi
 
-        KEY_INFO=$($GARAGE ./garage key info "$KEY_NAME" 2>/dev/null || $GARAGE ./garage key create "$KEY_NAME" 2>/dev/null)
+        KEY_INFO=$($GARAGE /garage key info "$KEY_NAME" 2>/dev/null || $GARAGE /garage key create "$KEY_NAME" 2>/dev/null)
         ACCESS=$(echo "$KEY_INFO" | grep "Key ID" | awk '{print $NF}')
         SECRET=$(echo "$KEY_INFO" | grep "Secret key" | awk '{print $NF}')
 
-        $GARAGE ./garage bucket allow --read --write --owner "$BUCKET" --key "$KEY_NAME"
+        $GARAGE /garage bucket allow --read --write --owner "$BUCKET" --key "$KEY_NAME"
 
         if [ "$SECRET_FMT" = "ini" ]; then
           kubectl -n "$SECRET_NS" create secret generic "$SECRET_NAME" \
@@ -314,14 +320,12 @@ resource "terraform_data" "garage_buckets_keys" {
 # ${s3_url} + ${velero_bucket} substituted via Flux postBuild — defined
 # in stacks/flux-bootstrap/main.tf Kustomization "management"). ADR-028.
 
-# Harbor → Flux owner (ADR-028 wave 3).
-# Three secrets enter Harbor at runtime, all via the harbor-secrets
-# ExternalSecret which renders a values.yaml fragment from OpenBao:
-#   - harborAdminPassword     ← seeded by tofu pki at secret/storage/harbor
-#   - persistence.imageChartStorage.s3.accesskey
-#   - persistence.imageChartStorage.s3.secretkey
-#       ↑ both mirrored from harbor-s3-credentials K8s Secret to OpenBao
-#       at secret/storage/harbor-s3 by the harbor-s3-mirror PushSecret
-#       (see stacks/storage/flux/external-secrets.yaml).
-# garage_buckets_keys terraform_data still creates harbor-s3-credentials
-# (Garage CLI generates the API key); the PushSecret mirrors it.
+# zot → Flux owner (ADR-039 — remplace Harbor le 2026-07-14 : pas de
+# release GA arm64 upstream, features projets/quotas inutilisées ici).
+# Deux entrées secrètes au runtime, pipeline plus simple qu'avant :
+#   - zot-secret (htpasswd)  ← ExternalSecret depuis OpenBao
+#     secret/storage/zot (admin_password + htpasswd pré-composé, seedés
+#     par tofu pki — bcrypt calculé côté tofu).
+#   - zot-s3-credentials     ← créé DIRECTEMENT par garage_buckets_keys
+#     ci-dessus (env AWS_* du chart) — plus de PushSecret miroir ni
+#     d'aller-retour OpenBao pour le S3.

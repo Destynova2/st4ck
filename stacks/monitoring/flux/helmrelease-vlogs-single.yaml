@@ -5,17 +5,24 @@ metadata:
   namespace: monitoring
 spec:
   interval: 30m
+  # Failed upgrades: retry 3x then roll back (hardening 2026-07-12)
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
   chart:
     spec:
       chart: victoria-logs-single
-      # Pin matches stacks/monitoring/variables.tf
-      # variable.victoria_logs_version.default — keep them in sync.
-      version: "0.11.28"
+      # Pin resolved from clusters/management/versions-configmap.yaml
+      # via postBuild.substituteFrom on the root Kustomization.
+      version: "${victoria_logs_version}"
       sourceRef:
         kind: HelmRepository
         name: victoriametrics
         namespace: flux-system
   install:
+    remediation:
+      retries: 3
     createNamespace: false
   valuesFrom:
     - kind: ConfigMap

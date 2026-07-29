@@ -6,23 +6,17 @@ variable "kubeconfig_path" {
 variable "trivy_operator_version" {
   description = "Trivy Operator Helm chart version"
   type        = string
-  default     = "0.32.0"
+  default     = null
 }
 
 variable "tetragon_version" {
   description = "Tetragon Helm chart version"
   type        = string
-  default     = "1.6.0"
+  default     = null
 }
 
 variable "kyverno_version" {
   description = "Kyverno Helm chart version"
   type        = string
-  default     = "3.7.1"
-}
-
-variable "openclarity_version" {
-  description = "OpenClarity Helm chart version (Linux Foundation / OpenSSF). Published as OCI at ghcr.io/openclarity/charts/openclarity."
-  type        = string
-  default     = "1.1.3"
+  default     = null
 }

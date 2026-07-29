@@ -84,20 +84,19 @@ locals {
   ]
 
   # ─── Patches ──────────────────────────────────────────────────────────
-  cilium_patch              = file("${path.module}/../../patches/cilium-cni.yaml")
-  registry_mirror_scr_patch = file("${path.module}/../../patches/registry-mirror-scr.yaml")
-  registry_mirror_patch     = file("${path.module}/../../patches/registry-mirror.yaml")
-  kubelet_nodeip_patch      = file("${path.module}/../../patches/kubelet-nodeip-vpc.yaml")
-  etcd_vpc_patch            = file("${path.module}/../../patches/etcd-vpc-cp-only.yaml")
-  volume_config_patch     = file("${path.module}/volume-config-patch.yaml")
+  cilium_patch          = file("${path.module}/../../patches/cilium-cni.yaml")
+  registry_mirror_patch = file("${path.module}/../../patches/registry-mirror.yaml")
+  kubelet_nodeip_patch  = file("${path.module}/../../patches/kubelet-nodeip-vpc.yaml")
+  etcd_vpc_patch        = file("${path.module}/../../patches/etcd-vpc-cp-only.yaml")
+  volume_config_patch   = file("${path.module}/volume-config-patch.yaml")
   # OIDC CA is produced by bootstrap (kms-output/) — absent during validate/plan pre-bootstrap.
-  oidc_ca_pem           = try(file("${path.module}/../../kms-output/root-ca.pem"), "")
-  oidc_enabled          = local.oidc_ca_pem != ""
+  oidc_ca_pem  = try(file("${path.module}/../../kms-output/root-ca.pem"), "")
+  oidc_enabled = local.oidc_ca_pem != ""
 
   # ─── Endpoint ─────────────────────────────────────────────────────────
-  dns_fqdn      = var.dns_zone == "" ? "" : "${var.dns_subdomain_prefix}-${local.env}-${local.instance}-${local.region}.${var.dns_zone}"
-  dns_enabled   = var.dns_zone != ""
-  api_endpoint  = local.dns_enabled ? "https://${local.dns_fqdn}:6443" : "https://${scaleway_lb_ip.k8s_api.ip_address}:6443"
+  dns_fqdn     = var.dns_zone == "" ? "" : "${var.dns_subdomain_prefix}-${local.env}-${local.instance}-${local.region}.${var.dns_zone}"
+  dns_enabled  = var.dns_zone != ""
+  api_endpoint = local.dns_enabled ? "https://${local.dns_fqdn}:6443" : "https://${scaleway_lb_ip.k8s_api.ip_address}:6443"
 }
 
 provider "scaleway" {
@@ -128,9 +127,10 @@ module "talos" {
 
   common_config_patches = [
     local.cilium_patch,
-    # SCR mirror patch FIRST — Talos tries endpoints in declared order.
-    # Falls back to mirror.gcr.io / registry-1.docker.io if SCR unreachable.
-    local.registry_mirror_scr_patch,
+    # SCR mirror branch removed 2026-07-12 (hanoi pass 2 #6): the machine
+    # config depended on a stack no pipeline step ever applied, region
+    # hardcoded, measured benefit marginal (roadmap Phase E correction).
+    # Hauler serve (ADR-034 phase 2) will own the mirror story.
     local.registry_mirror_patch,
     local.kubelet_nodeip_patch,
     local.volume_config_patch,

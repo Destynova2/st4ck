@@ -1,0 +1,36 @@
+# Garde systemique de la classe "sizing" (golden path 2026-07-16/17 :
+# vmagent 256Mi, vlogs 512Mi et le scan trivy sont tous morts OOMKilled
+# en silence, decouverts par accident). Un OOMKilled devient une alerte
+# visible au lieu d'un crashloop muet. Metriques kube-state-metrics
+# (livrees par vm-k8s-stack).
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: workload-alerts
+  namespace: monitoring
+spec:
+  groups:
+    - name: workloads
+      rules:
+        - alert: ContainerOOMKilled
+          # last_terminated_reason reste a 1 apres l'evenement — le
+          # `and increase(restarts)` borne l'alerte aux OOM recents.
+          expr: |
+            (kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1)
+            and on (namespace, pod, container)
+            (increase(kube_pod_container_status_restarts_total[30m]) > 0)
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "OOMKilled: {{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }})"
+            description: "Le conteneur {{ $labels.container }} du pod {{ $labels.namespace }}/{{ $labels.pod }} a ete tue par l'OOM killer dans les 30 dernieres minutes — limite memoire a reevaluer (classe sizing, cf. test-local.md)."
+        - alert: PodCrashLooping
+          expr: |
+            increase(kube_pod_container_status_restarts_total[30m]) > 4
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CrashLoop: {{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }})"
+            description: "Plus de 4 redemarrages en 30 minutes pour {{ $labels.namespace }}/{{ $labels.pod }} — voir `kubectl logs --previous` et l'exit reason."
