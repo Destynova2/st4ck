@@ -4,10 +4,11 @@ variable "kubeconfig_path" {
 }
 
 # ─── Component version pins ───────────────────────────────────────────────
-# All versions pinned to concrete 2026 tags. Bump via controlled cadence.
+# Deprecated inputs retained for old automation during ownership migration.
+# They do not configure Flux; use clusters/management/versions-configmap.yaml.
 
 variable "karpenter_version" {
-  description = "Karpenter core Helm chart version (oci://public.ecr.aws/karpenter/karpenter)"
+  description = "Deprecated migration input; native provider embeds its own Karpenter core"
   type        = string
   default     = null
 }
@@ -41,7 +42,7 @@ variable "keda_version" {
 variable "victoriametrics_url" {
   description = "In-cluster URL to the VictoriaMetrics vmsingle service (Prometheus-compatible)"
   type        = string
-  default     = "http://vmsingle.monitoring.svc:8429"
+  default     = "http://vmsingle-vm.monitoring.svc:8428"
 }
 
 variable "cluster_name" {

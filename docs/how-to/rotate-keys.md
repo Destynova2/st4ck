@@ -1,12 +1,23 @@
 # How to rotate keys, certs, and secrets
 
+> Update 2026-09-27: the four legacy seal/root/sub-CA Make targets are
+> disabled before any mutation. They deleted data or addressed the old
+> ephemeral setup state and are incompatible with the persistent bootstrap
+> and its fail-closed identity checks. The Tier 1 examples below are historical,
+> NOT an executable rotation procedure. Use a supervised, rehearsed key
+> migration with a verified [KMS backup](disaster-recovery.md); restoring old
+> state does not roll back infrastructure or Flux. A nondestructive seal/CA
+> rotation workflow remains to be implemented and validated.
+
 ## Why this exists
 
 After the 2026-04-26 incident
 ([postmortem](../reviews/2026-04-26-bao-seal-key-postmortem.md)), every
 entropy-bearing resource in the codebase was hardened with
-`lifecycle { ignore_changes = all }`. That blocks **automatic** rotation
-on a state loss or a `tofu taint`.
+`lifecycle { ignore_changes = all }`. This suppresses attribute drift;
+it does **not** protect against state loss, `tofu taint`, or `-replace`.
+Bootstrap seal resources now also use `prevent_destroy`; runtime guards
+compare the actual seal and persistent PKI state before pod replacement.
 
 Sometimes rotation is exactly what you want — a leaked credential, a
 compliance schedule, a Sub-CA expiring. This doc is the deliberate-

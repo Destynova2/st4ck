@@ -1,0 +1,29 @@
+# Template for an existing stateless Deployment named elastic-app in default.
+# Its pod template must select st4ck.io/capacity=elastic and tolerate
+# st4ck.io/elastic=true:NoSchedule. No local PVC or hostPath is admissible.
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: elastic-app
+  namespace: default
+spec:
+  targetRef: {apiVersion: apps/v1, kind: Deployment, name: elastic-app}
+  updatePolicy:
+    updateMode: Recreate
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        controlledResources: [cpu, memory]
+        controlledValues: RequestsOnly
+        minAllowed: {cpu: 100m, memory: 128Mi}
+        maxAllowed: {cpu: "8", memory: 16Gi}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: elastic-app
+  namespace: default
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: elastic-app}

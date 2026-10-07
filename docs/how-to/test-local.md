@@ -1,5 +1,148 @@
 # Tester la plateforme en local — plan complet
 
+## Etat courant au 2026-09-26
+
+Les comptes rendus de juillet ci-dessous sont historiques. Ils ne valident
+pas la migration Flux actuelle (ADR-043) ni le provider hybride actuel
+(ADR-044). Une API Kubernetes reelle avec des noeuds simules ne prouve pas
+le fonctionnement des conteneurs, du CNI ou du materiel Scaleway.
+
+| Verification | Resultat actuel | Portee exacte |
+|---|---|---|
+| Statique, tests Go/Python/Tofu | Rejoues le 26 septembre : 102 controles reussis, 0 echec | Inclut 61 tests Python ; plans avec providers simules, pas de deploiement cloud |
+| Rendu Helm | Rejoue le 26 septembre : 18 charts rendus, aucune erreur | Les schemas CRD manquants sont ignores explicitement ; secrets ESO non resolus |
+| Karpenter sur KWOK natif | PASS le 26 septembre, 24 secondes hors premier telechargement | Vraie API Kubernetes 1.35.6 et vrai core Karpenter 1.14.0 ; API EM et kubelet simules |
+| Autorisations Garage sur cette API | PASS le 26 septembre | SSA create/update et donnees relues ; acces non autorises refuses |
+| Installation Talos + Flux | Nouveau banc : quatre noeuds Ready, 18 HelmReleases Ready sur 18 | 56 objets controles, verdict strict vert sans exemption ; demarrage avec corrections et reprises, pas une installation sans intervention |
+| Kubescape | PASS au demarrage a froid | Trois agents 2/2, operateur et stockage prets ; aucune preuve de detection malware |
+| Recreer le bootstrap | PASS avec etat persistant | Trois CA et lignee d'etat conservees ; absence d'etat face a une PKI existante refusee |
+| Amorcage et reprise OpenBao HA | PASS sur vrais pods locaux le 26 septembre, apres correction du split-brain | Infra et App : trois membres, identifiant commun, remplacement du pod 0, accord de leader et plan Tofu sans changement ; montee de version non testee |
+| VM -> EM -> VM Scaleway | Non valide | Demande aussi une recette cloud/materielle ; pas de redimensionnement en place |
+
+### Banc leger reproductible
+
+Le harnais Karpenter accepte le runtime natif : aucune VM Podman requise.
+Il utilise un nom unique, un kubeconfig et des artefacts propres a chaque
+execution, refuse un cluster preexistant et ne supprime que sa propre
+creation reussie. Les ports sont surchargeables pour eviter les collisions.
+
+Depuis la racine du depot :
+
+```bash
+KWOK_RUNTIME=binary KWOK_KUBE_VERSION=v1.35.6 \
+  E2E_DEBUG_ADDR=127.0.0.1:38085 E2E_METRICS_PORT=38087 E2E_HEALTH_PORT=38088 \
+  bash karpenter-provider-scaleway/hack/kwok-e2e/run.sh
+```
+
+Ce test prouve le cycle NodePool statique 0 -> 1 -> 0, les conditions
+Registered/Initialized, l'identite providerID, la disparition du NodeClaim
+et du Node, l'arret du serveur simule et l'absence de reservation restante.
+Il ne teste ni une bascule VM/EM sous charge, ni l'eviction de workloads
+avec PDB, ni le boot Talos reel.
+
+Pour exercer aussi le RBAC Garage, conserver explicitement ce banc avec
+`KEEP=1`, puis fournir le kubeconfig et le contexte uniques annonces :
+
+```bash
+python3 scripts/verify-garage-rbac.py \
+  --kubeconfig /chemin/du/banc/kubeconfig \
+  --context kwok-karpenter-em-e2e-IDENTIFIANT
+```
+
+Le test cree seulement des namespaces jetables et des Secrets factices,
+refuse des namespaces deja presents et nettoie ceux qu'il a crees. Il
+utilise le RBAC du manifeste reel et l'identite `garage-bootstrap` : les
+trois Secrets peuvent etre crees, modifies et lus ; la lecture et la
+modification d'un Secret etranger, la creation dans `identity` et la
+suppression sont refusees. Le droit `create` reste namespace-wide dans
+`storage` : ce test ne pretend pas le restreindre a trois noms.
+Apres un run `KEEP=1`, arreter uniquement le controleur indique s'il tourne
+encore, puis utiliser la commande de suppression annoncee, avec son
+`--kubeconfig` explicite. Ne pas supprimer tous les clusters KWOK.
+
+### Recette complete et suites
+
+#### Piege Podman : montage injecte dans Talos
+
+Sur le banc Fedora, `/usr/share/containers/mounts.conf` injectait
+`/usr/share/rhel/secrets:/run/secrets` en lecture seule dans les conteneurs
+Talos. Le `hostPath /run` de Kubescape propageait ce montage : containerd
+ne pouvait plus monter le jeton du service account, d'où `StartError`.
+Ce n'était pas une raison de désactiver Kubescape, son compte de service
+ou ses protections. La même version du chart démarre après correction du
+montage hôte.
+
+Préparer **uniquement une VM Podman dédiée** avec un fichier
+`/etc/containers/mounts.conf` vide, avant de créer ses nœuds. Ce fichier
+remplace les montages automatiques de la distribution ; ne pas modifier
+celui d'un moteur partagé sans analyser les besoins de ses autres projets.
+Voir la [configuration officielle des montages Podman](https://github.com/containers/common/blob/main/docs/containers-mounts.conf.5.md).
+Une modification du fichier n'enlève pas les montages des conteneurs déjà
+créés : recréer les nœuds jetables, pas les volumes d'autres applications.
+
+`local-docker-up.sh` vérifie désormais `/proc/1/mountinfo` sur chaque nœud
+et refuse un `/run/secrets` en lecture seule. Le contrôle est aussi utilisable
+seul avec une configuration Talos isolée :
+
+```bash
+TALOSCONFIG=/chemin/du/banc/talosconfig TALOSCTL=/chemin/vers/talosctl-v1.12.9 \
+  bash scripts/check-talos-container-mounts.sh CONTEXTE_DU_BANC IP_NOEUD_1 IP_NOEUD_2
+```
+
+La CLI Talos doit correspondre à l'image. Avec 1.12.9, `cluster create docker`
+n'accepte pas `--wait=false` et attend le réseau ; le script prépare donc le
+CNI pendant cette attente. En mode `SKIP_CILIUM=1`, il attend l'API et
+l'enregistrement de tous les nœuds puis arrête seulement son propre contrôle
+de santé, avant de laisser Tofu installer Cilium.
+
+#### Resultats des deux recettes
+
+La première recette du 26 septembre a utilisé une VM Lima dédiée (8 CPU, 28 Gio,
+120 Gio), une copie du travail non commite, son propre Gitea et ses propres
+etats, certificats et contextes. Le moteur Podman partagé conservait alors
+ses 49 conteneurs et 126 volumes ; le nettoyage prealable n'a concerne que
+des images inutilisees. Voir le
+[premier compte rendu et ses limites](../reviews/2026-09-26-local-platform-e2e.md).
+Une seconde VM vide a ensuite validé Kubescape et les 18 releases, avec
+nouveaux états et nouvelles CA. Voir la
+[reconstruction et les correctifs](../reviews/2026-09-26-kubescape-clean-bootstrap.md).
+Le collecteur de logs a connu des OOM à froid puis s'est rétabli ; la
+convergence finale n'est pas un test d'endurance ou de capacité.
+
+Le harnais historique a ete remplace par le [parcours maintenu strictement
+isole](e2e-isolated.md). `make e2e-local` exige desormais `E2E_CONFIG` :
+repertoire inexistant hors du depot, contexte unique et connexion Podman
+non-default vers un moteur vide dedie. Il ne reutilise pas ce banc, ne touche
+pas les tfstates du checkout et n'effectue aucun nettoyage automatique.
+Les stacks utilisent AppRole et le bootstrap du nouveau moteur. La copie
+privee du depot fournit la revision exacte controlee par Flux.
+Ce remplacement est couvert par des tests de securite hors cluster ; une
+execution complete sans intervention sur un nouveau banc reste a prouver.
+
+Le nouveau controleur de recette verifie les objets attendus du graphe,
+leur revision et leur etat ; les erreurs API, objets absents et bases CNPG
+incompletement pretes font echouer le controle :
+
+```bash
+python3 scripts/verify-platform-ready.py \
+  --kubeconfig /chemin/du/banc/kubeconfig \
+  --context CONTEXTE_DU_BANC --revision SHA_GIT_COMPLET
+```
+
+Les exemptions du controleur autonome servent uniquement au diagnostic,
+jamais a un verdict E2E complet. Le harnais maintenu n'en accepte aucune.
+Apres la readiness stricte, il exige `scripts/verify-metrics.py` avec le meme
+kubeconfig et contexte : CPU/memoire frais pour tous les noeuds Ready et
+metriques de pods valides non vides. L'attente est bornee et echoue si les
+donnees restent indisponibles ; elle ne prouve pas les recommandations VPA.
+
+Restent a rejouer : parcours maintenu sans intervention, endurance et
+dimensionnement mémoire, détection Kubescape et noyau sur VM Talos,
+migration avec données, upgrade OpenBao HA, restauration Velero, drain/PDB
+et bascule VM/EM sur matériel Scaleway.
+
+## Historique de juillet 2026
+
 Tout ce qui se teste SANS Scaleway ni materiel, ordonne par cout et par
 ce que chaque niveau prouve. Etat des lieux au 2026-07-14 (post ADR-034
 hauler, ADR-038 kubescape, ADR-039 zot, mode local-docker arm64).
@@ -88,7 +231,14 @@ mono-controlplane (`--controlplanes` n'existe que pour qemu,
 Linux-only) — le quorum etcd 3 CP reste hors de portee des containers
 (→ VMs : envs/local, ou spike virtu vz/Apple Silicon).
 
-Extensions a caler, dans l'ordre de valeur :
+> **Historique (juillet 2026)** : les extensions et resultats ci-dessous
+> decrivent l'ancienne repartition des proprietaires (dont Garage gere par
+> OpenTofu et un inventaire de 16 HelmReleases). Ce ne sont ni le parcours
+> actuel ni son verdict. Pour executer les stacks actuelles avec inventaire
+> strict, revision exacte et metriques fonctionnelles, utiliser le
+> [harnais E2E maintenu et isole](e2e-isolated.md).
+
+Extensions historiques, dans l'ordre de valeur retenu a l'epoque :
 
 1. **Flux day-2 E2E** : `flux install` sur le cluster local + le root
    Kustomization pointe sur le Gitea du bootstrap (niveau 2) →
@@ -132,10 +282,10 @@ Extensions a caler, dans l'ordre de valeur :
    evenement observable (logs agent, logs clamav, pas de CRD alert) —
    la detection demande un reglage du profil (periodicite du scan
    clamav, exporteurs d'alertes, periode d'apprentissage) : follow-up
-   dedie avant de compter sur le pilier malware en prod. Confirme que l'echec du tier container
-   (StartError — pas de /boot ni bpffs dans des noeuds conteneurises)
-   est bien une limite du simulateur : l'allowlist e2e-local est
-   legitime. Le banc Longhorn (ADR-041) est passe sur le meme cluster :
+   dedie avant de compter sur le pilier malware en prod. L'ancienne
+   attribution de StartError au simulateur et l'allowlist ont ete invalidees
+   par la recette de septembre : montage Podman injecte a corriger, aucune
+   exemption dans le harnais courant. Le banc Longhorn (ADR-041) est passe sur le meme cluster :
    chart 1.11.3, PVC Bound sur la StorageClass longhorn, ecriture/
    lecture prouvee via iscsi + extensions chargees par l'upgrade OS.
 4. **Golden path tofu-first** (l'ordre REEL du pipeline — leçon
@@ -143,26 +293,17 @@ Extensions a caler, dans l'ordre de valeur :
    appartiennent a Flux avant que leurs preconditions tofu n'existent,
    et il faut poser a la main 7 secrets + 2 Certificates + 7 seeds KV ;
    en tofu-first tout cela est pose par les stacks, comme en prod).
-   Runbook (contexte `dev-docker-local`, etat dans le vault-backend du
-   bootstrap — VB_PORT=18080 etc. si ports decales) :
-
-   ```bash
-   KUBECONFIG_OUT=~/.kube/st4ck-dev-docker-local SKIP_CILIUM=1 \
-     bash scripts/local-docker-up.sh st4ck-tofu   # nodes NotReady : normal
-   make k8s-cni-apply  ENV=dev INSTANCE=docker REGION=local VB_PORT=18080
-   make k8s-pki-apply  ENV=dev INSTANCE=docker REGION=local VB_PORT=18080
-   # ... puis vagues monitoring/identity/security/storage au besoin,
-   make flux-bootstrap-apply ENV=dev INSTANCE=docker REGION=local VB_PORT=18080
-   ```
+   L'ancien runbook a contexte fixe n'est plus le point d'entree E2E.
+   Utiliser le [parcours isole](e2e-isolated.md), qui ne reutilise ni le
+   kubeconfig global ni les etats ou le Gitea d'un autre environnement.
 
    Valide en plus du 3.1 : l'ordre day-1, le handoff tofu→Flux
    (adoption des releases Helm), et les seeds reels (secrets.tf).
 
-   **AUTOMATISE ET VALIDE — PASS au run 12 (2026-07-18)** :
-   `make e2e-local` compile tout le runbook en une cible a assertions
-   et code de sortie (preflight → cluster jetable 1 CP + 3 workers →
-   day-1 tofu → day-2 Flux → convergence bornee avec auto-kick →
-   4 assertions strictes + allowlist documentee kubescape → teardown).
+   **RESULTAT HISTORIQUE — PASS au run 12 (2026-07-18)** :
+   l'ancien script combinait auto-kick, allowlist Kubescape et teardown.
+   Ses assertions pouvaient accepter une erreur API ; ce verdict n'est
+   pas une preuve de recette actuelle. Ces comportements ont ete retires.
    Convergence mesuree : ~10 min avec le mirror hauler (auto-detecte
    sur :5001 — `hauler store serve registry --store haul-arm64 -p 5001`).
    Usage : nightly + porte de release ADR-037 (pas de tag qa/prod sans

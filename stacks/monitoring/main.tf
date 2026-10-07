@@ -39,14 +39,7 @@ provider "kubectl" {
 
 # ─── Monitoring Namespace ────────────────────────────────────────────────
 
-resource "kubernetes_namespace" "monitoring" {
-  metadata {
-    name = "monitoring"
-    labels = {
-      "pod-security.kubernetes.io/enforce" = "privileged"
-    }
-  }
-}
+
 
 # ─── Grafana admin credentials (seeded into OpenBao Infra) ───────────────
 # Generated here so that ESO (day-2) becomes the authoritative source for
@@ -67,45 +60,8 @@ resource "random_password" "grafana_admin" {
   }
 }
 
-# NOTE: Helm releases for monitoring are owned by Flux — vm-k8s-stack
-# in flux-vm/ (phase 1 of the two-phase split), the rest in flux/.
-# The VMRule flux-alerts is Flux-owned too (flux-alerts/, phase 2).
-# Tofu only manages the bootstrap pieces below (namespace,
-# grafana-admin Secret pre-seeded so the chart can mount it on first
-# apply, OpenBao seed, dashboard ConfigMap).
-#
-# ADR-028 — Flux is owner par défaut for app-level helm releases;
-# tofu only manages what must exist BEFORE Flux can reconcile.
-
-# ─── Bootstrap K8s Secret for chart consumption (pre-Flux/ESO) ───────────
-# The Grafana sub-chart requires `grafana-admin` to exist BEFORE the
-# Deployment can start (mounts envFrom). On initial tofu apply, ESO is not
-# yet reconciling, so we create the Secret here. Once Flux rolls out, the
-# ExternalSecret in flux/external-secret-grafana.yaml takes ownership and
-# refreshes the values from OpenBao every refreshInterval. Because OpenBao
-# was seeded from the same random_password.grafana_admin (see
-# terraform_data.seed_grafana_to_openbao below), the data is identical and
-# ESO's first reconciliation is a no-op — no rotation, no session loss.
-resource "kubernetes_secret" "grafana_admin" {
-  metadata {
-    name      = "grafana-admin"
-    namespace = "monitoring"
-    # Hint to ESO that it's allowed to take this Secret over even though
-    # it wasn't the original creator (ESO honours this since v0.9).
-    annotations = {
-      "external-secrets.io/force-sync" = "true"
-    }
-  }
-
-  type = "Opaque"
-
-  data = {
-    "admin-user"     = "admin"
-    "admin-password" = random_password.grafana_admin.result
-  }
-
-  depends_on = [kubernetes_namespace.monitoring]
-}
+# Flux and ESO own Kubernetes resources. Tofu retains secret generation
+# and the OpenBao seed; the password remains at its historical state address.
 
 # ─── Seed Grafana admin credentials into in-cluster OpenBao Infra ────────
 # Mirrors the bash pattern in stacks/pki/secrets.tf. We keep this in the
@@ -196,29 +152,23 @@ resource "terraform_data" "seed_grafana_to_openbao" {
 
 # victoria-logs + victoria-logs-collector → Flux owner (see header note)
 
-# ─── Platform Overview Dashboard (ConfigMap auto-loaded by Grafana sidecar) ─
-
-resource "kubernetes_config_map" "platform_dashboard" {
-  metadata {
-    name      = "grafana-dashboard-platform-overview"
-    namespace = "monitoring"
-    labels = {
-      grafana_dashboard = "1"
-    }
+removed {
+  from = kubernetes_namespace.monitoring
+  lifecycle {
+    destroy = false
   }
-
-  data = {
-    "platform-overview.json" = file("${path.module}/dashboards/platform-overview.json")
-  }
-
-  depends_on = [kubernetes_namespace.monitoring]
 }
 
-# headlamp → Flux owner (see header note)
+removed {
+  from = kubernetes_secret.grafana_admin
+  lifecycle {
+    destroy = false
+  }
+}
 
-# ─── Flux alerting rules (VMRule) → Flux owner ─────────────────────────
-# Moved to stacks/monitoring/flux-alerts/ (two-phase Kustomization,
-# clusters/management/monitoring-vm.yaml — same pattern as Bug #41).
-# The previous CRD-count-gated kubectl_manifest silently left fresh
-# clusters without Flux alerts (count=0 at first apply, never re-run —
-# hanoi audit 2026-07-12 finding #6).
+removed {
+  from = kubernetes_config_map.platform_dashboard
+  lifecycle {
+    destroy = false
+  }
+}

@@ -39,6 +39,7 @@ resource "helm_release" "cilium" {
   chart      = "cilium"
   version    = coalesce(var.cilium_version, local.platform_versions.cilium_version)
   namespace  = "kube-system"
+  timeout    = 900
 
   values = [file("${path.module}/flux/values.yaml")]
 }

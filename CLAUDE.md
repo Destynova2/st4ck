@@ -111,7 +111,7 @@ talos/
   assumées : store hauler (`--platform linux/arm64` pour un store ARM)
   et l'import d'image Talos Scaleway (`x86_64`, second import
   `metal-arm64` requis pour des nœuds ARM)
-- `ENV` variable selects provider: `make ENV=local k8s-up`
+- `PROVIDER` selects the provider: `make PROVIDER=local k8s-up`; `ENV` selects dev/staging/prod.
 - State backend: `backend "http"` → vault-backend (:8080) → OpenBao KV v2
 
 ## Common Commands

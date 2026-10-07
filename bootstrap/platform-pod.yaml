@@ -155,7 +155,7 @@ spec:
   containers:
     # ═══ OpenBao KMS (single Raft node) ══════════════════════════════
     - name: bao
-      image: quay.io/openbao/openbao:2.5.1@sha256:8843249c9bc051b0c547e53888565ee5a23a40a49079a8cd63578ef1517ba56b
+      image: quay.io/openbao/openbao:2.5.1@sha256:87d715029a47328172774638cabfeb04d5b356678d660621b796b6a671f93581
       command: ["bao", "server", "-config=/config/config.hcl"]
       ports:
         - containerPort: 8200
@@ -247,6 +247,8 @@ spec:
       env:
         - name: WOODPECKER_HOST
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_WP_HOST } }
+        - name: WOODPECKER_EXPERT_WEBHOOK_HOST
+          value: "http://127.0.0.1:8000"
         - name: WOODPECKER_OPEN
           value: "false"
         - name: WOODPECKER_ADMIN
@@ -259,8 +261,8 @@ spec:
           value: "/shared/gitea-client"
         - name: WOODPECKER_GITEA_SECRET_FILE
           value: "/shared/gitea-secret"
-        - name: WOODPECKER_AGENT_SECRET_FILE
-          value: "/shared/agent-secret"
+        - name: WOODPECKER_AGENT_SECRET
+          valueFrom: { secretKeyRef: { name: platform-secrets, key: CI_AGENT_SECRET } }
         - name: WOODPECKER_DEV_GITEA_OAUTH_URL
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_OAUTH_URL } }
 
@@ -273,6 +275,8 @@ spec:
       volumeMounts:
         - name: podman-sock
           mountPath: /var/run/docker.sock
+        - name: woodpecker-agent-data
+          mountPath: /etc/woodpecker
         - name: shared
           mountPath: /shared
           readOnly: true
@@ -281,8 +285,10 @@ spec:
           value: "platform-woodpecker-server:9000"
         - name: WOODPECKER_BACKEND
           value: "docker"
-        - name: WOODPECKER_AGENT_SECRET_FILE
-          value: "/shared/agent-secret"
+        - name: WOODPECKER_AGENT_SECRET
+          valueFrom: { secretKeyRef: { name: platform-secrets, key: CI_AGENT_SECRET } }
+        - name: WOODPECKER_HEALTHCHECK_ADDR
+          value: "127.0.0.1:3001"
         - name: WOODPECKER_BACKEND_DOCKER_NETWORK
           value: "podman-default-kube-network"
 
@@ -292,7 +298,7 @@ spec:
     # without exposing Matchbox on the host interface.
     # See modules/em-talos-matchbox-bootstrap/ + issue #1 Phase B.
     - name: matchbox
-      image: quay.io/poseidon/matchbox:v0.10.0@sha256:4eeafd794eebbd04a0e9c879382d6b36d98aa8f56beb4d0a75b1caaf7c4d4b98
+      image: quay.io/poseidon/matchbox:v0.10.0@sha256:e14cc4a8f6e8f1182fce74d04fe949b6bfc91b04132b3944297661e2c38c9790
       args:
         # Port 8090 (not 8080) — vault-backend already binds 0.0.0.0:8080 in
         # the same netns; shared-pod networking would EADDRINUSE the loser.
@@ -316,10 +322,10 @@ spec:
         capabilities:
           drop: ["ALL"]
       livenessProbe:
-        httpGet:
-          path: /
-          port: 8090
-          host: 127.0.0.1
+        # Podman's httpGet translation requires curl, absent from this image.
+        exec:
+          command: ["wget", "-q", "-T", "3", "-O", "/dev/null", "http://127.0.0.1:8090/"]
+        timeoutSeconds: 5
         initialDelaySeconds: 5
         periodSeconds: 30
       volumeMounts:
@@ -328,6 +334,9 @@ spec:
         - name: matchbox-profiles
           mountPath: /var/lib/matchbox/profiles
           readOnly: true
+        - name: matchbox-assets
+          mountPath: /var/lib/matchbox/assets
+          readOnly: true
 
     # ═══ Setup (OpenTofu: tokens, secrets, Gitea, WP) ════════════════
     - name: tofu-setup
@@ -335,37 +344,42 @@ spec:
       command: ["sh", "-c"]
       args:
         - |
+          set -eu
           echo "[setup] Waiting for OpenBao..."
           until wget -qS http://127.0.0.1:8200/v1/sys/health 2>&1 | grep -q 'HTTP/1.1 200'; do sleep 2; done
           echo "[setup] OpenBao ready"
 
-          # Write agent secret for WP (from ConfigMap env)
-          printf '%s' "$CI_AGENT_SECRET" > /shared/agent-secret
-
-          mkdir -p /tmp/tofu-work && cd /tmp/tofu-work
-          cp -r /source/bootstrap/tofu/* .
-          VARS="-var=bao_admin_password=$CI_PASSWORD \
-            -var=ci_admin=$CI_ADMIN \
-            -var=ci_password=$CI_PASSWORD \
-            -var=gitea_external_url=$CI_GITEA_URL \
-            -var=wp_external_url=$CI_WP_HOST \
-            -var=gitea_internal_url=http://127.0.0.1:3000 \
-            -var=wp_internal_url=http://127.0.0.1:8000"
+          # Refuse to regenerate an existing PKI after loss of its setup state.
+          cd /var/lib/tofu
+          if [ ! -s terraform.tfstate ] && [ -s /kms-output/root-ca.pem ]; then
+            echo "[setup] ERROR: existing PKI without setup state; restore the state before continuing" >&2
+            exit 1
+          fi
+          # Configuration is replaceable; state and provider locks are not.
+          for config in ./*.tf ./*.tf.json; do
+            if [ -f "$config" ]; then rm -- "$config"; fi
+          done
+          cp /source/bootstrap/tofu/*.tf .
+          export TF_VAR_bao_admin_password="$CI_PASSWORD"
+          export TF_VAR_ci_admin="$CI_ADMIN" TF_VAR_ci_password="$CI_PASSWORD"
+          export TF_VAR_gitea_external_url="$CI_GITEA_URL"
+          export TF_VAR_wp_external_url="$CI_WP_HOST"
+          export TF_VAR_gitea_internal_url=http://127.0.0.1:3000
+          export TF_VAR_wp_internal_url=http://127.0.0.1:8000
 
           tofu init -input=false
 
           # Phase 1: vault tokens + PKI + Gitea install (no gitea provider)
-          eval tofu apply -auto-approve \
+          tofu apply -auto-approve -input=false \
             -target=vault_token.vault_backend \
             -target=vault_token.autounseal \
             -target=tls_self_signed_cert.root_ca \
             -target=tls_locally_signed_cert.infra_ca \
             -target=tls_locally_signed_cert.app_ca \
-            -target=terraform_data.gitea_install \
-            $VARS
+            -target=terraform_data.gitea_install
 
           # Phase 2: gitea provider + WP (Gitea is now installed)
-          eval tofu apply -auto-approve $VARS
+          tofu apply -auto-approve -input=false
 
           echo "[setup] === Platform ready ==="
           exec sleep infinity
@@ -377,6 +391,8 @@ spec:
           readOnly: true
         - name: kms-output
           mountPath: /kms-output
+        - name: tofu-state
+          mountPath: /var/lib/tofu
       env:
         - name: CI_ADMIN
           valueFrom: { configMapKeyRef: { name: platform-config, key: CI_ADMIN } }
@@ -402,15 +418,21 @@ spec:
       persistentVolumeClaim: { claimName: platform-gitea-config }
     - name: woodpecker-data
       persistentVolumeClaim: { claimName: platform-wp-data }
+    - name: woodpecker-agent-data
+      persistentVolumeClaim: { claimName: platform-wp-agent-data }
     - name: podman-sock
-      persistentVolumeClaim: { claimName: platform-podman-sock }
+      hostPath: { path: "${podman_socket_path}", type: Socket }
     - name: shared
       persistentVolumeClaim: { claimName: platform-shared }
     - name: source
       hostPath: { path: "${source_dir}", type: Directory }
     - name: kms-output
       persistentVolumeClaim: { claimName: platform-kms-output }
+    - name: tofu-state
+      persistentVolumeClaim: { claimName: platform-tofu-state }
     - name: matchbox-data
       emptyDir: {}
     - name: matchbox-profiles
       configMap: { name: matchbox-profiles }
+    - name: matchbox-assets
+      persistentVolumeClaim: { claimName: platform-matchbox-assets }

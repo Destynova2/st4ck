@@ -1,5 +1,12 @@
 # ADR-023 : Architecture Disaster Recovery — Chaine de sauvegarde Garage multi-tiers
 
+> Correction opérationnelle du 27 septembre 2026 : cet ADR décrit une cible,
+> pas le parcours de reprise disponible. Raft ne contient ni l'état externe
+> du bootstrap, ni l'état local du setup, ni la clé de scellement. Les mentions
+> « tous les états » et de reprise complète automatique ci-dessous sont
+> remplacées par le [guide de reprise maintenu](../how-to/disaster-recovery.md).
+> Aucun RTO global n'est établi par les tests actuels.
+
 **Date** : 2026-03-20
 **Statut** : Propose
 **Decideurs** : Equipe plateforme

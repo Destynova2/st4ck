@@ -14,6 +14,17 @@ variable "gitea_external_host" {
   type        = string
 }
 
+variable "gitea_external_port" {
+  description = "SSH port exposed by the external Gitea host."
+  type        = number
+  default     = 2222
+
+  validation {
+    condition     = var.gitea_external_port >= 1 && var.gitea_external_port <= 65535 && floor(var.gitea_external_port) == var.gitea_external_port
+    error_message = "gitea_external_port must be an integer TCP port between 1 and 65535."
+  }
+}
+
 variable "gitea_known_hosts" {
   description = "SSH known_hosts entry for Gitea (from ssh-keyscan). The hostname inside the entry must match var.gitea_repo_owner/gitea_repo_name's url scheme — i.e. start with 'gitea.flux-system.svc.cluster.local' since that's what Flux dials."
   type        = string
@@ -73,4 +84,9 @@ variable "flux_git_tag" {
   description = "Pin Flux to a release tag of the management repo instead of the main branch. Empty = track main (dev). qa/prod pin a tag per ADR-037."
   type        = string
   default     = ""
+}
+variable "flux_migration_in_progress" {
+  description = "Disable root pruning during the ADR-043 ownership handoff; reset after reconciliation."
+  type        = bool
+  default     = false
 }

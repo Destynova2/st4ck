@@ -11,17 +11,18 @@ Sovereign air-gapped Kubernetes platform built on Talos Linux v1.12, deploying a
 - **State backend**: vault-backend -> bootstrap OpenBao KMS KV v2 (podman, single-node Raft)
 - **CI/CD**: Woodpecker CI + Gitea (Podman Quadlet on Scaleway VM)
 - **GitOps day-2**: Flux v2 (HelmReleases + Kustomize)
+- **Autoscaling**: Flux owns VPA/KEDA/Prometheus Adapter; native VM + pre-imaged EM Karpenter provider is integrated but opt-in. No functional VPA or hardware transition proof is established by local tests (ADR-044).
 - **Secrets**: OpenBao Infra + ESO for platform secrets; OpenBao App is the application-secret boundary; values are generated via Terraform resources
 - **PKI**: Root CA + intermediate CA (Terraform TLS provider), cert-manager ClusterIssuer
 - **Identity**: Ory Kratos + Hydra + Pomerium (zero-trust proxy, OIDC)
 - **Monitoring**: victoria-metrics-k8s-stack + VictoriaLogs + Headlamp + Grafana
 - **Security**: Trivy + Tetragon + Kyverno + Cosign policy
-- **Storage**: Garage S3 + Velero + Harbor
+- **Storage**: Garage S3 + Velero + zot
 - **Default StorageClass**: local-path-provisioner, installed by the CNI stack before PKI
 
 ## Architecture
 
-The platform uses a two-phase deployment model. Phase 1 (OpenTofu) bootstraps infrastructure and all Kubernetes stacks in strict dependency order. Phase 2 (Flux) takes over day-2 reconciliation via GitOps.
+OpenTofu bootstraps infrastructure, Talos, CNI, local-path, PKI/OpenBao, ESO and Flux. Flux installs and reconciles platform services from day 1: CNPG, identity, monitoring, security, Garage, Velero and zot. Each resource has one owner (ADR-043); existing clusters require the documented ownership handoff before publishing the revision.
 
 A shared Terraform module (`modules/talos-cluster`) generates machine secrets and configs via the siderolabs/talos provider. Maintained OpenTofu environments (Scaleway, local libvirt) call this module and add their own provider resources. The VMware air-gap tree is a legacy/manual shell workflow. All Kubernetes stacks are provider-agnostic -- they only need a kubeconfig path.
 
@@ -40,7 +41,7 @@ Bootstrap uses a single Terraform module (`bootstrap/`) that generates a podman 
 ## Key Patterns
 
 - All Makefile targets follow `<provider>-<action>` (e.g., `scaleway-apply`) or `k8s-<stack>-<action>` (e.g., `k8s-cni-apply`).
-- Composite targets enforce ordering: `k8s-up` deploys all stacks sequentially (parallel was removed due to race conditions).
+- Composite targets enforce ordering: `k8s-up` runs bootstrap and migration states sequentially, then Flux orders platform services with Kustomization dependencies.
 - Destroy order is the reverse of create order. Cilium must be destroyed last (it is the CNI). Kyverno webhooks must be deleted before other resources.
 - Secrets are generated via Terraform (`random_password`, `random_bytes`, `tls_private_key`) and synced through OpenBao Infra + ESO -- no manual `secret.tfvars` for application secrets.
 - Scaleway credentials flow through IAM stage outputs (`tofu -chdir=iam output -raw ...`).
@@ -57,15 +58,16 @@ make bootstrap-export           # Copy tokens/certs to kms-output/
 
 # Full deployment
 make scaleway-up                # Scaleway: infra + all k8s stacks + Flux
-make ENV=local local-up         # Local: libvirt VMs + all k8s stacks
+make PROVIDER=local local-up    # Local: libvirt VMs + all k8s stacks
 
 # Individual stacks
 make k8s-cni-apply              # Cilium (must be first)
 make k8s-pki-apply              # OpenBao + cert-manager + PKI secrets
-make k8s-monitoring-apply       # VictoriaMetrics + VictoriaLogs + Headlamp
-make k8s-identity-apply         # Kratos + Hydra + Pomerium
-make k8s-security-apply         # Trivy + Tetragon + Kyverno
-make k8s-storage-apply          # Garage + Velero + Harbor
+make k8s-monitoring-apply       # Credential seed + legacy handoff; Flux installs monitoring
+make k8s-identity-apply         # Legacy state handoff; Flux installs identity
+make k8s-security-apply         # Legacy state handoff; Flux installs security
+make k8s-storage-apply          # Relinquish legacy storage state; Flux owns Garage/Velero/zot
+make k8s-autoscaling-apply      # Relinquish legacy state; does not uninstall AWS/CAPI
 make flux-bootstrap-apply       # Flux v2 GitOps
 
 # Teardown (correct order)
@@ -88,6 +90,8 @@ make scaleway-zot               # zot UI (password in clipboard)
 ```
 
 ## Gotchas
+
+- **Native autoscaling is opt-in**: VM bootstrap injects initial `karpenter.sh/unregistered:NoExecute`; new EM pool imaging requires `karpenter_pool_enabled=true`. Both pin 500m CPU/1Gi kubelet reserve, 100Mi memory eviction headroom and 110 pods. Never reapply the destructive EM imaging module to migrate an installed worker. Initial isolation, actual allocatable, VPA and PDB-protected transitions still require laboratory proof.
 
 - **vault-backend must be running** for any `tofu` command. If `tofu init` fails with "connection refused", run `make bootstrap` or restart: `podman pod start platform`.
 - **Cilium must deploy before anything else**. Without CNI, no pods can schedule. The `k8s-up` target handles this automatically.

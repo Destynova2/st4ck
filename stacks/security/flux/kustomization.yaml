@@ -6,6 +6,7 @@ resources:
   - namespace.yaml
   - namespace-kubescape.yaml
   - helmrepository.yaml
+  - helmrepository-cilium.yaml
   - helmrelease-trivy.yaml
   - helmrelease-tetragon.yaml
   # ADR-038: malware/FIM only — node-agent + operator + storage

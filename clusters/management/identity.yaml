@@ -1,0 +1,109 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: identity-prerequisites
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  sourceRef:
+    kind: GitRepository
+    name: management
+  path: ./stacks/identity/flux-prerequisites
+  prune: true
+  wait: true
+  timeout: 10m
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: platform-versions
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cnpg-operator
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  dependsOn:
+    - name: identity-prerequisites
+  sourceRef:
+    kind: GitRepository
+    name: management
+  path: ./stacks/cnpg/flux
+  prune: true
+  wait: true
+  timeout: 10m
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: platform-versions
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: identity-database
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  dependsOn:
+    - name: cnpg-operator
+    - name: identity-backup-credentials
+  sourceRef:
+    kind: GitRepository
+    name: management
+  path: ./stacks/identity/flux-database
+  prune: true
+  wait: true
+  timeout: 10m
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: platform-versions
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: identity-apps
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  dependsOn:
+    - name: identity-database
+  sourceRef:
+    kind: GitRepository
+    name: management
+  path: ./stacks/identity/flux
+  prune: true
+  wait: true
+  timeout: 10m
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: platform-versions
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: identity-backup-credentials
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  dependsOn:
+    - name: identity-prerequisites
+    - name: storage-bootstrap
+  sourceRef:
+    kind: GitRepository
+    name: management
+  path: ./stacks/identity/flux-backup
+  prune: true
+  wait: true
+  timeout: 10m
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: platform-versions

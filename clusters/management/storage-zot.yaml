@@ -8,8 +8,8 @@
 #     with `wait: true`, blocking until the Secret is rendered from
 #     OpenBao (secret/storage/zot, seeded by tofu pki).
 #   Phase 2 — storage-zot applies the HelmRelease, gated on phase 1.
-#     The S3 credentials (zot-s3-credentials) are created by the
-#     storage stack's garage_buckets_keys — present since day-1.
+#     S3 credentials are synchronized by ESO in storage-secrets; the
+#     Flux-owned storage-bootstrap Job creates the matching Garage keys.
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -17,6 +17,8 @@ metadata:
   namespace: flux-system
 spec:
   interval: 10m
+  dependsOn:
+    - name: storage-secrets
   retryInterval: 2m
   sourceRef:
     kind: GitRepository
@@ -43,6 +45,7 @@ spec:
   retryInterval: 2m
   dependsOn:
     - name: storage-zot-eso
+    - name: storage-bootstrap
   sourceRef:
     kind: GitRepository
     name: management

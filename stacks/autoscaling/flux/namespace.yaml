@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: autoscaling
+  labels:
+    app.kubernetes.io/name: autoscaling
+    app.kubernetes.io/part-of: st4ck
+    pod-security.kubernetes.io/enforce: baseline

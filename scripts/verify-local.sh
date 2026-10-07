@@ -30,9 +30,15 @@ fi
 
 # ── 2. tofu validate (init -backend=false si besoin) ────────────────────
 step "tofu validate"
-TF_DIRS=$(find stacks envs modules bootstrap -maxdepth 2 -name main.tf -not -path "*/.terraform/*" -not -path "*/examples/*" -exec dirname {} \; | sort)
+TF_DIRS=$(find stacks envs modules bootstrap -name '*.tf' -not -path "*/.terraform/*" -not -path "*/examples/*" -exec dirname {} \; | sort -u)
 for d in ${TF_DIRS}; do
   [ -d "$d/.terraform" ] || tofu -chdir="$d" init -backend=false -input=false >/dev/null 2>&1 || true
+  # Refresh local module references after importing a new submodule, even
+  # when providers were already initialized in an earlier checkout.
+  if ! tofu -chdir="$d" get -no-color >/dev/null 2>&1; then
+    ko "module dependencies $d"
+    continue
+  fi
   if tofu -chdir="$d" validate >/dev/null 2>&1; then
     ok "validate $d"
   else
@@ -43,7 +49,7 @@ done
 # ── 3. Suites .tftest.hcl ────────────────────────────────────────────────
 if [ "${SKIP_TFTEST:-0}" != "1" ]; then
   step "tofu test"
-  for d in envs/scaleway/iam envs/scaleway/image envs/scaleway/ci envs/scaleway modules/em-talos-bootstrap; do
+  for d in envs/scaleway/iam envs/scaleway/image envs/scaleway/ci envs/scaleway modules/em-talos-bootstrap modules/em-talos-bootstrap/modules/karpenter-config stacks/pki bootstrap bootstrap/tofu; do
     if compgen -G "$d/tests/*.tftest.hcl" >/dev/null || compgen -G "$d/*.tftest.hcl" >/dev/null; then
       if tofu -chdir="$d" test >/dev/null 2>&1; then
         ok "tftest $d"
@@ -146,8 +152,8 @@ else
 fi
 
 # ── 9. dependsOn fantomes (classe velero→garage, 2026-07-16) ─────────────
-# Chaque dependsOn de HelmRelease doit cibler un HelmRelease qui existe
-# dans l'arbre Flux rendu (garage est tofu-owned : son CR n'existe pas).
+# Inspection du document racine ; le controle recursif complet du graphe
+# et des dependsOn est effectue par verify-gitops.py plus bas.
 step "dependsOn fantomes (HelmRelease)"
 RENDERED_TREE=$(mktemp)
 kubectl kustomize clusters/management 2>/dev/null > "${RENDERED_TREE}" || true
@@ -188,6 +194,19 @@ else
 fi
 
 # ── Bilan ────────────────────────────────────────────────────────────────
+step "graphe Flux et proprietaires"
+if python3 scripts/verify-gitops.py && python3 -m unittest discover -s scripts/tests \
+   && python3 -m unittest scripts/flux-review_test.py; then
+  ok "graphe Flux et proprietaires"
+else
+  ko "graphe Flux et proprietaires"
+fi
+if shellcheck stacks/storage/flux-bootstrap/bootstrap.sh; then
+  ok "shellcheck garage bootstrap"
+else
+  ko "shellcheck garage bootstrap"
+fi
+
 printf '\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
 printf 'verify-local : %d ✅ / %d ❌\n' "${PASS}" "${FAIL}"
 if [ "${FAIL}" -gt 0 ]; then

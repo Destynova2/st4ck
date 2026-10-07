@@ -1,0 +1,11 @@
+# Pool simulé par le FakeBackend du contrôleur e2e (hack/kwok-e2e) :
+# les valeurs zone/poolTag/offerName DOIVENT correspondre aux défauts
+# E2E_ZONE / E2E_POOL_TAG / E2E_OFFER du binaire.
+apiVersion: karpenter.scaleway.st4ck.io/v1alpha1
+kind: ScalewayEMNodeClass
+metadata:
+  name: metal-pool
+spec:
+  zone: fr-par-2
+  poolTag: st4ck.io/karpenter-pool=metal
+  offerName: EM-A116X-SSD

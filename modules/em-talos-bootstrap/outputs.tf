@@ -13,6 +13,11 @@ output "talosctl_endpoint" {
   value       = "https://${scaleway_baremetal_server.this.ips[0].address}:50000"
 }
 
+output "provider_id" {
+  description = "Canonical Karpenter provider ID (scaleway-em://<zone>/<server-id>) — byte-identical to pool.FormatProviderID; injected into machine.kubelet.extraArgs.provider-id when kubelet_provider_id_enabled."
+  value       = local.provider_id
+}
+
 output "name" {
   value = scaleway_baremetal_server.this.name
 }

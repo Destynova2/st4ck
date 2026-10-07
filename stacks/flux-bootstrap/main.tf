@@ -301,7 +301,7 @@ resource "kubernetes_service" "gitea_external" {
     port {
       name        = "ssh"
       port        = 22
-      target_port = 2222
+      target_port = var.gitea_external_port
       protocol    = "TCP"
     }
   }
@@ -319,7 +319,7 @@ resource "kubernetes_endpoints" "gitea_external" {
     }
     port {
       name     = "ssh"
-      port     = 2222
+      port     = var.gitea_external_port
       protocol = "TCP"
     }
   }
@@ -335,7 +335,7 @@ locals {
   # Composed from owner+name so the URL stays in sync with the actual
   # Gitea path (bootstrap/tofu/gitea.tf creates ${ci_admin}/talos).
   # Fixed hostname:port = the in-cluster Service this stack provisions
-  # above, which the Endpoints object routes to var.gitea_external_host:2222.
+  # above, which the Endpoints object routes to the configured external port.
   gitea_ssh_url = "ssh://git@gitea.flux-system.svc.cluster.local:22/${var.gitea_repo_owner}/${var.gitea_repo_name}.git"
 }
 
@@ -406,15 +406,11 @@ resource "kubectl_manifest" "flux_root_kustomization" {
         kind: GitRepository
         name: management
       path: ./clusters/management
-      prune: true
+      prune: ${!var.flux_migration_in_progress}
       wait: true
-      timeout: 5m
-      # Reconcile-time variable substitution (idiomatic Flux postBuild).
-      # Mirrors the values that tofu's templatefile() injects when it
-      # deploys the same charts at day-1, so values-*.yaml files work
-      # identically for tofu (day-1) AND Flux (day-2) without hardcoding.
-      # Add new vars here when introducing new $${var} placeholders in
-      # any values-*.yaml under clusters/management/.
+      timeout: 30m
+      # Child Kustomizations declare their own substitutions; these only
+      # apply to objects built directly by the management root.
       postBuild:
         substitute:
           s3_url: "http://garage.garage.svc.cluster.local:3900"
@@ -441,6 +437,11 @@ resource "kubectl_manifest" "flux_root_kustomization" {
 # root-Kustomization reconcile would fail substituteFrom (ConfigMap absent).
 resource "kubectl_manifest" "platform_versions" {
   yaml_body = file("${path.module}/../../clusters/management/versions-configmap.yaml")
+
+  # Seed once; subsequent changes are reconciled from Git by Flux.
+  lifecycle {
+    ignore_changes = [yaml_body]
+  }
 
   depends_on = [kubernetes_namespace.flux_system]
 }

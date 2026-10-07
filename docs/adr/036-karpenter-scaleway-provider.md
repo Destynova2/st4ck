@@ -2,6 +2,9 @@
 
 **Date** : 2026-07-11
 **Statut** : Proposé
+
+> État du provider natif, risques de reprise après crash et règles de transition :
+> [ADR-044](044-scaleway-vm-metal-rules.md), revue du 2026-09-23.
 **Décideurs** : Équipe plateforme
 **Reliés à** : ADR-024 (autoscaling hybride), ADR-035 (pool EM statique — constats upstream)
 
@@ -42,7 +45,8 @@ Scaleway (comme AWS/Azure/AlibabaCloud), en court-circuitant CAPI.
     écrire** — le provider est structurellement plus simple qu'AWS.
   - Bootstrap : machineconfig worker Talos injecté en user_data (la
     plateforme Talos `scaleway` lit les métadonnées d'instance) ;
-    provider ID `scaleway://<instance-id>` pour l'appariement NodeClaim.
+    provider ID `scaleway://<zone>/<instance-id>` dans l'implémentation intégrée
+    (ADR-044), pour l'appariement NodeClaim.
 - **Phase 2 EM (warm pool piloté)** : le vrai déblocage du « >1 h →
   metal ». Des serveurs EM **pré-imagés Talos et éteints**
   (`modules/em-talos-bootstrap`) forment le pool ; « provisionner » =

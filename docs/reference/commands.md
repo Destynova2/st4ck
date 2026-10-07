@@ -89,8 +89,8 @@ Each stack has `-init`, `-apply`, and `-destroy` targets:
 | `make scaleway-bootstrap-vm` | Deploy the shared CI VM/private network required before cluster creation |
 | `make scaleway-up` | Full deployment for the current context: cluster + K8s stacks |
 | `make scaleway-down` | Full teardown: K8s stacks + cluster |
-| `make scaleway-teardown` | Down + destroy CI (keeps IAM + image) |
-| `make scaleway-nuke` | Destroy EVERYTHING (requires confirmation) |
+| `make scaleway-teardown BACKUP=/private/bundle` | Verify backup, down, migrate IAM/CI states locally, then attempt CI teardown; shared consumers and protected keys require review |
+| `make scaleway-nuke` | Disabled before mutation: legacy global teardown ignored errors and could lose backend state |
 | `make scaleway-ci-init` | Init CI VM stage |
 | `make scaleway-ci-apply` | Deploy Gitea + Woodpecker CI VM |
 | `make scaleway-ci-destroy` | Destroy CI VM |

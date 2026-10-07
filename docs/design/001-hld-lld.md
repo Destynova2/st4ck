@@ -849,10 +849,10 @@ The `config.hcl` ConfigMap defines four `initialize` blocks that run automatical
 | `kms-output/app-ca.pem` | App sub-CA cert | pki stack |
 | `kms-output/app-ca-key.pem` | App sub-CA private key | pki stack |
 | `kms-output/app-ca-chain.pem` | App CA + Root CA chain | pki stack |
-| `kms-output/vault-backend-token.txt` | Token for TF state access | All `tofu` commands (TF_HTTP_PASSWORD) |
-| `kms-output/cluster-secrets-token.txt` | Token for secret reads | identity + storage stacks (VAULT_TOKEN) |
+| `kms-output/approle-role-id.txt` and `approle-secret-id.txt` | AppRole state-backend credentials | `TF_HTTP_USERNAME` and `TF_HTTP_PASSWORD` |
+| `kms-output/vault-backend-token.txt` | Legacy backend token | Not used by maintained Make/CI paths |
 | `kms-output/transit-token.txt` | Token for auto-unseal | In-cluster OpenBao transit unseal |
-| `kms-output/root-token.txt` | OpenBao root token | `make state-snapshot` |
+| Bootstrap admin session | Short-lived userpass authentication | KMS snapshots; no exported root token |
 
 ---
 

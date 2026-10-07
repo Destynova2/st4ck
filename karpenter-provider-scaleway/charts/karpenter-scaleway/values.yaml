@@ -1,0 +1,16 @@
+controller:
+  enabled: false
+  replicas: 2
+image:
+  repository: ""
+  tag: ""
+clusterID: ""
+talosClusterName: ""
+credentialsSecret: ""
+bootstrapSecrets: []
+imagePullSecrets: []
+resources:
+  requests: {cpu: 500m, memory: 512Mi}
+  limits: {memory: 1Gi}
+nodeSelector: {}
+tolerations: []

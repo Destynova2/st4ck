@@ -20,10 +20,15 @@ variable "talos_version" {
   description = "Talos Linux version (e.g. v1.12.4)"
   type        = string
   default     = "v1.12.9"
+
+  validation {
+    condition     = can(regex("^v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$", var.talos_version))
+    error_message = "talos_version must be a v-prefixed release version (for example v1.12.9 or v1.13.0-alpha.1)."
+  }
 }
 
 variable "talos_schematic_id" {
-  description = "Talos Factory schematic ID (SHA256 of the schematic JSON). First 7 chars pinned into the image name — rebuilds with a new schematic produce a new image with a new name, so old + new coexist without collision."
+  description = "Talos Factory schematic ID (SHA256 of the schematic JSON). The full ID versions artifacts; the first 7 chars remain in image display names. Replacements do not retain old images managed by this state."
   type        = string
   default     = "613e1592b2da41ae5e265e8789429f22e121aab91cb4deb6bc3c0b6262961245"
 

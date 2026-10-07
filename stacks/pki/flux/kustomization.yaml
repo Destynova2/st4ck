@@ -1,33 +1,6 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# See stacks/cni/flux/kustomization.yaml for the configMapGenerator pattern
-# rationale (single source of truth for tofu + Flux).
+# Tofu owns the PKI controllers; Flux completes the application PKI setup.
 resources:
-  - namespace.yaml
-  - helmrepository.yaml
-  # Raft quorum protection through node drains (hardening 2026-07-12)
-  - helmrelease-openbao-infra.yaml
-  - helmrelease-openbao-app.yaml
-  - helmrelease-cert-manager.yaml
-  - cluster-issuer.yaml
-  # Phase F-bis-2 v3 — replaces terraform_data.bootstrap_openbao_pki
-  # (~180 LOC bash in stacks/pki/secrets.tf). Helm post-install hook
-  # mounts pki_int/, creates cluster-issuer + cilium-hubble roles,
-  # wires cert-manager K8s auth. Idempotent — safe to re-run on every
-  # upgrade. See ADR-032.
+  # Version the Job name when its immutable pod template changes (ADR-043).
   - job-bootstrap-openbao-pki.yaml
-configMapGenerator:
-  - name: openbao-infra-values
-    namespace: secrets
-    files:
-      - values.yaml=values-openbao-infra.yaml
-  - name: openbao-app-values
-    namespace: secrets
-    files:
-      - values.yaml=values-openbao-app.yaml
-  - name: cert-manager-values
-    namespace: cert-manager
-    files:
-      - values.yaml=values-cert-manager.yaml
-generatorOptions:
-  disableNameSuffixHash: true

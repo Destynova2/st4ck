@@ -32,3 +32,14 @@ output "region" {
   description = "Region where the image was built."
   value       = var.region
 }
+
+output "image_build" {
+  description = "Current builder upload contract; available after the targeted builder apply. Poll marker_url before importing snapshots."
+  value = {
+    bucket       = scaleway_object_bucket.talos_image.name
+    region       = var.region
+    artifact_key = local.artifact_key
+    marker_key   = local.marker_key
+    marker_url   = local.marker_url
+  }
+}

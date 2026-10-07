@@ -1,0 +1,22 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: prometheus-adapter
+  namespace: autoscaling
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: prometheus-adapter
+      version: "${prometheus_adapter_version}"
+      sourceRef:
+        kind: HelmRepository
+        name: autoscaling-prometheus-community
+        namespace: flux-system
+  install:
+    createNamespace: false
+  valuesFrom:
+    - kind: ConfigMap
+      name: prometheus-adapter-values
+      valuesKey: values.yaml
+      optional: false

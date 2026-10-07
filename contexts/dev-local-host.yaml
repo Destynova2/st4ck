@@ -1,0 +1,4 @@
+# Identity of the maintained libvirt deployment. Infra inputs are in envs/local.
+env: dev
+instance: local
+region: host

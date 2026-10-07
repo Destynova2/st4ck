@@ -1,0 +1,9 @@
+# KEDA — event-driven autoscaling.
+# Prometheus metrics server + operator both enabled so KEDA emits metrics
+# scraped by VictoriaMetrics' vmagent (see ADR-024).
+
+prometheus:
+  metricServer:
+    enabled: true
+  operator:
+    enabled: true

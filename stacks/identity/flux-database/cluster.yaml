@@ -1,0 +1,68 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: identity-pg
+  namespace: identity
+spec:
+  instances: 3
+  storage:
+    size: 2Gi
+  # WAL archive against Garage S3 — barman-cloud uses boto3 which
+  # defaults region_name to "us-east-1" when only AWS_REGION is set
+  # (it reads AWS_DEFAULT_REGION first). Garage signs requests with
+  # the bucket's actual region ("garage") and rejects sigv4 with
+  # 400 Bad Request on HeadBucket if regions don't match. Setting
+  # both env vars forces boto3 to use "garage" everywhere.
+  # Postmortem 2026-04-28.
+  env:
+    - name: AWS_REGION
+      value: "garage"
+    - name: AWS_DEFAULT_REGION
+      value: "garage"
+  # Phase 1b-3: external certs from cert-manager (OpenBao PKI).
+  # Replaces CNPG's self-managed PKI so every cert is auditable in
+  # the OpenBao audit log. Replication CN MUST be streaming_replica
+  # (enforced by the Certificate CR identity-pg-replication).
+  certificates:
+    serverCASecret: identity-pg-server-tls
+    serverTLSSecret: identity-pg-server-tls
+    clientCASecret: identity-pg-replication-tls
+    replicationTLSSecret: identity-pg-replication-tls
+  bootstrap:
+    initdb:
+      database: identity
+      owner: identity
+      # Schema-per-app isolation: kratos.* and hydra.* live in dedicated
+      # schemas instead of public.*. Recovery from a partial migration
+      # is now scoped to the affected app — DROP SCHEMA kratos CASCADE
+      # cleans Kratos without touching Hydra. See runbook W1.
+      postInitApplicationSQL:
+        - CREATE SCHEMA IF NOT EXISTS kratos AUTHORIZATION identity;
+        - CREATE SCHEMA IF NOT EXISTS hydra AUTHORIZATION identity;
+        - GRANT ALL ON SCHEMA kratos TO identity;
+        - GRANT ALL ON SCHEMA hydra TO identity;
+  backup:
+    barmanObjectStore:
+      destinationPath: "s3://cnpg-backups/identity-pg"
+      endpointURL: "http://garage.garage.svc.cluster.local:3900"
+      s3Credentials:
+        accessKeyId:
+          name: cnpg-s3-credentials
+          key: access_key
+        secretAccessKey:
+          name: cnpg-s3-credentials
+          key: secret_key
+    retentionPolicy: "14d"
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: identity-pg-daily
+  namespace: identity
+spec:
+  schedule: "0 0 2 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: identity-pg
+  method: barmanObjectStore
+  immediate: true

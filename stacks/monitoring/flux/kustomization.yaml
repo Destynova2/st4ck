@@ -11,7 +11,7 @@ resources:
   - helmrelease-vlogs-single.yaml
   - helmrelease-vlogs-collector.yaml
   - helmrelease-headlamp.yaml
-  - configmap-dashboard.yaml
+  - ../dashboards
   # ESO-managed grafana admin credentials (sourced from OpenBao Infra at
   # secret/monitoring/grafana, seeded by stacks/monitoring/main.tf).
   - external-secret-grafana.yaml

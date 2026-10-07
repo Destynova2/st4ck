@@ -1,0 +1,88 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: storage-secrets
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  sourceRef:
+    kind: GitRepository
+    name: management
+  path: ./stacks/storage/flux-secrets
+  prune: true
+  wait: true
+  timeout: 10m
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: platform-versions
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: storage-garage
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  dependsOn:
+    - name: storage-secrets
+  sourceRef:
+    kind: GitRepository
+    name: management
+  path: ./stacks/storage/flux-garage
+  prune: true
+  wait: true
+  timeout: 10m
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: platform-versions
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: storage-bootstrap
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  dependsOn:
+    - name: storage-garage
+  sourceRef:
+    kind: GitRepository
+    name: management
+  path: ./stacks/storage/flux-bootstrap
+  prune: true
+  wait: true
+  timeout: 25m
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: platform-versions
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: storage-backup
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  dependsOn:
+    - name: storage-bootstrap
+  sourceRef:
+    kind: GitRepository
+    name: management
+  path: ./stacks/storage/flux
+  prune: true
+  wait: true
+  timeout: 10m
+  postBuild:
+    substitute:
+      s3_url: http://garage.garage.svc.cluster.local:3900
+      velero_bucket: velero-backups
+    substituteFrom:
+      - kind: ConfigMap
+        name: platform-versions

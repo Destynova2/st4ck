@@ -31,6 +31,8 @@ kms-output/
 arbor/
 
 # Build artifacts
+.ci-tools/
+__pycache__/
 image-cache.oci
 *.ova
 *.iso

@@ -92,6 +92,23 @@ run "ci_vm_defaults" {
   }
 }
 
+run "bootstrap_template_is_rendered" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for placeholder in ["source_dir", "vault_backend_image", "podman_socket_path", "p_kms", "p_gitea_http"] :
+      !strcontains(local.pod_yaml, "$${${placeholder}}")
+    ])
+    error_message = "The CI pod must render every bootstrap template variable."
+  }
+
+  assert {
+    condition     = strcontains(local.pod_yaml, "hostPort: 3000") && strcontains(local.pod_yaml, "/run/podman/podman.sock")
+    error_message = "The CI manifest must use the VM ports and the real Podman socket."
+  }
+}
+
 # ─── Security group — deny by default ───────────────────────────────────
 
 run "security_group_deny_by_default" {

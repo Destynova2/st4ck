@@ -1,12 +1,9 @@
 # OpenBao App — application secrets
-# HA mode with Raft storage (3 replicas) + static seal + self-init + TLS
+# HA mode with Raft storage (3 replicas) + static seal + TLS
 #
-# Bootstrap with replicas: 1 — same canonical pattern as openbao-infra.
-# tofu's terraform_data.openbao_app_scale_to_ha sequences the 1→3 scale
-# AFTER pod-0 is established as quorum-of-1 leader. Without this, the
-# OpenBao 2.x race (issue #2274) lets all 3 pods self-init their own
-# 1-node Raft cluster (split-brain). Mirror of fix #5 for openbao-infra.
-# Postmortem 2026-04-29 (#11).
+# The first apply adds bootstrap-openbao-app.hcl and sets one replica.
+# The second removes self-init BEFORE scaling to three in Helm.
+# Merely delaying scale-out still splits the cluster (OpenBao #3652).
 
 global:
   tlsDisable: false
@@ -20,7 +17,7 @@ server:
 
   ha:
     enabled: true
-    replicas: 1
+    replicas: 3
     raft:
       enabled: true
       setNodeId: true
@@ -67,17 +64,7 @@ server:
           current_key    = "env://BAO_SEAL_KEY"
         }
 
-        # ─── Self-init: KV v2 for application secrets ────────────────
-        initialize "kv" {
-          request "mount-kv" {
-            operation = "update"
-            path      = "sys/mounts/secret"
-            data = {
-              type    = "kv"
-              options = { version = "2" }
-            }
-          }
-        }
+        # Initialization is appended only during the single-node bootstrap phase.
 
   extraSecretEnvironmentVars:
     - envName: BAO_SEAL_KEY

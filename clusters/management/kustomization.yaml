@@ -1,22 +1,18 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 # Applied by the root Flux Kustomization `management`
-# (stacks/flux-bootstrap/main.tf). ESO is tofu-owned (stacks/pki,
-# ADR-033) and installed before Flux bootstraps, so the
-# ClusterSecretStore in external-secrets/flux-config applies without
-# dry-run failures.
+# (stacks/flux-bootstrap/main.tf). ESO and its ClusterSecretStore are
+# Tofu-owned and available before Flux starts (ADR-033, ADR-043).
 resources:
   # Platform version registry — day-2 owner (day-1 applied by tofu in
   # stacks/flux-bootstrap so postBuild.substituteFrom resolves on the
   # very first reconcile). Version bumps = edit this one file.
   - versions-configmap.yaml
-  - ../../stacks/external-secrets/flux-config   # ClusterSecretStore (depends on ESO CRD)
-  - ../../stacks/cni/flux
   - ../../stacks/monitoring/flux
   - ../../stacks/pki/flux
-  - ../../stacks/identity/flux
+  - identity.yaml
   - ../../stacks/security/flux
-  - ../../stacks/storage/flux
+  - storage.yaml
 
   # Same two-phase split for zot (ADR-039 — replaced Harbor 2026-07-14).
   # storage-zot-eso → storage-zot — see file header for rationale.
@@ -24,6 +20,7 @@ resources:
   # Two-phase monitoring: vm-k8s-stack HR (phase 1) → VMRule flux-alerts
   # (phase 2) — replaces the CRD-count-gated tofu manifest (hanoi #6).
   - monitoring-vm.yaml
+  - autoscaling.yaml
   # Bug #41 (postmortem 2026-04-29) — Kyverno HR + ClusterPolicies split.
   # security-kyverno (HR) → security-kyverno-policies (ClusterPolicy +
   # cosign ExternalSecret). Same chicken/egg fix as the two above.

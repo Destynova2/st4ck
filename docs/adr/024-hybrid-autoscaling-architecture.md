@@ -2,6 +2,11 @@
 
 **Date** : 2026-03-20
 **Statut** : Propose
+
+> Révision 2026-09-23 : les promesses de consolidation VM → métal automatique
+> par les seuls poids/durées Karpenter sont remplacées par
+> [ADR-044](044-scaleway-vm-metal-rules.md). Ce document reste une étude
+> historique ; ses prix et comportements ne sont pas une configuration active.
 **Decideurs** : Equipe plateforme
 
 ---

@@ -1,0 +1,63 @@
+# Leaf Secrets contain ca.crt from the same OpenBao issuer as their TLS certificate.
+# ─── Server TLS cert (presented by Postgres to clients) ──────────────
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: identity-pg-server-tls
+  namespace: identity
+spec:
+  secretName: identity-pg-server-tls
+  duration: 2160h     # 90 days
+  renewBefore: 360h   # 15 days
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  commonName: identity-pg-rw.identity.svc
+  dnsNames:
+    - identity-pg-rw
+    - identity-pg-rw.identity
+    - identity-pg-rw.identity.svc
+    - identity-pg-rw.identity.svc.cluster.local
+    - identity-pg-r
+    - identity-pg-r.identity
+    - identity-pg-r.identity.svc
+    - identity-pg-r.identity.svc.cluster.local
+    - identity-pg-ro
+    - identity-pg-ro.identity
+    - identity-pg-ro.identity.svc
+    - identity-pg-ro.identity.svc.cluster.local
+    # Per-pod FQDNs (CNPG's headless service per instance) — needed
+    # for cert-validating connections to specific replicas during a
+    # switchover when the -rw service hasn't repointed yet.
+    - identity-pg-1.identity-pg-rw.identity.svc.cluster.local
+    - identity-pg-2.identity-pg-rw.identity.svc.cluster.local
+    - identity-pg-3.identity-pg-rw.identity.svc.cluster.local
+  usages:
+    - server auth
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer
+---
+# ─── Replication client cert (replica → primary auth) ────────────────
+# CN MUST be `streaming_replica` — this is the role name CNPG auto-
+# creates inside Postgres and binds to the replication identity via
+# pg_hba.conf cert-based auth. Anything else and the standby can't
+# attach. This is documented in cnpg.io/docs/cloudnative-pg-1.x/certificates.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: identity-pg-replication
+  namespace: identity
+spec:
+  secretName: identity-pg-replication-tls
+  duration: 2160h
+  renewBefore: 360h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  commonName: streaming_replica
+  usages:
+    - client auth
+  issuerRef:
+    name: internal-ca
+    kind: ClusterIssuer

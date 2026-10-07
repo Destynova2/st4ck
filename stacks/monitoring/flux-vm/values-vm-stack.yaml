@@ -1,5 +1,5 @@
 # victoria-metrics-k8s-stack — consolidated monitoring
-# Chart: 0.72.4 from https://victoriametrics.github.io/helm-charts
+# Chart version: clusters/management/versions-configmap.yaml
 # Replaces: vm-single + grafana + alertmanager + node-exporter + kube-state-metrics + alloy
 
 fullnameOverride: "vm"
@@ -177,6 +177,19 @@ grafana:
 # ─── Node Exporter (sub-chart, Talos-compatible) ───────────────────
 prometheus-node-exporter:
   enabled: true
+  # The resource-metrics adapter selects nodes by their Kubernetes name.
+  # The upstream scrape only supplies instance=<IP>:9100 by default.
+  vmScrape:
+    spec:
+      endpoints:
+        - port: metrics
+          relabelConfigs:
+            - source_labels: [__meta_kubernetes_pod_node_name]
+              target_label: node
+          metricRelabelConfigs:
+            - action: drop
+              regex: /var/lib/kubelet/pods.+
+              source_labels: [mountpoint]
   hostNetwork: true
   hostPID: true
   hostRootFsMount:

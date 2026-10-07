@@ -1,0 +1,64 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: scalewayvmnodeclasses.karpenter.scaleway.st4ck.io
+spec:
+  group: karpenter.scaleway.st4ck.io
+  names:
+    kind: ScalewayVMNodeClass
+    listKind: ScalewayVMNodeClassList
+    plural: scalewayvmnodeclasses
+    singular: scalewayvmnodeclass
+    categories: [karpenter]
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources: {status: {}}
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            apiVersion: {type: string}
+            kind: {type: string}
+            metadata: {type: object}
+            spec:
+              type: object
+              x-kubernetes-validations:
+                - rule: self == oldSelf
+                  message: Create a new NodeClass to change provisioning parameters.
+              required: [zone, projectID, imageID, privateNetworkID, securityGroupID, bootstrapSecret, instanceTypes, architecture, ephemeralDiskGiB]
+              properties:
+                zone: {type: string, minLength: 1, maxLength: 32}
+                projectID: {type: string, format: uuid}
+                imageID: {type: string, format: uuid}
+                privateNetworkID: {type: string, format: uuid}
+                securityGroupID: {type: string, format: uuid}
+                bootstrapSecret: {type: string, minLength: 1, maxLength: 253}
+                instanceTypes:
+                  type: array
+                  minItems: 1
+                  maxItems: 64
+                  x-kubernetes-list-type: set
+                  items: {type: string, minLength: 1, maxLength: 64}
+                architecture: {type: string, enum: [amd64, arm64]}
+                ephemeralDiskGiB: {type: integer, format: int64, minimum: 10, maximum: 10000}
+            status:
+              type: object
+              properties:
+                conditions:
+                  type: array
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [type]
+                  items:
+                    type: object
+                    required: [type, status, reason, message, lastTransitionTime]
+                    properties:
+                      type: {type: string}
+                      status: {type: string, enum: ["True", "False", Unknown]}
+                      reason: {type: string}
+                      message: {type: string}
+                      observedGeneration: {type: integer, format: int64}
+                      lastTransitionTime: {type: string, format: date-time}

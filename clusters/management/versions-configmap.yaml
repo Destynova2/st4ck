@@ -48,4 +48,4 @@ data:
   victoria_logs_collector_version: "0.3.6"
   victoria_logs_version: "0.13.8"
   vm_k8s_stack_version: "0.86.0"
-  vpa_version: "9.10.0"
+  vpa_version: "11.1.1"

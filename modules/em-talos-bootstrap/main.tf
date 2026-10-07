@@ -70,7 +70,14 @@ resource "scaleway_baremetal_server" "this" {
   # Ubuntu. Ignoring the drift keeps apply idempotent post-bootstrap.
   lifecycle {
     ignore_changes = [os]
+    precondition {
+      condition     = !var.karpenter_pool_enabled || var.kubelet_provider_id_enabled
+      error_message = "Karpenter EM requires the canonical provider-id; disabling it is not a supported fallback."
+    }
   }
+
+  # Validate bootstrap before creating or reflashing any hardware.
+  depends_on = [module.karpenter_config]
 }
 
 # ─── Step 1+2 — rescue + wipe the dummy OS ──────────────────────────────
@@ -155,13 +162,39 @@ resource "null_resource" "wipe_dummy_os" {
   depends_on = [scaleway_baremetal_server.this]
 }
 
+# ─── providerID contract (Karpenter EM pool) ────────────────────────────
+#
+# The derivation lives in the pure submodule modules/provider-id (single
+# source, exercised offline by tests/provider_id.tftest.hcl against the
+# same golden literal as the Go side). Contract: byte-identical to
+# pool.FormatProviderID — scaleway-em://<zone>/<server-id> (LLD C3).
+module "provider_id" {
+  source = "./modules/provider-id"
+
+  zone = var.zone
+  # The scaleway TF provider exposes zone-prefixed IDs ("fr-par-2/<uuid>");
+  # the submodule keeps only the bare UUID the baremetal API uses.
+  server_id = scaleway_baremetal_server.this.id
+}
+
+locals {
+  provider_id = module.provider_id.provider_id
+}
+
+module "karpenter_config" {
+  source         = "./modules/karpenter-config"
+  enabled        = var.karpenter_pool_enabled
+  machine_config = var.talos_machine_config
+}
+
 # ─── Step 3+4+5 — dd Talos + reboot normal + apply-config ───────────────
 
 resource "null_resource" "talos_install" {
   triggers = {
     server_id   = scaleway_baremetal_server.this.id
     image_url   = var.talos_image_url
-    config_hash = sha256(var.talos_machine_config)
+    config_hash = sha256(module.karpenter_config.machine_config)
+    provider_id = var.kubelet_provider_id_enabled ? local.provider_id : ""
   }
 
   # Stage 3 — dd Talos image onto the clean disk.
@@ -218,12 +251,16 @@ resource "null_resource" "talos_install" {
     EOT
   }
 
-  # Stage 5 — apply machine config (insecure mode, port 50000).
+  # Stage 5 — apply machine config (insecure mode, port 50000). When
+  # enabled, the kubelet provider-id is injected as a strategic-merge
+  # config patch so it is derived from the SAME zone/server-id values the
+  # Karpenter provider uses (never hand-written in the machine config).
   provisioner "local-exec" {
     interpreter = ["/bin/bash", "-c"]
     environment = {
       SERVER_IP      = scaleway_baremetal_server.this.ips[0].address
-      MACHINE_CONFIG = var.talos_machine_config
+      MACHINE_CONFIG = module.karpenter_config.machine_config
+      PROVIDER_ID    = var.kubelet_provider_id_enabled ? local.provider_id : ""
     }
     command = <<-EOT
       set -euo pipefail
@@ -231,8 +268,17 @@ resource "null_resource" "talos_install" {
       tmp=$(mktemp)
       trap 'rm -f "$tmp"' EXIT
       printf '%s' "$MACHINE_CONFIG" > "$tmp"
-      echo "[step 5] talosctl apply-config --insecure -n $SERVER_IP"
-      talosctl apply-config --insecure -n "$SERVER_IP" -f "$tmp"
+      if [ -n "$PROVIDER_ID" ]; then
+        echo "[step 5] talosctl apply-config --insecure -n $SERVER_IP (kubelet provider-id: $PROVIDER_ID)"
+        # A Talos validation error here means the kubelet arg is denylisted
+        # (M0 criterion #1). Karpenter pool mode must remain disabled until
+        # this contract is validated; there is no automatic CCM fallback.
+        talosctl apply-config --insecure -n "$SERVER_IP" -f "$tmp" \
+          --config-patch "{\"machine\":{\"kubelet\":{\"extraArgs\":{\"provider-id\":\"$PROVIDER_ID\"}}}}"
+      else
+        echo "[step 5] talosctl apply-config --insecure -n $SERVER_IP"
+        talosctl apply-config --insecure -n "$SERVER_IP" -f "$tmp"
+      fi
       echo "[step 5] config applied — Talos will reboot into normal mode"
     EOT
   }

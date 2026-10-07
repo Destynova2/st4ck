@@ -25,8 +25,8 @@ variable "gateway_api_channel" {
   default     = "experimental"
 
   validation {
-    condition     = contains(["standard", "experimental"], var.gateway_api_channel)
-    error_message = "gateway_api_channel must be either \"standard\" or \"experimental\"."
+    condition     = var.gateway_api_channel == "experimental"
+    error_message = "TLS passthrough requires TLSRoute from the experimental Gateway API bundle."
   }
 }
 

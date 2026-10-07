@@ -84,18 +84,17 @@ locals {
   )
 }
 
-# ─── Namespace ───────────────────────────────────────────────────────
-# stacks/kamaji also declares `kamaji-system`. Apply order is expected
-# to be: gateway-api  →  kamaji (kamaji uses `create_namespace = false`
-# and references this NS). If you re-apply both, the later one wins
-# ownership of labels, which is fine — they agree on `part-of: st4ck`.
-
-resource "kubernetes_namespace" "gateway" {
+# Kamaji owns its namespace; Gateway only consumes it.
+data "kubernetes_namespace" "gateway" {
   metadata {
     name = var.gateway_namespace
-    labels = merge(local.labels_common, {
-      "pod-security.kubernetes.io/enforce" = "baseline"
-    })
+  }
+}
+
+removed {
+  from = kubernetes_namespace.gateway
+  lifecycle {
+    destroy = false
   }
 }
 
@@ -198,7 +197,7 @@ resource "kubectl_manifest" "tenant_gateway" {
   wait              = true
 
   depends_on = [
-    kubernetes_namespace.gateway,
+    data.kubernetes_namespace.gateway,
     kubectl_manifest.gateway_api_crds,
   ]
 }

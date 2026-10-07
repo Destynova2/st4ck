@@ -24,6 +24,12 @@ variable "bootstrap_dir" {
   default     = "/tmp/platform-local"
 }
 
+variable "podman_socket_path" {
+  description = "Socket path on the Podman host for the Woodpecker container backend."
+  type        = string
+  default     = "/run/podman/podman.sock"
+}
+
 # Ports hote publies par le pod. Surchargables quand un autre projet
 # local occupe deja un port (ex.: make bootstrap VB_PORT=18080).
 variable "host_ports" {
@@ -133,10 +139,11 @@ resource "random_bytes" "seal_key" {
   # the full postmortem. This key encrypts the OpenBao raft data under
   # static-seal mode; rotating it without first wiping bao data destroys
   # every secret in the bootstrap pod's bao instance (including local
-  # tfstate via vault-backend). ignore_changes=all means even a `tofu
-  # taint` or version bump can't trigger an automatic rotation.
+  # tfstate via vault-backend). ignore_changes does NOT prevent taint or
+  # -replace; prevent_destroy and the preflight seal comparison protect it.
   lifecycle {
-    ignore_changes = all
+    ignore_changes  = all
+    prevent_destroy = true
   }
 }
 
@@ -152,40 +159,47 @@ resource "random_password" "agent_secret" {
 # ─── ConfigMap YAML ────────────────────────────────────────────────────
 
 locals {
-  configmap_yaml = <<-YAML
-    apiVersion: v1
-    kind: ConfigMap
-    metadata:
-      name: platform-config
-    data:
-      CI_GITEA_URL: "${local.gitea_url}"
-      CI_OAUTH_URL: "${local.oauth_url}"
-      CI_DOMAIN: "${var.domain}"
-      CI_WP_HOST: "${local.wp_host}"
-      CI_ADMIN: "${var.admin_user}"
-      CI_GIT_REPO_URL: "${var.git_repo_url}"
-      CI_SCW_PROJECT_ID: "${var.scw_project_id}"
-    ---
-    apiVersion: v1
-    kind: Secret
-    metadata:
-      name: platform-secrets
-    type: Opaque
-    stringData:
-      CI_PASSWORD: "${var.admin_password}"
-      CI_AGENT_SECRET: "${random_password.agent_secret.result}"
-      CI_SCW_IMAGE_ACCESS_KEY: "${var.scw_image_access_key}"
-      CI_SCW_IMAGE_SECRET_KEY: "${var.scw_image_secret_key}"
-      CI_SCW_CLUSTER_ACCESS_KEY: "${var.scw_cluster_access_key}"
-      CI_SCW_CLUSTER_SECRET_KEY: "${var.scw_cluster_secret_key}"
-    ---
-    apiVersion: v1
-    kind: ConfigMap
-    metadata:
-      name: bao-seal-key
-    binaryData:
-      unseal.key: ${random_bytes.seal_key.base64}
-  YAML
+  configmap_yaml = join("\n---\n", [
+    yamlencode({
+      apiVersion = "v1"
+      kind       = "ConfigMap"
+      metadata   = { name = "platform-config" }
+      data = {
+        CI_GITEA_URL      = local.gitea_url
+        CI_OAUTH_URL      = local.oauth_url
+        CI_DOMAIN         = var.domain
+        CI_WP_HOST        = local.wp_host
+        CI_ADMIN          = var.admin_user
+        CI_GIT_REPO_URL   = var.git_repo_url
+        CI_SCW_PROJECT_ID = var.scw_project_id
+      }
+    }),
+    yamlencode({
+      apiVersion = "v1"
+      kind       = "Secret"
+      metadata   = { name = "platform-secrets" }
+      type       = "Opaque"
+      stringData = {
+        CI_PASSWORD               = var.admin_password
+        CI_AGENT_SECRET           = random_password.agent_secret.result
+        CI_SCW_IMAGE_ACCESS_KEY   = var.scw_image_access_key
+        CI_SCW_IMAGE_SECRET_KEY   = var.scw_image_secret_key
+        CI_SCW_CLUSTER_ACCESS_KEY = var.scw_cluster_access_key
+        CI_SCW_CLUSTER_SECRET_KEY = var.scw_cluster_secret_key
+      }
+    }),
+    yamlencode({
+      apiVersion = "v1"
+      kind       = "ConfigMap"
+      metadata   = { name = "bao-seal-key" }
+      binaryData = { "unseal.key" = random_bytes.seal_key.base64 }
+    }),
+  ])
+
+  setup_source_sha = sha256(jsonencode({
+    for name in sort(tolist(fileset("${path.module}/tofu", "*.tf"))) :
+    name => filesha256("${path.module}/tofu/${name}")
+  }))
 
   # URLs derivees des ports (surcharge explicite possible via les vars)
   gitea_url = coalesce(var.gitea_url, "http://host.containers.internal:${var.host_ports.gitea_http}")
@@ -195,6 +209,7 @@ locals {
   pod_yaml = templatefile("${path.module}/platform-pod.yaml", {
     vault_backend_image = var.vault_backend_image
     source_dir          = var.source_dir
+    podman_socket_path  = var.podman_socket_path
     p_kms               = var.host_ports.kms
     p_kms_cluster       = var.host_ports.kms_cluster
     p_vb                = var.host_ports.vb
@@ -208,13 +223,18 @@ locals {
 # ─── Write generated files ─────────────────────────────────────────────
 
 resource "local_file" "configmap" {
-  content  = local.configmap_yaml
-  filename = "${var.bootstrap_dir}/configmap.yaml"
+  content              = local.configmap_yaml
+  filename             = "${var.bootstrap_dir}/configmap.yaml"
+  file_permission      = "0600"
+  directory_permission = "0700"
 }
 
 resource "local_file" "pod" {
-  content  = local.pod_yaml
-  filename = "${var.bootstrap_dir}/platform-pod.yaml"
+  # Secrets belong in the manifest, never in Podman's --configmap input.
+  content              = join("\n---\n", [local.configmap_yaml, local.pod_yaml])
+  filename             = "${var.bootstrap_dir}/platform-pod.yaml"
+  file_permission      = "0600"
+  directory_permission = "0700"
 }
 
 # ─── Launch pod ────────────────────────────────────────────────────────
@@ -225,21 +245,22 @@ resource "terraform_data" "platform_pod" {
   # triggers_replace (PAS input) : input change = update in-place et les
   # provisioners create-time ne rejouent JAMAIS — bug constate au E2E
   # local 2026-07-14 (pod jamais relance apres bootstrap-stop).
-  triggers_replace = [sha256(local.configmap_yaml)]
+  triggers_replace = [
+    sha256(local.configmap_yaml),
+    sha256(local.pod_yaml),
+    local.setup_source_sha,
+    filesha256("${path.module}/../scripts/bootstrap-preflight.py"),
+  ]
 
   provisioner "local-exec" {
     command = <<-EOT
-      podman pod rm -f platform 2>/dev/null || true
-      podman play kube ${local_file.pod.filename} \
-        --configmap=${local_file.configmap.filename} 2>&1 \
-        | grep -v 'executable file.*not found' || true
+      set -eu
+      python3 "${path.module}/../scripts/bootstrap-preflight.py" --replace --manifest "${local_file.pod.filename}"
     EOT
   }
 
-  provisioner "local-exec" {
-    when    = destroy
-    command = "podman pod rm -f platform 2>/dev/null || true"
-  }
+  # No destroy provisioner: replacement must validate/migrate the old sidecar
+  # before deleting it. Explicit teardown remains an operator action.
 }
 
 # ─── Outputs ───────────────────────────────────────────────────────────
@@ -299,6 +320,7 @@ output "status" {
       OpenBao:  http://127.0.0.1:8200
       Gitea:    http://${var.domain}:${var.host_ports.gitea_http} (${var.admin_user})
       WP:       ${local.wp_host}
+      CI:       activation separate; docs/how-to/woodpecker-activate.md
       State:    http://127.0.0.1:${var.host_ports.vb}
       KMS out:  podman volume inspect platform-kms-output
       Stop:     make bootstrap-stop

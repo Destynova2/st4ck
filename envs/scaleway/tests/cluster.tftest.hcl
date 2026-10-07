@@ -19,8 +19,7 @@
 # ║ OpenTofu release that supports injection of fully-computed blocks.       ║
 # ║                                                                          ║
 # ║ Mitigation: we run against the local-only setup fixture module, which    ║
-# ║ (a) stages kms-output/root-ca.pem so the real main.tf would plan IF it   ║
-# ║ didn't trip the block-injection bug, and (b) mirrors main.tf's root      ║
+# ║ stages an isolated fixture and mirrors main.tf's root                  ║
 # ║ variables so we can pin the Tier-3 cluster contract (CP count, instance  ║
 # ║ types, ephemeral disk size, DNS default). Hermetic — no cloud calls.     ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
@@ -44,8 +43,8 @@ run "stage_fixture_and_pin_cp_count" {
   }
 
   assert {
-    condition     = null_resource.root_ca_fixture.id != ""
-    error_message = "kms-output/root-ca.pem fixture must be staged before planning the real cluster"
+    condition     = local_file.root_ca_fixture.id != ""
+    error_message = "The isolated certificate fixture must exist during the test"
   }
 }
 
@@ -112,16 +111,14 @@ run "pin_talos_and_k8s_versions" {
   }
 }
 
-run "fixture_points_at_repo_root_kms_output" {
+run "fixture_is_isolated_from_deployment_credentials" {
   command = apply
   module {
     source = "./tests/setup"
   }
 
-  # The setup module computes `${path.root}/../../../../kms-output/root-ca.pem`.
-  # We can't pin the absolute path (cwd varies) but we can assert on the suffix.
   assert {
-    condition     = endswith(output.fixture_path, "/kms-output/root-ca.pem")
-    error_message = "Fixture must land at kms-output/root-ca.pem (matches main.tf file() path)"
+    condition     = endswith(output.fixture_path, "/tests/setup/.fixtures/root-ca.pem") && !strcontains(output.fixture_path, "kms-output")
+    error_message = "Tests must never overwrite deployment certificates in kms-output"
   }
 }

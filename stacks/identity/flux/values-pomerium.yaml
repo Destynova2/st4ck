@@ -7,8 +7,9 @@
 # certs Pomerium can never validate. Internal cluster service URL has
 # matching SANs in the cert and stops the OCSP stapling warning.
 config:
-  sharedSecret: "${shared_secret}"
-  cookieSecret: "${cookie_secret}"
+  # Required valuesFrom Secret supplies these values.
+  sharedSecret: ""
+  cookieSecret: ""
   rootDomain: identity.svc.cluster.local
 
 authenticate:
@@ -22,7 +23,7 @@ authenticate:
     provider: oidc
     providerUrl: https://hydra-public.identity.svc:4444/
     clientID: pomerium
-    clientSecret: ${client_secret}
+    clientSecret: ""
 
 proxy:
   replicaCount: 1
