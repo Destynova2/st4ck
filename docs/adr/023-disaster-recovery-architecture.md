@@ -1,5 +1,12 @@
 # ADR-023 : Architecture Disaster Recovery — Chaine de sauvegarde Garage multi-tiers
 
+> Correction opérationnelle du 27 septembre 2026 : cet ADR décrit une cible,
+> pas le parcours de reprise disponible. Raft ne contient ni l'état externe
+> du bootstrap, ni l'état local du setup, ni la clé de scellement. Les mentions
+> « tous les états » et de reprise complète automatique ci-dessous sont
+> remplacées par le [guide de reprise maintenu](../how-to/disaster-recovery.md).
+> Aucun RTO global n'est établi par les tests actuels.
+
 **Date** : 2026-03-20
 **Statut** : Propose
 **Decideurs** : Equipe plateforme
@@ -171,7 +178,7 @@ Ce Garage mono-node (`replication_factor = 1`) recoit les replications du cluste
 |--------|------------------------|
 | Kubeconfig | `tofu output -raw kubeconfig` apres infra-apply |
 | Certificats TLS (cert-manager) | Reemis automatiquement par cert-manager + ClusterIssuer |
-| Secrets applicatifs (random_id) | Regeneres par `tofu apply` (dans le tfstate restaure) |
+| Secrets applicatifs (Terraform entropy) | Regeneres par `tofu apply`, seedes dans OpenBao Infra, puis synchronises par ESO |
 | Machine configs Talos | Regeneres par le module `talos-cluster` |
 | Cilium, monitoring, security configs | Regeneres par `make k8s-up` (idempotent) |
 | OIDC client registration | Job `hydra-oidc-register` re-execute au deploy |

@@ -31,8 +31,8 @@ hydra:
       logout: http://127.0.0.1:4455/logout
 
     secrets:
-      system:
-        - ${system_secret}
+      # Required valuesFrom Secret supplies the system secret.
+      system: []
 
     oidc:
       subject_identifiers:

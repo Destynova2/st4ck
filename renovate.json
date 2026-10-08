@@ -1,0 +1,112 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "automerge": false,
+  "dependencyDashboard": true,
+  "prConcurrentLimit": 3,
+  "prHourlyLimit": 2,
+  "packageRules": [
+    {
+      "description": "Review the Velero app/plugin compatibility matrix before merging; grouping alone does not enforce compatibility.",
+      "matchDatasources": ["helm", "docker"],
+      "matchPackageNames": ["velero", "velero/velero-plugin-for-aws"],
+      "groupName": "Velero and AWS plugin",
+      "groupSlug": "velero-aws",
+      "separateMajorMinor": false,
+      "automerge": false,
+      "prBodyNotes": ["Validate the chart appVersion against the AWS plugin compatibility matrix: https://github.com/vmware-tanzu/velero-plugin-for-aws#compatibility"]
+    },
+    {
+      "description": "Flux substitutions are updated at their source in the platform version registry.",
+      "matchManagers": ["flux"],
+      "matchCurrentValue": "/^\\$\\{/",
+      "enabled": false
+    }
+  ],
+  "enabledManagers": [
+    "custom.jsonata",
+    "dockerfile",
+    "flux",
+    "gomod",
+    "helm-values",
+    "helmv3",
+    "kubernetes",
+    "terraform",
+    "woodpecker"
+  ],
+  "ignorePaths": [
+    "**/.terraform/**",
+    "**/node_modules/**",
+    "**/vendor/**",
+    "**/tests/**",
+    "**/testdata/**",
+    "docs/**",
+    "kms-output/**",
+    "hauler-manifest.yaml",
+    "orca.yaml",
+    "stacks/kamaji/chart/**",
+    "stacks/storage/chart/**"
+  ],
+  "flux": {
+    "managerFilePatterns": ["/^stacks/[^/]+/flux[^/]*/.*\\.ya?ml$/"]
+  },
+  "helm-values": {
+    "managerFilePatterns": ["/^stacks/[^/]+/(?:flux[^/]*/)?values[^/]*\\.ya?ml$/"]
+  },
+  "kubernetes": {
+    "managerFilePatterns": [
+      "/^bootstrap/platform-pod\\.yaml$/",
+      "/^stacks/[^/]+/flux[^/]*/.*\\.ya?ml$/"
+    ]
+  },
+  "customManagers": [
+    {
+      "customType": "jsonata",
+      "description": "Platform registry: chart versions, OCI charts and CAPI/Gateway releases. Vendored Garage/Kamaji and retired Karpenter pins remain manual (see the Renovate audit).",
+      "fileFormat": "yaml",
+      "managerFilePatterns": ["/^clusters/management/versions-configmap\\.yaml$/"],
+      "matchStrings": [
+        "data.{\"depType\":\"capi_bootstrap_talos_version\",\"depName\":\"siderolabs/cluster-api-bootstrap-provider-talos\",\"currentValue\":capi_bootstrap_talos_version,\"datasource\":\"github-releases\"}",
+        "data.{\"depType\":\"capi_controlplane_kamaji_version\",\"depName\":\"clastix/cluster-api-control-plane-provider-kamaji\",\"currentValue\":capi_controlplane_kamaji_version,\"datasource\":\"github-releases\"}",
+        "data.{\"depType\":\"capi_core_version\",\"depName\":\"kubernetes-sigs/cluster-api\",\"currentValue\":capi_core_version,\"datasource\":\"github-releases\"}",
+        "data.{\"depType\":\"capi_infrastructure_scaleway_version\",\"depName\":\"scaleway/cluster-api-provider-scaleway\",\"currentValue\":capi_infrastructure_scaleway_version,\"datasource\":\"github-releases\"}",
+        "data.{\"depType\":\"capi_operator_version\",\"depName\":\"registry-1.docker.io/kubernetesio/cluster-api-operator\",\"currentValue\":capi_operator_version,\"datasource\":\"docker\"}",
+        "data.{\"depType\":\"cert_manager_version\",\"depName\":\"cert-manager\",\"currentValue\":cert_manager_version,\"datasource\":\"helm\",\"registryUrl\":\"https://charts.jetstack.io\"}",
+        "data.{\"depType\":\"cilium_version\",\"depName\":\"cilium\",\"currentValue\":cilium_version,\"datasource\":\"helm\",\"registryUrl\":\"https://helm.cilium.io\"}",
+        "data.{\"depType\":\"cnpg_version\",\"depName\":\"cloudnative-pg\",\"currentValue\":cnpg_version,\"datasource\":\"helm\",\"registryUrl\":\"https://cloudnative-pg.github.io/charts\"}",
+        "data.{\"depType\":\"etcd_operator_version\",\"depName\":\"ghcr.io/aenix-io/charts/etcd-operator\",\"currentValue\":etcd_operator_version,\"datasource\":\"docker\"}",
+        "data.{\"depType\":\"external_secrets_version\",\"depName\":\"external-secrets\",\"currentValue\":external_secrets_version,\"datasource\":\"helm\",\"registryUrl\":\"https://charts.external-secrets.io\"}",
+        "data.{\"depType\":\"flux_version\",\"depName\":\"flux2\",\"currentValue\":flux_version,\"datasource\":\"helm\",\"registryUrl\":\"https://fluxcd-community.github.io/helm-charts\"}",
+        "data.{\"depType\":\"gateway_api_version\",\"depName\":\"kubernetes-sigs/gateway-api\",\"currentValue\":gateway_api_version,\"datasource\":\"github-releases\"}",
+        "data.{\"depType\":\"headlamp_version\",\"depName\":\"headlamp\",\"currentValue\":headlamp_version,\"datasource\":\"helm\",\"registryUrl\":\"https://kubernetes-sigs.github.io/headlamp/\"}",
+        "data.{\"depType\":\"hydra_version\",\"depName\":\"hydra\",\"currentValue\":hydra_version,\"datasource\":\"helm\",\"registryUrl\":\"https://k8s.ory.sh/helm/charts\"}",
+        "data.{\"depType\":\"keda_version\",\"depName\":\"keda\",\"currentValue\":keda_version,\"datasource\":\"helm\",\"registryUrl\":\"https://kedacore.github.io/charts\"}",
+        "data.{\"depType\":\"kubescape_version\",\"depName\":\"kubescape-operator\",\"currentValue\":kubescape_version,\"datasource\":\"helm\",\"registryUrl\":\"https://kubescape.github.io/helm-charts\"}",
+        "data.{\"depType\":\"kratos_version\",\"depName\":\"kratos\",\"currentValue\":kratos_version,\"datasource\":\"helm\",\"registryUrl\":\"https://k8s.ory.sh/helm/charts\"}",
+        "data.{\"depType\":\"kyverno_version\",\"depName\":\"kyverno\",\"currentValue\":kyverno_version,\"datasource\":\"helm\",\"registryUrl\":\"https://kyverno.github.io/kyverno\"}",
+        "data.{\"depType\":\"local_path_provisioner_version\",\"depName\":\"local-path-provisioner\",\"currentValue\":local_path_provisioner_version,\"datasource\":\"helm\",\"registryUrl\":\"https://charts.containeroo.ch\"}",
+        "data.{\"depType\":\"openbao_version\",\"depName\":\"openbao\",\"currentValue\":openbao_version,\"datasource\":\"helm\",\"registryUrl\":\"https://openbao.github.io/openbao-helm\"}",
+        "data.{\"depType\":\"pomerium_version\",\"depName\":\"pomerium\",\"currentValue\":pomerium_version,\"datasource\":\"helm\",\"registryUrl\":\"https://helm.pomerium.io\"}",
+        "data.{\"depType\":\"prometheus_adapter_version\",\"depName\":\"prometheus-adapter\",\"currentValue\":prometheus_adapter_version,\"datasource\":\"helm\",\"registryUrl\":\"https://prometheus-community.github.io/helm-charts\"}",
+        "data.{\"depType\":\"tetragon_version\",\"depName\":\"tetragon\",\"currentValue\":tetragon_version,\"datasource\":\"helm\",\"registryUrl\":\"https://helm.cilium.io\"}",
+        "data.{\"depType\":\"trivy_operator_version\",\"depName\":\"trivy-operator\",\"currentValue\":trivy_operator_version,\"datasource\":\"helm\",\"registryUrl\":\"https://aquasecurity.github.io/helm-charts\"}",
+        "data.{\"depType\":\"zot_version\",\"depName\":\"zot\",\"currentValue\":zot_version,\"datasource\":\"helm\",\"registryUrl\":\"https://zotregistry.dev/helm-charts\"}",
+        "data.{\"depType\":\"velero_version\",\"depName\":\"velero\",\"currentValue\":velero_version,\"datasource\":\"helm\",\"registryUrl\":\"https://vmware-tanzu.github.io/helm-charts\"}",
+        "data.{\"depType\":\"victoria_logs_collector_version\",\"depName\":\"victoria-logs-collector\",\"currentValue\":victoria_logs_collector_version,\"datasource\":\"helm\",\"registryUrl\":\"https://victoriametrics.github.io/helm-charts\"}",
+        "data.{\"depType\":\"victoria_logs_version\",\"depName\":\"victoria-logs-single\",\"currentValue\":victoria_logs_version,\"datasource\":\"helm\",\"registryUrl\":\"https://victoriametrics.github.io/helm-charts\"}",
+        "data.{\"depType\":\"vm_k8s_stack_version\",\"depName\":\"victoria-metrics-k8s-stack\",\"currentValue\":vm_k8s_stack_version,\"datasource\":\"helm\",\"registryUrl\":\"https://victoriametrics.github.io/helm-charts\"}",
+        "data.{\"depType\":\"vpa_version\",\"depName\":\"vertical-pod-autoscaler\",\"currentValue\":vpa_version,\"datasource\":\"helm\",\"registryUrl\":\"https://cowboysysop.github.io/charts\"}"
+      ]
+    },
+    {
+      "customType": "jsonata",
+      "description": "Talos and Kubernetes defaults and explicit context overrides (not chart versions).",
+      "fileFormat": "yaml",
+      "managerFilePatterns": ["/^contexts/[^/]+\\.ya?ml$/"],
+      "matchStrings": [
+        "$[talos_version].{\"depType\":\"talos_version\",\"depName\":\"siderolabs/talos\",\"currentValue\":talos_version,\"datasource\":\"github-releases\"}",
+        "$[k8s_version].{\"depType\":\"k8s_version\",\"depName\":\"kubernetes/kubernetes\",\"currentValue\":k8s_version,\"datasource\":\"github-releases\",\"extractVersion\":\"^v(?<version>.+)$\"}"
+      ]
+    }
+  ]
+}

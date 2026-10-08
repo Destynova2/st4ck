@@ -20,7 +20,7 @@
 | OpenBao | Linux Foundation / OpenSSF | MPL-2.0 | **Moyen** | 12 CVEs en 2025 dont CVSS 9.1 (RCE). Jeune projet, monitoring requis |
 | Flux2 | fluxcd-community | Apache-2.0 | **Moyen** | Chart communautaire best-effort, pas le chart officiel Flux |
 | Velero | VMware / Broadcom | Apache-2.0 | **Faible** | Risque relicensing Broadcom (precedent HashiCorp) |
-| local-path-provisioner | containeroo | Non liste | **Moyen-Haut** | 7 stars, chart non-officiel. Envisager le chart upstream Rancher |
+| local-path-provisioner | containeroo | Non liste | **Moyen-Haut** | Chart communautaire installe par le stack CNI ; aucun chart vendore par Storage |
 
 ## Images Container (bootstrap)
 
@@ -48,9 +48,9 @@ Une compromission de l'image = exfiltration de tous les secrets.
 
 ### 2. local-path-provisioner (containeroo) — MOYEN-HAUT
 
-Chart communautaire non-officiel wrapping le projet Rancher. 7 stars, bus-factor 1.
+Le chart communautaire `containeroo/local-path-provisioner` reste installe par le stack CNI pour fournir la StorageClass par defaut avant PKI. Le chart local vendore du stack Storage a ete supprime et ne doit pas etre regenere.
 
-**Action recommandee** : migrer vers le chart upstream `rancher/local-path-provisioner`.
+**Action recommandee** : migrer ulterieurement vers le chart upstream `rancher/local-path-provisioner` si un depot Helm officiel stable est disponible.
 
 ### 3. OpenBao — MOYEN
 

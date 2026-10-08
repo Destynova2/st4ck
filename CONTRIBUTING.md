@@ -34,7 +34,7 @@
 
 - Architecture Decision Records live in `docs/adr/`
 - Numbered sequentially: `NNN-short-description.md`
-- Written in French (project convention)
+- Top-level onboarding docs are English; ADRs may be French or English, but keep each ADR internally consistent.
 
 ## Testing
 
@@ -42,7 +42,7 @@
 
 ```bash
 make scaleway-test          # All Scaleway tofu tests
-make k8s-cni-test           # CNI stack test
+make validate               # Validate generated configs + tofu stacks
 ```
 
 ### Manual verification

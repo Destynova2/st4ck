@@ -16,7 +16,7 @@ variable "kms_output_dir" {
 variable "openbao_version" {
   description = "OpenBao Helm chart version"
   type        = string
-  default     = "0.26.1"
+  default     = null
 }
 
 # ─── cert-manager ────────────────────────────────────────────────────
@@ -24,7 +24,7 @@ variable "openbao_version" {
 variable "cert_manager_version" {
   description = "cert-manager Helm chart version"
   type        = string
-  default     = "v1.19.4"
+  default     = null
 }
 
 # ─── external-secrets-operator ───────────────────────────────────────
@@ -32,5 +32,5 @@ variable "cert_manager_version" {
 variable "external_secrets_version" {
   description = "external-secrets-operator Helm chart version"
   type        = string
-  default     = "0.20.4"
+  default     = null
 }

@@ -1,0 +1,13 @@
+{
+  "maxPods": 110,
+  "kubeReserved": {"cpu": "500m", "memory": "1Gi"},
+  "evictionHard": {
+    "memory.available": "100Mi",
+    "nodefs.available": "10%",
+    "imagefs.available": "15%",
+    "nodefs.inodesFree": "5%",
+    "imagefs.inodesFree": "5%"
+  },
+  "mergeDefaultEvictionSettings": false,
+  "registerWithTaints": [{"key": "karpenter.sh/unregistered", "effect": "NoExecute"}]
+}

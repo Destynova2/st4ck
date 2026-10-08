@@ -19,24 +19,17 @@ terraform {
 # Secrets from k8s-pki stack (generated + seeded into OpenBao Infra)
 # ═══════════════════════════════════════════════════════════════════════
 
-data "terraform_remote_state" "pki" {
-  backend = "http"
-  config = {
-    address  = var.pki_state_address
-    username = var.pki_state_username
-    password = var.pki_state_password
-  }
+# Version pins come from the platform version registry (single source of
+# truth shared with Flux postBuild.substituteFrom and the Hauler manifest):
+# clusters/management/versions-configmap.yaml. Variables stay as optional
+# overrides (default null).
+locals {
+  platform_versions = yamldecode(file("${path.module}/../../clusters/management/versions-configmap.yaml")).data
 }
 
-locals {
-  secrets = {
-    hydra_system_secret    = data.terraform_remote_state.pki.outputs.hydra_system_secret
-    pomerium_shared_secret = data.terraform_remote_state.pki.outputs.pomerium_shared_secret
-    pomerium_cookie_secret = data.terraform_remote_state.pki.outputs.pomerium_cookie_secret
-    pomerium_client_secret = data.terraform_remote_state.pki.outputs.pomerium_client_secret
-    oidc_client_secret     = data.terraform_remote_state.pki.outputs.oidc_client_secret
-  }
-}
+# The pki remote_state read died with ADR-028 (secrets flow through
+# OpenBao/ESO) — removed 2026-07-12 (hanoi pass 2 #5): it forced
+# pki_state_password on every apply and broke naked `tofu apply`.
 
 provider "kubernetes" {
   config_path = var.kubeconfig_path
@@ -53,201 +46,46 @@ provider "kubectl" {
   load_config_file = true
 }
 
-# ─── Identity Namespace ────────────────────────────────────────────
-
-resource "kubernetes_namespace" "identity" {
-  metadata {
-    name = "identity"
-    labels = {
-      "pod-security.kubernetes.io/enforce" = "baseline"
-    }
+# Flux owns CNPG, certificates and identity workloads (ADR-043).
+# Preserve existing objects while relinquishing the historical state.
+removed {
+  from = kubernetes_namespace.identity
+  lifecycle {
+    destroy = false
   }
 }
 
-# ─── CloudNativePG Operator ──────────────────────────────────────
-
-resource "helm_release" "cnpg_operator" {
-  name             = "cnpg"
-  repository       = "https://cloudnative-pg.github.io/charts"
-  chart            = "cloudnative-pg"
-  version          = var.cnpg_version
-  namespace        = "identity"
-  create_namespace = false
-
-  depends_on = [kubernetes_namespace.identity]
+removed {
+  from = helm_release.cnpg_operator
+  lifecycle {
+    destroy = false
+  }
 }
 
-# ─── CNPG external certificates (Phase 1b-3) ───────────────────────
-#
-# Apply 4 Certificate CRs (server-ca, server, client-ca, replication)
-# BEFORE the Cluster CR so cert-manager has time to materialize the
-# Secrets. Without this ordering, CNPG would observe missing Secrets,
-# log a confused error and fall back to its self-managed PKI for the
-# initial bootstrap (then never switch).
-data "kubectl_file_documents" "identity_pg_certs" {
-  content = file("${path.module}/flux/identity-pg-certs.yaml")
+removed {
+  from = kubectl_manifest.identity_pg_certs
+  lifecycle {
+    destroy = false
+  }
 }
 
-resource "kubectl_manifest" "identity_pg_certs" {
-  for_each = data.kubectl_file_documents.identity_pg_certs.manifests
-
-  yaml_body = each.value
-
-  depends_on = [kubernetes_namespace.identity]
+removed {
+  from = kubectl_manifest.identity_pg_cluster
+  lifecycle {
+    destroy = false
+  }
 }
 
-# ─── PostgreSQL Cluster (CNPG CRD) ──────────────────────────────
-
-resource "kubectl_manifest" "identity_pg_cluster" {
-  yaml_body = <<-YAML
-    apiVersion: postgresql.cnpg.io/v1
-    kind: Cluster
-    metadata:
-      name: identity-pg
-      namespace: identity
-    spec:
-      instances: 3
-      storage:
-        size: 2Gi
-      # WAL archive against Garage S3 — barman-cloud uses boto3 which
-      # defaults region_name to "us-east-1" when only AWS_REGION is set
-      # (it reads AWS_DEFAULT_REGION first). Garage signs requests with
-      # the bucket's actual region ("garage") and rejects sigv4 with
-      # 400 Bad Request on HeadBucket if regions don't match. Setting
-      # both env vars forces boto3 to use "garage" everywhere.
-      # Postmortem 2026-04-28.
-      env:
-        - name: AWS_REGION
-          value: "garage"
-        - name: AWS_DEFAULT_REGION
-          value: "garage"
-      # Phase 1b-3: external certs from cert-manager (OpenBao PKI).
-      # Replaces CNPG's self-managed PKI so every cert is auditable in
-      # the OpenBao audit log. Replication CN MUST be streaming_replica
-      # (enforced by the Certificate CR identity-pg-replication).
-      certificates:
-        serverCASecret: identity-pg-server-ca-tls
-        serverTLSSecret: identity-pg-server-tls
-        clientCASecret: identity-pg-client-ca-tls
-        replicationTLSSecret: identity-pg-replication-tls
-      bootstrap:
-        initdb:
-          database: identity
-          owner: identity
-          # Schema-per-app isolation: kratos.* and hydra.* live in dedicated
-          # schemas instead of public.*. Recovery from a partial migration
-          # is now scoped to the affected app — DROP SCHEMA kratos CASCADE
-          # cleans Kratos without touching Hydra. See runbook W1.
-          postInitApplicationSQL:
-            - CREATE SCHEMA IF NOT EXISTS kratos AUTHORIZATION identity;
-            - CREATE SCHEMA IF NOT EXISTS hydra AUTHORIZATION identity;
-            - GRANT ALL ON SCHEMA kratos TO identity;
-            - GRANT ALL ON SCHEMA hydra TO identity;
-      backup:
-        barmanObjectStore:
-          destinationPath: "s3://cnpg-backups/identity-pg"
-          endpointURL: "http://garage.garage.svc.cluster.local:3900"
-          s3Credentials:
-            accessKeyId:
-              name: cnpg-s3-credentials
-              key: access_key
-            secretAccessKey:
-              name: cnpg-s3-credentials
-              key: secret_key
-        retentionPolicy: "14d"
-  YAML
-
-  depends_on = [
-    helm_release.cnpg_operator,
-    # All 4 cert Secrets must exist before CNPG inspects spec.certificates
-    # — otherwise CNPG falls back to self-PKI and never recovers.
-    kubectl_manifest.identity_pg_certs,
-  ]
+removed {
+  from = kubectl_manifest.identity_pg_scheduled_backup
+  lifecycle {
+    destroy = false
+  }
 }
 
-# ─── CNPG ScheduledBackup (daily at 02:00 UTC) ──────────────────
-
-resource "kubectl_manifest" "identity_pg_scheduled_backup" {
-  yaml_body = <<-YAML
-    apiVersion: postgresql.cnpg.io/v1
-    kind: ScheduledBackup
-    metadata:
-      name: identity-pg-daily
-      namespace: identity
-    spec:
-      schedule: "0 2 * * *"
-      backupOwnerReference: self
-      cluster:
-        name: identity-pg
-      method: barmanObjectStore
-      immediate: true
-  YAML
-
-  depends_on = [kubectl_manifest.identity_pg_cluster]
+removed {
+  from = kubectl_manifest.hydra_tls_cert
+  lifecycle {
+    destroy = false
+  }
 }
-
-# DSN composition formerly happened here (data.kubernetes_secret.pg_app +
-# locals { pg_dsn_kratos / pg_dsn_hydra }). Now lives in ESO ExternalSecret
-# templates (stacks/identity/flux/external-secrets.yaml) — single source of
-# truth, rotates with the CNPG password without re-applying tofu.
-
-# Kratos → Flux owner (helmrelease-kratos.yaml + values-kratos.yaml ConfigMap +
-# kratos-secrets ExternalSecret which provides the DSN via ESO templating).
-# ADR-028 — no double-apply.
-
-# ─── Hydra TLS certificate (for apiServer OIDC) ───────────────────
-# Requires: ClusterIssuer "internal-ca" from k8s-pki stack
-
-resource "kubectl_manifest" "hydra_tls_cert" {
-  yaml_body = <<-YAML
-    apiVersion: cert-manager.io/v1
-    kind: Certificate
-    metadata:
-      name: hydra-tls
-      namespace: identity
-    spec:
-      secretName: hydra-tls
-      issuerRef:
-        name: internal-ca
-        kind: ClusterIssuer
-      # PKI role pki_int/cluster-issuer requires CN (require_cn defaults true).
-      commonName: hydra-public.identity.svc.cluster.local
-      dnsNames:
-        - hydra-public
-        - hydra-public.identity
-        - hydra-public.identity.svc
-        - hydra-public.identity.svc.cluster.local
-      # ECDSA matches the OpenBao pki_int/roles/cluster-issuer key_type=ec
-      # constraint (see stacks/pki/secrets.tf). Default cert-manager
-      # algorithm is RSA-2048 → role rejects with "requires keys of type ec".
-      privateKey:
-        algorithm: ECDSA
-        size: 256
-  YAML
-
-  depends_on = [kubernetes_namespace.identity]
-}
-
-# Hydra → Flux owner (helmrelease-hydra.yaml + values-hydra.yaml ConfigMap +
-# hydra-secrets ExternalSecret providing DSN and system_secret via ESO).
-# ADR-028 — no double-apply.
-
-# ─── OIDC client registration (kubernetes → Hydra) ────────────────
-#
-# Bug #35 (Phase F-bis-2, postmortem 2026-04-30): the registration Job used
-# to live here as kubernetes_job_v1.hydra_oidc_client. Since ADR-028 moved
-# Hydra ownership to Flux, the admin endpoint only exists AFTER Flux has
-# reconciled, which happens AFTER `make k8s-identity-apply` completes. The
-# Job then sat for 10 min and timed out, blocking every fresh `make
-# scaleway-up`.
-#
-# Solution: registration is now a post-Flux step. The script lives at
-# `scripts/register-hydra-oidc-client.sh` and is wired through the
-# `make oidc-register` target. The OIDC client secret is exposed as the
-# `oidc_client_secret` output (see outputs.tf). A future Phase F-bis-3
-# will replace this with Hydra Maester (OAuth2Client CRD).
-
-# Pomerium → Flux owner (ADR-028 wave 2). The 3 secrets (client/shared/
-# cookie) come from the pomerium-secrets ExternalSecret which renders a
-# values.yaml fragment that overrides the ${...} placeholders left in
-# the ConfigMap-loaded values-pomerium.yaml. ESO is the single source.

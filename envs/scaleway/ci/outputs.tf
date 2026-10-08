@@ -64,6 +64,11 @@ output "vault_backend_url" {
   value       = "http://${scaleway_instance_ip.ci.address}:8080"
 }
 
+output "gitea_admin_user" {
+  description = "Configured Gitea admin and management repository owner."
+  value       = var.gitea_admin_user
+}
+
 output "gitea_admin_password" {
   description = "Generated Gitea admin password."
   value       = random_password.gitea_admin.result

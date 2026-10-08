@@ -1,313 +1,233 @@
 {
   "version": 1,
-  "generated_at": "2026-04-23T00:00:00Z",
-  "scope": "/Users/ludwig/workspace/st4ck (Talos multi-env infra: Make + OpenTofu + Flux + Woodpecker CI)",
-  "tier": "M",
-  "language": "english",
+  "generated_at": "2026-07-12T00:00:00Z",
+  "scope": "/Users/ludwig/workspace/st4ck",
+  "tier": "XL",
   "graph": {
-    "nodes": 47,
-    "edges": 64,
-    "density": 0.030,
-    "max_chain_depth": 9,
-    "node_taxonomy": {
-      "tf_stacks": 16,
-      "make_targets_top_level": 23,
-      "ci_jobs": 10,
-      "flux_kustomizations": 7,
-      "flux_helmreleases_with_dependsOn": 4,
-      "shell_scripts": 6,
-      "podman_pod": 1
-    }
+    "nodes": 973,
+    "edges": 1234,
+    "density": 0.0013,
+    "max_chain_depth": 24
   },
   "clusters": [
     {
       "id": "cluster-0",
-      "label": "platform-core (bootstrap & state plane)",
+      "label": "orchestration-ci",
+      "files": [
+        "Makefile",
+        "vars.mk",
+        ".woodpecker.yml",
+        "bin/tofu-apply-with-quorum.sh",
+        "scripts/brigade-launch-agent.sh",
+        "scripts/brigade-setup-worktrees.sh",
+        "scripts/cosign-sign.sh",
+        "scripts/mirror-images-to-scr.sh",
+        "scripts/register-hydra-oidc-client.sh",
+        "scripts/hauler-manifest-gen.py",
+        "clusters/management/kustomization.yaml",
+        "clusters/management/versions-configmap.yaml",
+        "clusters/management/security-openclarity.yaml",
+        "clusters/management/security-kyverno.yaml",
+        "clusters/management/storage-harbor.yaml",
+        "clusters/management-eso/kustomization.yaml"
+      ],
+      "functions": 175,
+      "internal_edges": 152,
+      "external_edges": 42,
+      "cohesion_coupling_ratio": 3.62,
+      "fiedler_sign": "negative",
+      "boundary_functions": [
+        "make:k8s-up",
+        "make:k8s-down",
+        "make:scaleway-up",
+        "ci:start-builder",
+        "ci:deploy-cluster"
+      ],
+      "recommended_commis_hint": "sensitive zone — single commis, 3/3 quorum"
+    },
+    {
+      "id": "cluster-1",
+      "label": "bootstrap-scaleway-platform",
       "files": [
         "bootstrap/main.tf",
         "bootstrap/platform-pod.yaml",
         "bootstrap/tofu/gitea.tf",
         "bootstrap/tofu/woodpecker.tf",
-        "bootstrap/tofu/pki.tf",
-        "bootstrap/tofu/vault.tf",
-        "bootstrap/tofu/providers.tf",
-        "bootstrap/vault-backend/Dockerfile",
-        "bootstrap/vault-kms-plugin/Dockerfile"
-      ],
-      "functions": 9,
-      "internal_edges": 14,
-      "external_edges": 6,
-      "cohesion_coupling_ratio": 2.33,
-      "fiedler_sign": "negative",
-      "boundary_functions": ["bootstrap (Make)", "vault-backend"],
-      "recommended_commis_hint": "one commis owns this cluster"
-    },
-    {
-      "id": "cluster-1",
-      "label": "scaleway-pipeline (IAM -> image -> cluster -> CI)",
-      "files": [
-        "envs/scaleway/iam/main.tf",
-        "envs/scaleway/image/main.tf",
         "envs/scaleway/main.tf",
         "envs/scaleway/ci/main.tf",
-        "modules/context/main.tf",
-        "modules/naming/main.tf",
-        "modules/talos-cluster/main.tf"
+        "envs/scaleway/ci/launch.sh",
+        "envs/scaleway/image/main.tf",
+        "envs/scaleway/image/cloud-init.yml.tpl",
+        "envs/scaleway/iam/main.tf",
+        "stacks/registry-mirror/main.tf",
+        "patches/registry-mirror-scr.yaml"
       ],
-      "functions": 7,
-      "internal_edges": 11,
-      "external_edges": 5,
-      "cohesion_coupling_ratio": 2.20,
+      "functions": 95,
+      "internal_edges": 362,
+      "external_edges": 16,
+      "cohesion_coupling_ratio": 22.6,
       "fiedler_sign": "negative",
-      "boundary_functions": ["scaleway-apply", "scaleway-iam-apply"],
-      "recommended_commis_hint": "one commis owns this cluster"
+      "boundary_functions": [
+        "tfdir:envs/scaleway",
+        "tfdir:envs/scaleway/ci",
+        "tfdir:envs/scaleway/image",
+        "tfdir:envs/scaleway/iam"
+      ],
+      "recommended_commis_hint": "sensitive zone — single commis, 3/3 quorum"
     },
     {
       "id": "cluster-2",
-      "label": "k8s-day1-stacks (sequential CNI -> PKI -> ... -> Flux)",
+      "label": "day1-core-k8s",
       "files": [
         "stacks/cni/main.tf",
-        "stacks/monitoring/main.tf",
         "stacks/pki/main.tf",
         "stacks/pki/secrets.tf",
-        "stacks/identity/main.tf",
-        "stacks/security/main.tf",
-        "stacks/storage/main.tf",
-        "stacks/flux-bootstrap/main.tf"
+        "stacks/pki/flux/job-bootstrap-openbao-pki.yaml",
+        "stacks/monitoring/main.tf",
+        "stacks/flux-bootstrap/main.tf",
+        "stacks/external-secrets/flux/kustomization.yaml",
+        "stacks/external-secrets/flux-config/cluster-secret-store.yaml"
       ],
-      "functions": 8,
-      "internal_edges": 7,
-      "external_edges": 9,
-      "cohesion_coupling_ratio": 0.78,
+      "functions": 93,
+      "internal_edges": 110,
+      "external_edges": 20,
+      "cohesion_coupling_ratio": 5.5,
       "fiedler_sign": "positive",
-      "boundary_functions": ["k8s-up", "flux-bootstrap-apply"],
-      "recommended_commis_hint": "split across 2 commis - cluster too sequentialized; one commis pre-CNI/PKI, another for identity/security/storage"
+      "boundary_functions": [
+        "tfdir:stacks/pki",
+        "tfdir:stacks/flux-bootstrap",
+        "tf:stacks/pki:terraform_data.bootstrap_openbao_pki"
+      ],
+      "recommended_commis_hint": "sensitive zone — single commis, 3/3 quorum"
     },
     {
       "id": "cluster-3",
-      "label": "kaas-stacks (CAPI/Kamaji/autoscaling/gateway-api/managed-cluster)",
+      "label": "day2-app-stacks",
+      "files": [
+        "stacks/identity/main.tf",
+        "stacks/security/main.tf",
+        "stacks/storage/main.tf",
+        "stacks/identity/flux/kustomization.yaml",
+        "stacks/security/flux/kustomization.yaml",
+        "stacks/security/flux-openclarity/kustomization.yaml",
+        "stacks/security/flux-openclarity-eso/kustomization.yaml",
+        "stacks/security/flux-kyverno/kustomization.yaml",
+        "stacks/security/flux-kyverno-policies/kustomization.yaml",
+        "stacks/storage/flux/kustomization.yaml",
+        "stacks/storage/flux-harbor/kustomization.yaml",
+        "stacks/storage/flux-harbor-eso/kustomization.yaml"
+      ],
+      "functions": 99,
+      "internal_edges": 59,
+      "external_edges": 13,
+      "cohesion_coupling_ratio": 4.5,
+      "fiedler_sign": "positive",
+      "boundary_functions": [
+        "tfdir:stacks/storage",
+        "tfdir:stacks/identity",
+        "tfdir:stacks/security",
+        "tf:stacks/storage:terraform_data.garage_buckets_keys"
+      ],
+      "recommended_commis_hint": "sensitive zone — single commis, 3/3 quorum"
+    },
+    {
+      "id": "cluster-4",
+      "label": "kaas-tenant-control-plane",
       "files": [
         "stacks/capi/main.tf",
         "stacks/kamaji/main.tf",
         "stacks/autoscaling/main.tf",
         "stacks/gateway-api/main.tf",
-        "stacks/managed-cluster/main.tf"
+        "stacks/managed-cluster/main.tf",
+        "stacks/managed-cluster/chart/Chart.yaml"
       ],
-      "functions": 5,
-      "internal_edges": 6,
-      "external_edges": 4,
-      "cohesion_coupling_ratio": 1.50,
+      "functions": 53,
+      "internal_edges": 188,
+      "external_edges": 7,
+      "cohesion_coupling_ratio": 26.9,
       "fiedler_sign": "positive",
-      "boundary_functions": ["kaas-up", "managed-cluster-apply"],
-      "recommended_commis_hint": "one commis owns this cluster"
-    },
-    {
-      "id": "cluster-4",
-      "label": "flux-day2 (HelmReleases reconciled by Flux post-bootstrap)",
-      "files": [
-        "clusters/management/kustomization.yaml",
-        "stacks/cni/flux/",
-        "stacks/external-secrets/flux/",
-        "stacks/monitoring/flux/",
-        "stacks/pki/flux/",
-        "stacks/identity/flux/",
-        "stacks/security/flux/",
-        "stacks/storage/flux/"
+      "boundary_functions": [
+        "tfdir:stacks/capi",
+        "tfdir:stacks/managed-cluster"
       ],
-      "functions": 7,
-      "internal_edges": 4,
-      "external_edges": 2,
-      "cohesion_coupling_ratio": 2.0,
-      "fiedler_sign": "positive",
-      "boundary_functions": ["clusters/management/kustomization.yaml"],
       "recommended_commis_hint": "one commis owns this cluster"
     },
     {
       "id": "cluster-5",
-      "label": "ci-pipeline (Woodpecker linear chain)",
-      "files": [".woodpecker.yml"],
-      "functions": 10,
-      "internal_edges": 9,
-      "external_edges": 0,
-      "cohesion_coupling_ratio": 9.0,
-      "fiedler_sign": "negative",
-      "boundary_functions": [],
-      "recommended_commis_hint": "one commis owns this cluster"
-    },
-    {
-      "id": "cluster-6",
-      "label": "vmware-airgap (parallel script silo)",
+      "label": "shared-modules-local-vmware",
       "files": [
+        "modules/context/main.tf",
+        "modules/naming/main.tf",
+        "modules/talos-cluster/main.tf",
+        "modules/em-talos-bootstrap/main.tf",
+        "modules/em-talos-matchbox-bootstrap/main.tf",
+        "envs/local/main.tf",
         "envs/vmware-airgap/Makefile",
-        "envs/vmware-airgap/scripts/build-image-cache.sh",
-        "envs/vmware-airgap/scripts/validate-cache.sh",
-        "envs/vmware-airgap/scripts/build-ova.sh",
-        "envs/vmware-airgap/scripts/gen-configs.sh",
-        "envs/vmware-airgap/scripts/bootstrap.sh"
+        "envs/vmware-airgap/schematic.yaml"
       ],
-      "functions": 6,
-      "internal_edges": 5,
-      "external_edges": 0,
-      "cohesion_coupling_ratio": "infinite (isolated)",
-      "fiedler_sign": "positive",
-      "boundary_functions": [],
+      "functions": 36,
+      "internal_edges": 225,
+      "external_edges": 6,
+      "cohesion_coupling_ratio": 37.5,
+      "fiedler_sign": "negative",
+      "boundary_functions": [
+        "tfdir:modules/context",
+        "tfdir:modules/talos-cluster",
+        "tfdir:envs/local"
+      ],
       "recommended_commis_hint": "one commis owns this cluster"
     }
   ],
   "boundary_functions": [
     {
-      "name": "make k8s-up",
-      "fiedler_value": 0.04,
-      "reason": "spans cluster-1 (scaleway) and cluster-2 (day1 stacks)",
-      "warning": "any commis touching this Make target pulls in two clusters; sequence the work"
+      "name": "make:k8s-up",
+      "fiedler_value": 0.0,
+      "reason": "Deployment frontier bridging CNI, storage namespace -target pre-create (Makefile:429), PKI, monitoring, identity, security, storage, and Flux bootstrap.",
+      "warning": "Parallelizing this target pulls in multiple clusters; the -target surgery on the storage stack is an orchestrator-level cycle cut — keep it in sync with .woodpecker.yml (currently diverged: CI has no equivalent step)."
     },
     {
-      "name": "stacks/storage (k8s-storage-apply)",
-      "fiedler_value": 0.06,
-      "reason": "TF-managed at day1, but its HelmReleases are also referenced from cluster-4 (Flux); splits between cluster-2 and cluster-4",
-      "warning": "ownership ambiguous: storage Helm releases are deployed by Tofu AND referenced from clusters/management/kustomization.yaml"
+      "name": "tfdir:stacks/pki",
+      "fiedler_value": 0.0,
+      "reason": "Highest in-degree module (9): owns OpenBao, cert-manager, day-1 ESO + ClusterSecretStore, and generates secrets consumed by identity, monitoring, security, storage. 8 rotate-* Make targets converge on k8s-pki-apply.",
+      "warning": "God-module warning (score 0.46, P100 in-degree). Treat as sensitive; Type II phased split recommended (extract ESO ownership, extract secrets seeding)."
     },
     {
-      "name": "make scaleway-up",
+      "name": "tf:stacks/pki:terraform_data.bootstrap_openbao_pki",
       "fiedler_value": 0.02,
-      "reason": "stitches scaleway-pipeline (cluster-1) -> k8s-day1 (cluster-2)",
-      "warning": "biggest cross-cluster bridge in the build"
+      "reason": "No-op shim since ADR-032 — 3 downstream resources (cluster_secret_store, cluster_issuer_vault, cluster_issuer_cilium) serialize on a node whose real work runs asynchronously in a Flux/Helm Job.",
+      "warning": "Phantom gate: latent race absorbed only by cert-manager/ESO retries. Removal plan documented in secrets.tf:257-262 — execute it rather than adding new depends_on edges here."
+    },
+    {
+      "name": "tf:stacks/storage:terraform_data.garage_buckets_keys",
+      "fiedler_value": 0.0,
+      "reason": "Cross-stack bridge writing cnpg-s3-credentials into the identity namespace; one half of SCC-1 (identity ⇄ storage).",
+      "warning": "Do not split without replacing the namespace/adoption and secret handoff contract; preferred cut is routing the key through OpenBao + ESO."
+    },
+    {
+      "name": "ci:start-builder",
+      "fiedler_value": 0.0,
+      "reason": "CI fan-in/fan-out point gating image upload, image import, cluster deployment, and every stack deploy on main pushes.",
+      "warning": "Has no depends_on — the deploy chain is not gated on validate/test-tftest. Also the .upload-complete gate downstream is vacuous on rebuilds (stale flag never deleted). Fix both before optimizing the chain."
     }
   ],
   "god_functions": [
     {
-      "name": "Makefile (root, 873 LOC)",
-      "in_degree_proxy": 12,
-      "out_degree_proxy": 18,
-      "betweenness_proxy": 0.78,
-      "god_score": 0.82,
+      "name": "tfdir:stacks/pki",
+      "god_score": 0.46,
       "action": "type_II_split",
-      "evidence": "873 lines, ~80 targets, 16 stack paths defined inline, calls itself 18 times via $(MAKE) recursion (k8s-up, k8s-down, kaas-up, kaas-down, scaleway-nuke, upgrade, local-up, local-down)"
-    },
-    {
-      "name": "envs/scaleway/main.tf (386 LOC)",
-      "in_degree_proxy": 4,
-      "out_degree_proxy": 19,
-      "betweenness_proxy": 0.61,
-      "god_score": 0.71,
-      "action": "type_I_split",
-      "evidence": "19 resource/data/module blocks in a single file; talos secrets + machine config + scaleway VMs + bootstrap + kubeconfig all colocated"
-    },
-    {
-      "name": "stacks/identity/main.tf (288 LOC)",
-      "in_degree_proxy": 1,
-      "out_degree_proxy": 11,
-      "betweenness_proxy": 0.48,
-      "god_score": 0.62,
-      "action": "type_I_extract",
-      "evidence": "11 resources covering CNPG operator + PostgreSQL cluster + ScheduledBackup + Hydra TLS + Kratos + Hydra + OIDC client + Pomerium; deepest local depends_on chain (5 levels)"
-    },
-    {
-      "name": "stacks/storage/main.tf (259 LOC)",
-      "in_degree_proxy": 2,
-      "out_degree_proxy": 10,
-      "betweenness_proxy": 0.45,
-      "god_score": 0.59,
-      "action": "type_I_extract",
-      "evidence": "garage_wait + garage_layout + garage_buckets_keys local-exec chain blurs declarative/imperative boundary"
+      "note": "Below the 0.60 XL flag threshold but P100 in-degree (9 modules) and 4 owned concerns; phased split: (a) ESO ownership -> external-secrets stack, (b) secrets.tf seeding -> dedicated seed unit or consumer stacks."
     }
   ],
-  "cycles": [],
-  "shotgun_surgery": [
+  "cycles": [
     {
-      "trigger": "rename or move a single stack folder under stacks/",
-      "files_touched": [
-        "Makefile (TF_<NAME>, STATE_<NAME>, k8s-<name>-init/apply/destroy targets, k8s-up, k8s-down, STACKS list)",
-        ".woodpecker.yml (deploy-<name> step + depends_on chain)",
-        "clusters/management/kustomization.yaml (resources list)",
-        "stacks/<name>/flux/kustomization.yaml"
+      "id": "scc-1",
+      "functions": [
+        "stacks/identity",
+        "stacks/storage"
       ],
-      "min_files": 4,
-      "severity": "high",
-      "remediation": "introduce a stacks-manifest.yaml read by Make + Woodpecker + Flux kustomization; or a make_stack($1) macro that emits init/apply/destroy targets from a single STACKS list"
-    },
-    {
-      "trigger": "add a new k8s stack",
-      "files_touched": [
-        "stacks/<new>/main.tf + variables.tf + values.yaml + flux/",
-        "Makefile (paths + targets + STATE_ + k8s-up + k8s-down + STACKS + k8s-init)",
-        ".woodpecker.yml",
-        "clusters/management/kustomization.yaml"
-      ],
-      "min_files": 7,
-      "severity": "high",
-      "remediation": "scaffold script: bin/new-stack <name> generates the 4 boilerplate touchpoints from a template"
+      "cut_point": "storage->identity (kubectl write of cnpg-s3-credentials into identity ns)",
+      "fix": "Deliver the Garage key via OpenBao Infra KV + ExternalSecret in the identity namespace; storage stops writing into a namespace it does not own."
     }
   ],
-  "dead_weight": [],
-  "anti_patterns": [
-    {
-      "id": 1,
-      "name": "God Function (Makefile)",
-      "severity": "high",
-      "evidence": "Makefile 873 LOC, 80+ targets, recursive $(MAKE) self-calls 18 times; god_score 0.82"
-    },
-    {
-      "id": 3,
-      "name": "Shotgun Surgery (stack list duplication)",
-      "severity": "high",
-      "evidence": "the canonical list of stacks appears 4 times: Makefile $(STACKS), Makefile k8s-up sequence, .woodpecker.yml deploy-* chain, clusters/management/kustomization.yaml"
-    },
-    {
-      "id": 6,
-      "name": "Hub and Spoke (vault-backend)",
-      "severity": "medium",
-      "evidence": "every TF stack init-targets vault-backend at :8080 via $(call tf_init); single point of failure for ALL state operations (16 stacks, 9 STATE_* paths). Documented as 'must run BEFORE any tofu command' in CLAUDE.md."
-    },
-    {
-      "id": 7,
-      "name": "Layering Violation (managed-cluster -> envs/scaleway/image)",
-      "severity": "medium",
-      "evidence": "managed-cluster-apply target reads envs/scaleway/image output via $(TF) -chdir=$(TF_SCW_IMAGE) output -raw image_name from inside a stacks/ Make recipe; data layer (image build) is read by an upper layer (tenant cluster) via shell-out"
-    },
-    {
-      "id": 4,
-      "name": "Feature Envy (Makefile -> envs/scaleway/iam)",
-      "severity": "low",
-      "evidence": "$(call scw_iam_out,...) shells out to tofu output 7 times to retrieve project_id, image AK/SK, cluster AK/SK, ci AK/SK; every invocation re-runs tofu in scw_iam dir"
-    },
-    {
-      "id": 8,
-      "name": "Copy-Paste Cluster (k8s-<stack>-init/apply/destroy)",
-      "severity": "low",
-      "evidence": "11 stacks each define near-identical init/apply/destroy triples (cni, monitoring, pki, identity, security, storage, flux-bootstrap, capi, kamaji, autoscaling, gateway-api); same 3-line body, only TF_DIR + STATE_ vary; ~110 lines of structural copy"
-    }
-  ],
-  "ci_pipeline": {
-    "file": ".woodpecker.yml",
-    "jobs": 10,
-    "edges": 9,
-    "deadlocks": 0,
-    "max_depth": 9,
-    "topology": "linear chain (no parallelism)",
-    "bottlenecks": [
-      {
-        "job": "build-image",
-        "blocks_downstream": 7,
-        "fraction": 0.78,
-        "evidence": "deploy-cluster -> wait-api -> deploy-cni -> deploy-pki -> deploy-monitoring -> deploy-identity -> deploy-security -> deploy-storage -> deploy-flux all gated on build-image; cumulative wait ~15 min image build + 8 stack deploys"
-      }
-    ],
-    "parallelism_opportunities": [
-      "deploy-monitoring is independent from deploy-pki at the K8s level (different namespaces, no shared CRD); chain is sequentialized for race-condition reasons (CLAUDE.md acknowledges this), but monitoring + security could fan out",
-      "validate runs all stacks serially in one step; could matrix-fan-out to 11 parallel validations"
-    ]
-  },
-  "tangle_score": 60,
-  "score_breakdown": {
-    "base": 100,
-    "god_functions_penalty": -10,
-    "shotgun_surgery_penalty": -10,
-    "hub_and_spoke_penalty": -10,
-    "max_chain_depth_penalty": -10,
-    "ci_bottleneck_penalty": -5,
-    "feature_envy_penalty": 0,
-    "copy_paste_penalty": -5
-  },
-  "verdict": "Acceptable - well-structured for an IaC repo; main tangle is the canonical-stack-list duplication and the Makefile size."
+  "tangle_score": 60
 }

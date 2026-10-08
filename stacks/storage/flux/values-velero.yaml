@@ -3,7 +3,8 @@
 
 initContainers:
   - name: velero-plugin-for-aws
-    image: velero/velero-plugin-for-aws:v1.14.0
+    # Velero 1.17.x requires AWS plugin 1.13.x (checked by verify-gitops.py).
+    image: velero/velero-plugin-for-aws:v1.13.2
     volumeMounts:
       - mountPath: /target
         name: plugins
@@ -12,12 +13,7 @@ configuration:
   backupStorageLocation:
     - name: default
       provider: aws
-      # ${velero_bucket} + ${s3_url} are substituted by:
-      #   - tofu helm_release: via templatefile() in stacks/storage/main.tf
-      #   - Flux Kustomization: via spec.postBuild.substitute in
-      #     stacks/flux-bootstrap/main.tf (Kustomization "management")
-      # Both substitution paths produce identical output, so the file
-      # works correctly whether deployed by tofu (day-1) or Flux (day-2).
+      # Flux substitutes these values through the storage Kustomization.
       bucket: ${velero_bucket}
       config:
         region: garage

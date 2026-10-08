@@ -39,14 +39,7 @@ provider "kubectl" {
 
 # ─── Monitoring Namespace ────────────────────────────────────────────────
 
-resource "kubernetes_namespace" "monitoring" {
-  metadata {
-    name = "monitoring"
-    labels = {
-      "pod-security.kubernetes.io/enforce" = "privileged"
-    }
-  }
-}
+
 
 # ─── Grafana admin credentials (seeded into OpenBao Infra) ───────────────
 # Generated here so that ESO (day-2) becomes the authoritative source for
@@ -67,45 +60,8 @@ resource "random_password" "grafana_admin" {
   }
 }
 
-# NOTE: Helm releases for monitoring (vm-k8s-stack, victoria-logs,
-# victoria-logs-collector, headlamp) are owned by Flux — see
-# stacks/monitoring/flux/helmrelease-*.yaml. Tofu only manages the
-# bootstrap pieces below (namespace, grafana-admin Secret pre-seeded
-# so the chart can mount it on first apply, OpenBao seed, dashboard
-# ConfigMap, VMRule for Flux alerts).
-#
-# ADR-028 — Flux is owner par défaut for app-level helm releases;
-# tofu only manages what must exist BEFORE Flux can reconcile.
-
-# ─── Bootstrap K8s Secret for chart consumption (pre-Flux/ESO) ───────────
-# The Grafana sub-chart requires `grafana-admin` to exist BEFORE the
-# Deployment can start (mounts envFrom). On initial tofu apply, ESO is not
-# yet reconciling, so we create the Secret here. Once Flux rolls out, the
-# ExternalSecret in flux/external-secret-grafana.yaml takes ownership and
-# refreshes the values from OpenBao every refreshInterval. Because OpenBao
-# was seeded from the same random_password.grafana_admin (see
-# terraform_data.seed_grafana_to_openbao below), the data is identical and
-# ESO's first reconciliation is a no-op — no rotation, no session loss.
-resource "kubernetes_secret" "grafana_admin" {
-  metadata {
-    name      = "grafana-admin"
-    namespace = "monitoring"
-    # Hint to ESO that it's allowed to take this Secret over even though
-    # it wasn't the original creator (ESO honours this since v0.9).
-    annotations = {
-      "external-secrets.io/force-sync" = "true"
-    }
-  }
-
-  type = "Opaque"
-
-  data = {
-    "admin-user"     = "admin"
-    "admin-password" = random_password.grafana_admin.result
-  }
-
-  depends_on = [kubernetes_namespace.monitoring]
-}
+# Flux and ESO own Kubernetes resources. Tofu retains secret generation
+# and the OpenBao seed; the password remains at its historical state address.
 
 # ─── Seed Grafana admin credentials into in-cluster OpenBao Infra ────────
 # Mirrors the bash pattern in stacks/pki/secrets.tf. We keep this in the
@@ -120,7 +76,7 @@ resource "kubernetes_secret" "grafana_admin" {
 resource "terraform_data" "seed_grafana_to_openbao" {
   # Triggers re-run if the password changes (which, with ignore_changes=all,
   # only happens on a deliberate `tofu state rm` rotation).
-  input = sha256(random_password.grafana_admin.result)
+  triggers_replace = [sha256(random_password.grafana_admin.result)]
 
   provisioner "local-exec" {
     environment = {
@@ -163,9 +119,19 @@ resource "terraform_data" "seed_grafana_to_openbao" {
         exit 1
       fi
 
-      echo "Logging in..."
-      $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1 || \
-        { echo "ERROR: OpenBao login failed"; exit 1; }
+      # L'API repond AVANT que les blocs d'init declaratifs du chart
+      # (mount userpass, user admin) n'aient tourne — avec un registre
+      # mirror local le seed arrive pendant cette fenetre (E2E run 9).
+      # On attend le LOGIN, pas le status : 120 x 2s.
+      echo "Logging in (attente de l'init userpass)..."
+      logged=0
+      for i in $(seq 1 120); do
+        if $BAO bao login -method=userpass username=admin password="$BAO_ADMIN_PASSWORD" >/dev/null 2>&1; then
+          logged=1; break
+        fi
+        sleep 2
+      done
+      [ "$logged" = "1" ] || { echo "ERROR: OpenBao login failed after 240s"; exit 1; }
 
       # Idempotent re-run: skip when the same key+value already present.
       EXISTING=$($BAO bao kv get -field=admin-password secret/monitoring/grafana 2>/dev/null || true)
@@ -186,105 +152,23 @@ resource "terraform_data" "seed_grafana_to_openbao" {
 
 # victoria-logs + victoria-logs-collector → Flux owner (see header note)
 
-# ─── Platform Overview Dashboard (ConfigMap auto-loaded by Grafana sidecar) ─
-
-resource "kubernetes_config_map" "platform_dashboard" {
-  metadata {
-    name      = "grafana-dashboard-platform-overview"
-    namespace = "monitoring"
-    labels = {
-      grafana_dashboard = "1"
-    }
+removed {
+  from = kubernetes_namespace.monitoring
+  lifecycle {
+    destroy = false
   }
-
-  data = {
-    "platform-overview.json" = file("${path.module}/dashboards/platform-overview.json")
-  }
-
-  depends_on = [kubernetes_namespace.monitoring]
 }
 
-# headlamp → Flux owner (see header note)
-
-# ─── Flux alerting rules (VMRule for VictoriaMetrics) ──────────────────
-# kubectl_manifest (alekc) instead of kubernetes_manifest because the latter
-# validates against the live K8s API at PLAN time — fails when the VMRule
-# CRD doesn't exist yet (installed by helm_release.vm_k8s_stack in the same
-# apply). kubectl_manifest is lazy: validation happens at apply time only.
-#
-# Postmortem 2026-04-29 (#25, Phase C resume): vm-k8s-stack moved to Flux
-# (ADR-028) so the VMRule CRD only appears AFTER flux-bootstrap-apply +
-# Flux's first reconcile. On a fresh cluster, the apply hits
-#   "resource [operator.victoriametrics.com/v1beta1/VMRule] isn't valid"
-# and Make stops, blocking the rest of k8s-up. Gate the resource on the
-# CRD existing — first apply leaves count=0 (no VMRule yet), Flux deploys
-# vm-k8s-stack later, then `make k8s-monitoring-apply` again creates the
-# VMRule. The Flux-driven retry loop handles propagation; tofu plan stays
-# converged once the CRD is established.
-data "kubernetes_resources" "vmrule_crd" {
-  api_version    = "apiextensions.k8s.io/v1"
-  kind           = "CustomResourceDefinition"
-  field_selector = "metadata.name=vmrules.operator.victoriametrics.com"
+removed {
+  from = kubernetes_secret.grafana_admin
+  lifecycle {
+    destroy = false
+  }
 }
 
-resource "kubectl_manifest" "flux_alerts" {
-  count = length(data.kubernetes_resources.vmrule_crd.objects) > 0 ? 1 : 0
-
-  yaml_body = yamlencode({
-    apiVersion = "operator.victoriametrics.com/v1beta1"
-    kind       = "VMRule"
-    metadata = {
-      name      = "flux-alerts"
-      namespace = "monitoring"
-    }
-    spec = {
-      groups = [{
-        name = "flux"
-        rules = [
-          {
-            alert = "FluxGitRepositoryNotReady"
-            expr  = "gotk_resource_info{type=\"GitRepository\", ready=\"False\"} == 1"
-            for   = "10m"
-            labels = {
-              severity = "warning"
-            }
-            annotations = {
-              summary     = "Flux GitRepository {{ $labels.name }} not ready"
-              description = "GitRepository {{ $labels.name }} in {{ $labels.exported_namespace }} has been not ready for 10 minutes."
-            }
-          },
-          {
-            alert = "FluxKustomizationNotReady"
-            expr  = "gotk_resource_info{type=\"Kustomization\", ready=\"False\"} == 1"
-            for   = "10m"
-            labels = {
-              severity = "warning"
-            }
-            annotations = {
-              summary     = "Flux Kustomization {{ $labels.name }} not ready"
-              description = "Kustomization {{ $labels.name }} in {{ $labels.exported_namespace }} has been not ready for 10 minutes."
-            }
-          },
-          {
-            alert = "FluxHelmReleaseNotReady"
-            expr  = "gotk_resource_info{type=\"HelmRelease\", ready=\"False\"} == 1"
-            for   = "15m"
-            labels = {
-              severity = "warning"
-            }
-            annotations = {
-              summary     = "Flux HelmRelease {{ $labels.name }} not ready"
-              description = "HelmRelease {{ $labels.name }} in {{ $labels.exported_namespace }} has been not ready for 15 minutes."
-            }
-          },
-        ]
-      }]
-    }
-  })
-
-  # vm-k8s-stack now owned by Flux — depends on namespace only.
-  # The VMRule CRD is installed by Flux's vm-k8s-stack HelmRelease at
-  # bootstrap; on first-ever apply this manifest may transiently fail
-  # until Flux finishes reconciling. Retry-on-error is acceptable here.
-  depends_on = [kubernetes_namespace.monitoring]
+removed {
+  from = kubernetes_config_map.platform_dashboard
+  lifecycle {
+    destroy = false
+  }
 }

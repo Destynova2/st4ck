@@ -1,0 +1,51 @@
+# Resource and custom metrics only. KEDA owns external.metrics.k8s.io.
+replicas: 2
+prometheus:
+  url: http://vmsingle-vm.monitoring.svc
+  port: 8428
+  path: ""
+certManager:
+  enabled: true
+resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {memory: 512Mi}
+rules:
+  default: false
+  external: []
+  custom:
+    - seriesQuery: 'http_requests_total{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: {resource: namespace}
+          pod: {resource: pod}
+      name: {matches: '^http_requests_total$', as: http_requests_per_second}
+      metricsQuery: 'sum by (<<.GroupBy>>) (rate(<<.Series>>{<<.LabelMatchers>>}[2m]))'
+    - seriesQuery: 'queue_depth{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: {resource: namespace}
+          pod: {resource: pod}
+      name: {matches: '^queue_depth$', as: queue_depth}
+      metricsQuery: 'avg by (<<.GroupBy>>) (<<.Series>>{<<.LabelMatchers>>})'
+  # Registers metrics.k8s.io for VPA/HPA using existing VM kubelet scrapes.
+  # Do not install another metrics-server alongside this APIService.
+  resource:
+    cpu:
+      containerQuery: 'sum by (<<.GroupBy>>) (rate(container_cpu_usage_seconds_total{container!="",container!="POD",<<.LabelMatchers>>}[3m]))'
+      nodeQuery: 'sum by (<<.GroupBy>>) (rate(node_cpu_seconds_total{mode!="idle",mode!="iowait",mode!="steal",<<.LabelMatchers>>}[3m]))'
+      resources:
+        overrides:
+          node: {resource: node}
+          namespace: {resource: namespace}
+          pod: {resource: pod}
+      containerLabel: container
+    memory:
+      containerQuery: 'sum by (<<.GroupBy>>) (container_memory_working_set_bytes{container!="",container!="POD",<<.LabelMatchers>>})'
+      nodeQuery: 'sum by (<<.GroupBy>>) (node_memory_MemTotal_bytes{<<.LabelMatchers>>} - node_memory_MemAvailable_bytes{<<.LabelMatchers>>})'
+      resources:
+        overrides:
+          node: {resource: node}
+          namespace: {resource: namespace}
+          pod: {resource: pod}
+      containerLabel: container
+    window: 3m

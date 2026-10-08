@@ -5,15 +5,15 @@
 #   namespace       — project slug, fixed across all envs
 #   talos_version   — Talos OS version (also used for image name tag)
 #   k8s_version     — Kubernetes version deployed by Talos
-#   cilium_version  — Cilium CNI chart version
 #   cluster_shape   — control plane + worker count and instance types
 #   owner           — default owner tag (override per context)
 
 namespace: st4ck
 
-talos_version: "v1.12.4"
-k8s_version: "1.35.0"
-cilium_version: "1.17.13"
+talos_version: "v1.12.9"
+k8s_version: "1.35.6"
+# cilium chart pin lives in clusters/management/versions-configmap.yaml
+# (the cilium_version key here was consumed by nothing — hanoi 2026-07-12 #4)
 
 cluster_shape:
   control_plane:

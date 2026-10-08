@@ -5,15 +5,22 @@ metadata:
   namespace: security
 spec:
   interval: 30m
+  # Failed upgrades: retry 3x then roll back (hardening 2026-07-12)
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
   chart:
     spec:
       chart: tetragon
-      version: "1.6.0"
+      version: "${tetragon_version}"
       sourceRef:
         kind: HelmRepository
         name: cilium
         namespace: flux-system
   install:
+    remediation:
+      retries: 3
     createNamespace: false
   valuesFrom:
     - kind: ConfigMap

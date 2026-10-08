@@ -1,7 +1,7 @@
-# ADR-008 : Secrets auto-generes via random_id Terraform
+# ADR-008 : Secrets auto-generes via Terraform
 
 **Date** : 2026-03-09
-**Statut** : Accepte
+**Statut** : Accepte, amende 2026-06-14 par ADR-033
 **Decideurs** : Equipe plateforme
 
 ## Contexte
@@ -13,32 +13,42 @@ La gestion initiale des secrets reposait sur des fichiers `secret.tfvars` manuel
 - **Risque d'erreur humaine** : copier-coller de secrets, oubli de rotation
 - **Secrets en clair sur disque** dans les `.tfvars`
 - **Non-reproductible** : chaque deploy necessite une intervention manuelle
-- **Pomerium strict** : exige exactement 32 bytes raw pour shared_secret/cookie_secret, pas un hex string
+- **Contraintes de format** : certains secrets exigent des bytes raw/base64 stricts, d'autres des passwords ou cles asymetriques
 
 ## Decision
 
-Tous les secrets sont generes automatiquement par `random_id` Terraform :
+Tous les secrets plateforme sont generes automatiquement par Terraform, avec le type de ressource adapte :
 
 ```hcl
-resource "random_id" "garage_rpc_secret" { byte_length = 32 }
-resource "random_id" "pomerium_shared_secret" { byte_length = 32 }
+resource "random_password" "hydra_system_secret" { length = 64 }
+resource "random_bytes" "pomerium_shared_secret" { length = 32 }
+resource "tls_private_key" "cosign" { algorithm = "ED25519" }
 ```
 
-- `.hex` (64 chars) : tokens, admin passwords, RPC secrets
-- `.b64_std` (base64, 32 bytes raw) : Pomerium shared/cookie secrets (strict 32 bytes)
+Types utilises :
 
-Injectes dans les Helm values via `templatefile()`.
+- `random_password` : mots de passe, client secrets, tokens humains/lisibles
+- `random_bytes` : secrets binaires stricts, seal keys, RPC secrets
+- `tls_private_key` : Root/Sub-CAs, Flux SSH, Cosign
+
+Les valeurs sont stockees dans le state chiffre via le bootstrap OpenBao KMS. Les secrets consommables par les workloads sont ensuite seedes dans OpenBao Infra (`secret/...`) puis synchronises par ESO vers les Kubernetes Secrets.
 
 ## Consequences
 
 ### Positives
 
 - **Zero intervention manuelle** : `make k8s-up` genere tout
-- **Secrets uniques par deploy** : chaque `tofu apply` sur un nouveau state produit de nouveaux secrets
-- **Jamais en clair sur disque** : stockes uniquement dans le state Terraform
-- **State chiffre** : Transit engine OpenBao (cle aes256-gcm96 "state-encryption")
+- **Secrets uniques par deploy** : chaque nouveau state produit de nouveaux secrets
+- **Jamais en clair dans Git** : les valeurs vivent dans le state chiffre et/ou OpenBao Infra
+- **Formats corrects** : bytes, passwords et cles asymetriques sont generes par les providers adaptes
+- **Day-2 GitOps** : ESO peut reconciler les Kubernetes Secrets depuis OpenBao Infra
 
 ### Negatives
 
-- **State = source de verite** : perte du state = perte des secrets -> backup Velero + snapshot Raft OpenBao
-- **Pas de rotation automatique** : les secrets sont stables tant que le state ne change pas
+- **State = source de verite initiale** : perte du state = perte des secrets initiaux si OpenBao n'est pas restaure
+- **Rotation explicite** : les secrets sont stables tant que le state ne change pas ; la rotation doit passer par les targets dediees
+- **Double phase** : generation Terraform puis seed OpenBao/ESO tant que la plateforme n'a pas de coffre applicatif autonome au tout debut
+
+## Suite
+
+ADR-033 propose de reduire progressivement les consommations directes de sorties Terraform et de faire de Flux + ESO le chemin day-2 canonique.

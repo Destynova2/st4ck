@@ -58,6 +58,14 @@ provider "kubectl" {
   load_config_file = true
 }
 
+# Version pins come from the platform version registry (single source of
+# truth shared with Flux postBuild.substituteFrom and the Hauler manifest):
+# clusters/management/versions-configmap.yaml. Variables stay as optional
+# overrides (default null).
+locals {
+  platform_versions = yamldecode(file("${path.module}/../../clusters/management/versions-configmap.yaml")).data
+}
+
 locals {
   labels_common = {
     "app.kubernetes.io/part-of"    = "st4ck"
@@ -71,23 +79,22 @@ locals {
   # the standard one and includes TLSRoute, which we need for SNI.
   crd_install_url = format(
     "https://github.com/kubernetes-sigs/gateway-api/releases/download/%s/%s-install.yaml",
-    var.gateway_api_version,
+    coalesce(var.gateway_api_version, local.platform_versions.gateway_api_version),
     var.gateway_api_channel,
   )
 }
 
-# ─── Namespace ───────────────────────────────────────────────────────
-# stacks/kamaji also declares `kamaji-system`. Apply order is expected
-# to be: gateway-api  →  kamaji (kamaji uses `create_namespace = false`
-# and references this NS). If you re-apply both, the later one wins
-# ownership of labels, which is fine — they agree on `part-of: st4ck`.
-
-resource "kubernetes_namespace" "gateway" {
+# Kamaji owns its namespace; Gateway only consumes it.
+data "kubernetes_namespace" "gateway" {
   metadata {
     name = var.gateway_namespace
-    labels = merge(local.labels_common, {
-      "pod-security.kubernetes.io/enforce" = "baseline"
-    })
+  }
+}
+
+removed {
+  from = kubernetes_namespace.gateway
+  lifecycle {
+    destroy = false
   }
 }
 
@@ -190,7 +197,7 @@ resource "kubectl_manifest" "tenant_gateway" {
   wait              = true
 
   depends_on = [
-    kubernetes_namespace.gateway,
+    data.kubernetes_namespace.gateway,
     kubectl_manifest.gateway_api_crds,
   ]
 }

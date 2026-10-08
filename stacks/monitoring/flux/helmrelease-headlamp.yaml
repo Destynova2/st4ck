@@ -5,15 +5,22 @@ metadata:
   namespace: monitoring
 spec:
   interval: 30m
+  # Failed upgrades: retry 3x then roll back (hardening 2026-07-12)
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
   chart:
     spec:
       chart: headlamp
-      version: "0.40.0"
+      version: "${headlamp_version}"
       sourceRef:
         kind: HelmRepository
         name: headlamp
         namespace: flux-system
   install:
+    remediation:
+      retries: 3
     createNamespace: false
   valuesFrom:
     - kind: ConfigMap

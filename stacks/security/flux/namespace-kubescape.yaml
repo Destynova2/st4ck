@@ -1,0 +1,13 @@
+# kubescape ns declared explicitly: the HR's createNamespace:true lets
+# Helm create it WITHOUT PSA labels, so it falls on the cluster default
+# (baseline) and the node-agent DaemonSet (eBPF malware detection —
+# hostPID, hostPath, SYS_ADMIN...) is rejected with 0 pods created
+# (golden-path finding 2026-07-17). Privileged is the documented
+# requirement for kubescape-operator's node components — same rationale
+# as the security ns (Tetragon).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubescape
+  labels:
+    pod-security.kubernetes.io/enforce: privileged

@@ -7,13 +7,39 @@ variable "cluster_name" {
 variable "talos_version" {
   description = "Talos Linux version"
   type        = string
-  default     = "v1.12.4"
+  default     = "v1.12.9"
 }
 
 variable "kubernetes_version" {
   description = "Kubernetes version"
   type        = string
-  default     = "1.35.0"
+  default     = "1.35.6"
+}
+
+# Multi-arch (AGENTS.md rule): defaults target the historical x86 KVM
+# host; the arm64 values serve the nested-KVM Lima lab on Apple Silicon
+# (test-local.md) — talos_arch=arm64 libvirt_machine=virt
+# libvirt_firmware=/usr/share/AAVMF/AAVMF_CODE.no-secboot.fd
+# (MUST be a path listed in /usr/share/qemu/firmware/*.json — the bare
+# AAVMF_CODE.fd is absent from Ubuntu's descriptors and firmware
+# auto-pairing fails with "Unable to find 'efi' firmware"; also chown
+# the pool files to libvirt-qemu after virsh vol-upload.)
+variable "talos_arch" {
+  description = "Talos image architecture (amd64 | arm64)"
+  type        = string
+  default     = "amd64"
+}
+
+variable "libvirt_machine" {
+  description = "libvirt machine type ('' = provider default; 'virt' on aarch64)"
+  type        = string
+  default     = ""
+}
+
+variable "libvirt_firmware" {
+  description = "UEFI firmware path ('' = BIOS default; AAVMF required on aarch64)"
+  type        = string
+  default     = ""
 }
 
 # ─── Network ───────────────────────────────────────────────────────────────

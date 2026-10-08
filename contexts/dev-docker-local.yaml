@@ -1,0 +1,17 @@
+# Contexte du cluster local Talos-in-containers (scripts/local-docker-up.sh)
+# — test-local.md niveau 3.4 : golden path tofu-first SANS Scaleway.
+#
+# Convention: ENV=dev INSTANCE=docker REGION=local
+#   CTX_ID     = st4ck-dev-docker-local
+#   kubeconfig = ~/.kube/st4ck-dev-docker-local
+#     (produit par: KUBECONFIG_OUT=~/.kube/st4ck-dev-docker-local \
+#        SKIP_CILIUM=1 bash scripts/local-docker-up.sh st4ck-tofu)
+#   etat       = vault-backend du bootstrap (VB_PORT=... si ports decales)
+#
+# Les stacks k8s ne consomment que kubeconfig_path — ce fichier sert de
+# marqueur de contexte (make context) et documente la convention. Les
+# cles provider (zone, PN, LB...) n'ont pas de sens ici.
+
+env: dev
+instance: docker
+region: local

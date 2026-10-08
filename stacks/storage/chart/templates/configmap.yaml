@@ -13,7 +13,7 @@ data:
 
     db_engine = "{{ .Values.garage.dbEngine }}"
 
-    block_size = {{ .Values.garage.blockSize }}
+    block_size = "{{ .Values.garage.blockSize }}"
 
     replication_factor = {{ .Values.garage.replicationFactor }}
     consistency_mode = "{{ .Values.garage.consistencyMode }}"

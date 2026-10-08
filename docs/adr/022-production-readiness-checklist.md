@@ -26,7 +26,7 @@ Ce document consolide toutes les actions necessaires avant un deploiement en pro
 - [ ] **admin_password** : supprimer le default `localpass123`, ajouter validation `length >= 16`
 - [ ] **Git push** : supprimer les credentials de l'URL, utiliser git credential helper ou token API
 - [ ] **Verifier `.gitignore`** : confirmer que `kms-output/`, `*.tfstate`, `*.tfvars` sont ignores
-- [ ] **Rotation des secrets** : documenter la procedure de rotation pour chaque secret genere par `random_id`
+- [ ] **Rotation des secrets** : maintenir la procedure de rotation pour chaque secret genere par Terraform (`random_password`, `random_bytes`, `tls_private_key`)
 
 ### Stockage et persistance (ADR-021 #2, #7)
 

@@ -105,8 +105,8 @@ locals {
       namespace = local.tenant_namespace
     }
     kubernetes = {
-      version      = try(local.ctx.k8s_version, "1.35.4")
-      talosVersion = try(local.ctx.talos_version, "v1.12.6")
+      version      = try(local.ctx.k8s_version, "1.35.6")
+      talosVersion = try(local.ctx.talos_version, "v1.12.9")
     }
     controlPlane = {
       replicas = try(local.shape_cp.replicas, try(local.shape_cp.count, 2))

@@ -93,8 +93,8 @@ If `make scaleway-down` hangs or fails:
 
 ```bash
 # Remove webhooks manually
-KUBECONFIG=~/.kube/talos-scaleway kubectl delete mutatingwebhookconfiguration -l app.kubernetes.io/instance=kyverno --ignore-not-found
-KUBECONFIG=~/.kube/talos-scaleway kubectl delete validatingwebhookconfiguration -l app.kubernetes.io/instance=kyverno --ignore-not-found
+KUBECONFIG=~/.kube/$(CTX_ID) kubectl delete mutatingwebhookconfiguration -l app.kubernetes.io/instance=kyverno --ignore-not-found
+KUBECONFIG=~/.kube/$(CTX_ID) kubectl delete validatingwebhookconfiguration -l app.kubernetes.io/instance=kyverno --ignore-not-found
 
 # Kill port-forwards
 pkill -f 'kubectl port-forward'

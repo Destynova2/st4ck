@@ -59,13 +59,14 @@ data "talos_image_factory_urls" "this" {
   talos_version = var.talos_version
   schematic_id  = talos_image_factory_schematic.this.id
   platform      = "nocloud"
+  architecture  = var.talos_arch
 }
 
 # Download .raw.xz, decompress, convert to qcow2 for libvirt
 locals {
   talos_image_url  = var.talos_image_url != "" ? var.talos_image_url : data.talos_image_factory_urls.this.urls.disk_image
   talos_image_dir  = "${path.module}/.cache"
-  talos_image_raw  = "${local.talos_image_dir}/talos-nocloud-amd64.raw"
+  talos_image_raw  = "${local.talos_image_dir}/talos-nocloud-${var.talos_arch}.raw"
   talos_base_name  = "${var.cluster_name}-talos-base.qcow2"
   talos_image_qcow = "${local.talos_image_dir}/${local.talos_base_name}"
 }
@@ -74,7 +75,10 @@ resource "terraform_data" "talos_image" {
   input = local.talos_image_url
 
   provisioner "local-exec" {
-    command = <<-EOT
+    # bash explicite : /bin/sh est dash sur Ubuntu et rejette `-o pipefail`
+    # (casse le lab nested-KVM Lima — 2026-07-17)
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
       set -euo pipefail
       mkdir -p ${local.talos_image_dir}
       if [ ! -f "${local.talos_image_qcow}" ]; then
@@ -95,7 +99,8 @@ resource "terraform_data" "talos_base_volume" {
   input = local.talos_base_name
 
   provisioner "local-exec" {
-    command = <<-EOT
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
       set -euo pipefail
       VIRSH="virsh -c ${var.libvirt_uri}"
       if ! $VIRSH vol-info --pool ${var.libvirt_pool} ${local.talos_base_name} >/dev/null 2>&1; then
@@ -189,6 +194,11 @@ resource "libvirt_domain" "cp" {
     mode = "host-passthrough"
   }
 
+  # aarch64 hosts: machine=virt + AAVMF UEFI are mandatory (x86 defaults
+  # apply when the vars are left empty).
+  machine  = var.libvirt_machine != "" ? var.libvirt_machine : null
+  firmware = var.libvirt_firmware != "" ? var.libvirt_firmware : null
+
   disk {
     volume_id = libvirt_volume.cp[each.key].id
     scsi      = true
@@ -243,6 +253,11 @@ resource "libvirt_domain" "wrk" {
   cpu {
     mode = "host-passthrough"
   }
+
+  # aarch64 hosts: machine=virt + AAVMF UEFI are mandatory (x86 defaults
+  # apply when the vars are left empty).
+  machine  = var.libvirt_machine != "" ? var.libvirt_machine : null
+  firmware = var.libvirt_firmware != "" ? var.libvirt_firmware : null
 
   disk {
     volume_id = libvirt_volume.wrk[each.key].id

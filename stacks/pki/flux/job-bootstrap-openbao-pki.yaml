@@ -1,60 +1,22 @@
-# ═══════════════════════════════════════════════════════════════════════
-# Phase F-bis-2 v3 — Bootstrap OpenBao PKI engine via Helm post-install Job
-#
-# Replaces terraform_data.bootstrap_openbao_pki (~180 LOC bash in
-# stacks/pki/secrets.tf). K8s-native pattern: Helm post-install + post-upgrade
-# hook fires AFTER the OpenBao Helm release is installed/upgraded, runs the
-# PKI mount + sub-CA setup as a Job, then deletes itself.
-#
-# Architecture (ADR-032):
-#   1. Root CA: stays on CI VM (bootstrap/tofu/pki.tf, ECDSA P-384, 10 yr).
-#      Distributed to cluster as K8s Secret `pki-root-ca` in `secrets` ns.
-#   2. Sub-CAs (cluster-issuer + cilium-hubble): created in-cluster OpenBao
-#      via this Job — pki_int/ engine generates the intermediate, cluster
-#      Root signs it (sign-intermediate), uploaded back. NO separate root
-#      generation in the cluster (which would have duplicated the VM root
-#      and confused trust chains).
-#
-# Hook ordering:
-#   - hook-weight: 10  → fires AFTER any other post-install hook with
-#                        weight < 10 (none today, room for future).
-#   - delete-policy: before-hook-creation,hook-succeeded
-#       → cleans up the previous Job before re-creating (idempotent rerun)
-#       → deletes itself once successful (no Job graveyard).
-#
-# Idempotency: every step is guarded by `bao read` / `bao secrets list` /
-# `bao auth list` probes. Re-running this Job is a no-op once OpenBao is
-# already configured.
-# ═══════════════════════════════════════════════════════════════════════
-
+# Flux-managed Job; completion is retained for dependency health checks.
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: bootstrap-openbao-pki
   namespace: secrets
-  annotations:
-    "helm.sh/hook": post-install,post-upgrade
-    "helm.sh/hook-weight": "0"
-    "helm.sh/hook-delete-policy": before-hook-creation
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: bootstrap-openbao-pki
   namespace: secrets
-  annotations:
-    "helm.sh/hook": post-install,post-upgrade
-    "helm.sh/hook-weight": "0"
-    "helm.sh/hook-delete-policy": before-hook-creation
 rules:
-  # Read the admin password (random_password in tofu) + the VM root CA
-  # certificate (distributed by tofu as kubernetes_secret.pki_root_ca).
+  # The intermediate CA is generated outside the cluster by Tofu.
   - apiGroups: [""]
     resources: ["secrets"]
     resourceNames:
-      - openbao-admin-password
-      - pki-root-ca
+      - pki-infra-ca
     verbs: ["get"]
   # Allow `kubectl exec` into openbao-infra-0 to drive `bao` CLI commands.
   # The Job container itself doesn't run `bao` against localhost — it runs
@@ -76,10 +38,6 @@ kind: RoleBinding
 metadata:
   name: bootstrap-openbao-pki
   namespace: secrets
-  annotations:
-    "helm.sh/hook": post-install,post-upgrade
-    "helm.sh/hook-weight": "0"
-    "helm.sh/hook-delete-policy": before-hook-creation
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -92,15 +50,13 @@ subjects:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: bootstrap-openbao-pki
+  name: bootstrap-openbao-pki-v2
   namespace: secrets
   annotations:
-    "helm.sh/hook": post-install,post-upgrade
-    "helm.sh/hook-weight": "10"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    kustomize.toolkit.fluxcd.io/substitute: disabled
 spec:
   backoffLimit: 5
-  ttlSecondsAfterFinished: 300
+  activeDeadlineSeconds: 600
   template:
     spec:
       restartPolicy: OnFailure
@@ -116,11 +72,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: pki-init
-          # bitnami/kubectl bundles kubectl + a small shell. We don't need
-          # the openbao image here because every `bao` command is shipped
-          # via `kubectl exec` into openbao-infra-0 (which has bao in $PATH).
-          # Pin to a digest in a future hardening pass — for now match the
-          # version family used elsewhere in the stack.
+          # bao runs in the OpenBao pod; the Job only needs kubectl and a shell.
           image: alpine/k8s:1.35.4
           imagePullPolicy: IfNotPresent
           securityContext:
@@ -134,16 +86,6 @@ spec:
                 secretKeyRef:
                   name: openbao-admin-password
                   key: password
-            # Root CA cert from the VM (distributed by tofu as
-            # kubernetes_secret.pki_root_ca). The cluster sub-CA pki_int
-            # is signed by this root via `pki/root/sign-intermediate` —
-            # NOT by a freshly-generated cluster root (which would break
-            # the chain and confuse cert-manager + ESO trust paths).
-            - name: ROOT_CA_PEM
-              valueFrom:
-                secretKeyRef:
-                  name: pki-root-ca
-                  key: ca.crt
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -155,7 +97,20 @@ spec:
               # cluster-internal DNS only) doesn't need rewiring.
               # `-i` is required so heredoc stdin (bao policy write -)
               # reaches the pod.
-              BAO="kubectl -n secrets exec -i openbao-infra-0 -c openbao -- env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true"
+              # brc = bao-retry-call: kubectl exec transport is flaky under
+              # node load (websocket EOF mid-stream, E2E run 7) — every bao
+              # command gets 3 attempts, 5s apart, before set -eu kills us.
+              brc() {
+                n=0
+                until kubectl -n secrets exec -i openbao-infra-0 -c openbao -- \
+                    env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true "$@"; do
+                  n=$((n + 1))
+                  [ "$n" -ge 3 ] && return 1
+                  echo "  retry $n/3: bao $2 (exec transport)" >&2
+                  sleep 5
+                done
+              }
+              BAO="brc"
 
               # ─── 1. Wait for OpenBao Infra API ──────────────────────────
               # Pattern 1 (Phase F-bis): 1s polling, 300s budget, explicit
@@ -193,66 +148,15 @@ spec:
                 $BAO bao secrets enable -path=pki_int -max-lease-ttl=43800h pki
               fi
 
-              # ─── 3. Generate intermediate CSR + sign with VM root ──────
-              # The intermediate's private key NEVER leaves OpenBao
-              # (`pki_int/intermediate/generate/internal`). We sign the CSR
-              # OFFLINE-style using `openssl` against the VM root cert +
-              # key... EXCEPT we don't have the VM root key in the cluster
-              # (by design — that's the whole point of keeping it on the VM).
-              #
-              # MIGRATION NOTE (Phase F-bis-2 v3): the original
-              # terraform_data signed intermediate with a CLUSTER-generated
-              # root via `pki/root/sign-intermediate` (round-trip inside
-              # OpenBao). Going forward we have two valid paths:
-              #
-              #   A. Pre-sign the intermediate cert on the VM during
-              #      `bootstrap-apply` (output: kms-output/infra-ca.pem),
-              #      distribute as K8s Secret pki-infra-ca, this Job calls
-              #      `pki_int/intermediate/set-signed certificate=@vm-signed`.
-              #      → CURRENT STATE: stacks/pki/main.tf already creates
-              #        kubernetes_secret.pki_infra_ca with tls.crt + tls.key
-              #        from kms-output/infra-ca-* files.
-              #
-              #   B. Generate a fresh intermediate inside OpenBao and have a
-              #      VM-side signer service expose `/sign-intermediate` to
-              #      the cluster (out of scope for Phase F-bis-2 v3 — adds
-              #      a network round-trip and a long-lived signer endpoint).
-              #
-              # We pick A: re-use the existing VM-signed intermediate cert
-              # + key (already in K8s as Secret pki-infra-ca, namespace
-              # secrets) and load it directly via `pki_int/config/ca`
-              # (which accepts a full cert+key bundle in PEM).
-              #
-              # This means the intermediate private key DOES briefly live
-              # in the cluster (as K8s Secret + inside OpenBao) — same as
-              # the pre-existing kubernetes_secret.cert_manager_ca pattern
-              # (intermediate-ca-keypair in cert-manager ns). Acceptable
-              # tradeoff: the root key stays VM-side, so a cluster
-              # compromise can't forge a new intermediate, only abuse the
-              # existing one (which has a 5y max validity bounded by the
-              # root signature).
-              #
-              # IMPORTANT: this Job does NOT have access to the
-              # intermediate key Secret — that's intentional. The first
-              # apply path stays in stacks/pki/secrets.tf as a one-shot
-              # `bao write pki_int/config/ca` resource (TBD: separate Job
-              # or kubectl_manifest). For Phase F-bis-2 v3 source-only,
-              # we install the engine + roles + auth, leave intermediate
-              # CA loading as a follow-up step (documented in ADR-032).
-              echo "Checking for existing intermediate CA on pki_int/..."
-              if $BAO bao read pki_int/cert/ca 2>&1 | grep -q -- "-----BEGIN CERTIFICATE-----"; then
-                echo "  intermediate CA already loaded on pki_int/, skipping"
-              else
-                echo "  WARN: pki_int/ has no CA loaded yet."
-                echo "  Phase F-bis-2 v3 follow-up: load VM-signed intermediate via"
-                echo "    'bao write pki_int/config/ca pem_bundle=@<infra-ca-bundle>'"
-                echo "  (Secret pki-infra-ca lives in 'secrets' ns, but this Job's"
-                echo "   RBAC intentionally doesn't grant access — apply manually"
-                echo "   as a one-shot from a privileged context, or add a separate"
-                echo "   sealed Job with explicit secret read.)"
-                echo "  Continuing with role + auth setup so subsequent re-runs"
-                echo "  pick up the loaded CA without restarting from scratch."
+              # Load the existing VM-signed intermediate before declaring readiness.
+              if ! $BAO bao read pki_int/cert/ca >/dev/null 2>&1; then
+                kubectl -n secrets get secret pki-infra-ca \
+                  -o go-template='{{ index .data "tls.crt" | base64decode }}{{ index .data "tls.key" | base64decode }}' \
+                  | kubectl -n secrets exec -i openbao-infra-0 -c openbao -- \
+                      env BAO_ADDR=https://127.0.0.1:8200 BAO_SKIP_VERIFY=true \
+                      bao write pki_int/config/ca pem_bundle=- >/dev/null
               fi
+              $BAO bao read pki_int/cert/ca >/dev/null
 
               # ─── 4. Issuer URLs (CRL/OCSP discovery) ─────────────────────
               # Always (re)write — cheap and ensures URLs match the current
@@ -311,7 +215,7 @@ spec:
               echo "Configuring auth/kubernetes (idempotent)..."
               $BAO bao write auth/kubernetes/config \
                 kubernetes_host="https://kubernetes.default.svc:443" \
-                disable_local_ca_jwt=false 2>&1 | tail -1 || true
+                disable_local_ca_jwt=false >/dev/null
 
               echo "Writing cert-manager policy..."
               # Inline heredoc — same content as the old terraform_data.

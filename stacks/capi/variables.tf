@@ -35,7 +35,7 @@ variable "scw_region" {
 variable "capi_operator_version" {
   description = "cluster-api-operator Helm chart version"
   type        = string
-  default     = "0.22.0"
+  default     = null
 }
 
 variable "capi_operator_chart" {
@@ -49,23 +49,23 @@ variable "capi_operator_chart" {
 variable "capi_core_version" {
   description = "CAPI core provider version (cluster.x-k8s.io)"
   type        = string
-  default     = "v1.10.4"
+  default     = null
 }
 
 variable "capi_bootstrap_talos_version" {
   description = "CABPT — Talos bootstrap provider (siderolabs)"
   type        = string
-  default     = "v0.6.11"
+  default     = null
 }
 
 variable "capi_controlplane_kamaji_version" {
   description = "Kamaji control plane provider (clastix)"
   type        = string
-  default     = "v0.14.2"
+  default     = null
 }
 
 variable "capi_infrastructure_scaleway_version" {
   description = "Scaleway infrastructure provider (CAPS)"
   type        = string
-  default     = "v0.2.1"
+  default     = null
 }

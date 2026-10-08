@@ -13,8 +13,8 @@ tenant:
   namespace: ""
 
 kubernetes:
-  version: "1.35.4"
-  talosVersion: "v1.12.6"
+  version: "1.35.6"
+  talosVersion: "v1.12.9"
 
 # Management-cluster-side control plane.
 controlPlane:

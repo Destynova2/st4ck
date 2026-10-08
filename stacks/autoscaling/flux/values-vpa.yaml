@@ -1,0 +1,23 @@
+# Vertical Pod Autoscaler — cowboysysop chart (pure upstream).
+#
+# Default updateMode: "Auto" — the updater WILL evict pods to apply new
+# recommendations. Users opt out per-VPA via spec.updatePolicy.updateMode:
+# "Off" or "Initial". See ADR-024.
+
+updater:
+  enabled: true
+
+recommender:
+  enabled: true
+  extraArgs:
+    recommendation-margin-fraction: "0.15"
+
+admissionController:
+  enabled: true
+
+# Avoid the chart's legacy kubectl image in its CRD hook.
+crds:
+  image:
+    registry: registry.k8s.io
+    repository: kubectl
+    tag: v1.35.6

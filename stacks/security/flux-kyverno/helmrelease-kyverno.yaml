@@ -5,15 +5,22 @@ metadata:
   namespace: security
 spec:
   interval: 30m
+  # Failed upgrades: retry 3x then roll back (hardening 2026-07-12)
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
   chart:
     spec:
       chart: kyverno
-      version: "3.7.1"
+      version: "${kyverno_version}"
       sourceRef:
         kind: HelmRepository
         name: kyverno
         namespace: flux-system
   install:
+    remediation:
+      retries: 3
     createNamespace: false
   valuesFrom:
     - kind: ConfigMap

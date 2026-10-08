@@ -16,6 +16,10 @@ One YAML file per `(env, instance, region)` triple — a **cluster** in st4ck te
 | `instance` | `alice`, `eu`, `feature-auth` | per-context |
 | `region` | `fr-par`, `nl-ams`, `pl-waw` | per-context |
 | `owner` | `ludwig`, `team-platform` | per-context |
+| `talos_version` | `v1.12.9` | `_defaults.yaml` (image name tag + machine configs) |
+| `k8s_version` | `1.35.6` | `_defaults.yaml` |
+| `cluster_shape` | 3 CP `DEV1-M` + 3 workers `DEV1-L` | `_defaults.yaml`, override per context |
+| `management_cidrs` | `["203.0.113.0/24"]` | per-context (API/talosctl allowlist) |
 
 ## Usage
 

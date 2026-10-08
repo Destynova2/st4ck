@@ -1,0 +1,109 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: garage-bootstrap
+  namespace: storage
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: garage-bootstrap
+  namespace: garage
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    resourceNames: [garage-0]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: garage-bootstrap
+  namespace: garage
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: garage-bootstrap
+subjects:
+  - kind: ServiceAccount
+    name: garage-bootstrap
+    namespace: storage
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: garage-bootstrap
+  namespace: storage
+rules:
+  # SSA creation also requires create; updates remain name-restricted below.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [velero-s3-credentials, zot-s3-credentials, cnpg-s3-credentials]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: garage-bootstrap
+  namespace: storage
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: garage-bootstrap
+subjects:
+  - kind: ServiceAccount
+    name: garage-bootstrap
+    namespace: storage
+---
+# Version the Job name when changing bootstrap.sh; completion remains observable.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: garage-bootstrap-v1
+  namespace: storage
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 1440
+  template:
+    spec:
+      serviceAccountName: garage-bootstrap
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          image: alpine/k8s:1.35.4
+          command: [/bin/bash, /scripts/bootstrap.sh]
+          env:
+            - name: HOME
+              value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 128Mi}
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: script
+          configMap:
+            name: garage-bootstrap
+        - name: tmp
+          emptyDir: {}

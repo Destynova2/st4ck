@@ -5,18 +5,24 @@ metadata:
   namespace: storage
 spec:
   interval: 30m
-  dependsOn:
-    - name: garage
-      namespace: garage
+  # Failed upgrades: retry 3x then roll back (hardening 2026-07-12)
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+  # The parent storage-backup Kustomization waits for storage-bootstrap,
+  # which verifies the Flux-owned Garage layout, buckets and keys first.
   chart:
     spec:
       chart: velero
-      version: "11.4.0"
+      version: "${velero_version}"
       sourceRef:
         kind: HelmRepository
         name: vmware-tanzu
         namespace: flux-system
   install:
+    remediation:
+      retries: 3
     createNamespace: false
     timeout: 10m
   valuesFrom:

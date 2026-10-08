@@ -1,0 +1,58 @@
+# Examples only: not referenced by any active Kustomization.
+# Create matching VM/EM NodeClasses with validated cluster-specific parameters.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: scaleway-vm
+spec:
+  weight: 50
+  limits: {cpu: "32", memory: 64Gi}
+  template:
+    metadata:
+      labels: {st4ck.io/capacity: elastic}
+    spec:
+      nodeClassRef:
+        group: karpenter.scaleway.st4ck.io
+        kind: ScalewayVMNodeClass
+        name: workers-vm
+      taints:
+        - {key: st4ck.io/elastic, value: "true", effect: NoSchedule}
+      requirements:
+        - {key: kubernetes.io/arch, operator: In, values: [amd64]}
+        - {key: kubernetes.io/os, operator: In, values: [linux]}
+        - {key: karpenter.sh/capacity-type, operator: In, values: [on-demand]}
+      expireAfter: Never
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 30m
+    budgets:
+      - nodes: "1"
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: scaleway-metal
+spec:
+  weight: 40
+  # Example for ONE tested 32-thread / 128 GiB pre-imaged server.
+  limits: {cpu: "32", memory: 128Gi}
+  template:
+    metadata:
+      labels: {st4ck.io/capacity: elastic}
+    spec:
+      nodeClassRef:
+        group: karpenter.scaleway.st4ck.io
+        kind: ScalewayEMNodeClass
+        name: workers-metal
+      taints:
+        - {key: st4ck.io/elastic, value: "true", effect: NoSchedule}
+      requirements:
+        - {key: kubernetes.io/arch, operator: In, values: [amd64]}
+        - {key: kubernetes.io/os, operator: In, values: [linux]}
+        - {key: karpenter.sh/capacity-type, operator: In, values: [on-demand]}
+      expireAfter: Never
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 2h
+    budgets:
+      - nodes: "1"

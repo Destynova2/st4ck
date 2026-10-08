@@ -3,52 +3,26 @@ when:
     branch: main
 
 variables:
-  - &tofu_image ghcr.io/opentofu/opentofu:1.9
-  - &deploy_only
-    when:
-      - event: push
-        branch: main
+  - &tofu_image ghcr.io/opentofu/opentofu:1.12.5
 
 steps:
   # ─── Validate (PR + push) — no secrets needed ─────────────────────
-  # Pass2 #9: includes every stack dir that has a main.tf, including the
-  # six KaaS stacks (autoscaling, capi, kamaji, managed-cluster,
-  # gateway-api, external-secrets). The [ -d "$dir" ] guard tolerates
-  # dirs that are not yet landed on the current branch (TF code held on
-  # feature branches); CI picks them up automatically once they merge.
+  # Validate every module without initializing the remote state backend.
   - name: validate
     image: *tofu_image
     commands:
       - |
         FAIL=0
-        for dir in \
-          envs/scaleway/iam \
-          envs/scaleway/image \
-          envs/scaleway \
-          envs/scaleway/ci \
-          stacks/cni \
-          stacks/monitoring \
-          stacks/pki \
-          stacks/identity \
-          stacks/security \
-          stacks/storage \
-          stacks/flux-bootstrap \
-          stacks/autoscaling \
-          stacks/capi \
-          stacks/kamaji \
-          stacks/managed-cluster \
-          stacks/gateway-api; do
-          if [ ! -d "$dir" ]; then
-            echo "--- skipping $dir (not present on this branch)"
-            continue
-          fi
+        tofu fmt -check -recursive stacks envs modules bootstrap || FAIL=1
+        for dir in $(find stacks envs modules bootstrap -name '*.tf' -not -path '*/.terraform/*' -not -path '*/examples/*' -exec dirname {} \; | sort -u); do
           echo "--- validating $dir"
           (cd "$dir" && tofu init -backend=false -input=false >/dev/null && tofu validate) || FAIL=1
         done
         exit "$FAIL"
 
   # ─── Tofu test (pass1 #7 / pass2 #10) — run .tftest.hcl ─────────────
-  # 4 tested dirs: envs/scaleway/{iam,image,ci,.}. The cluster tests
+  # Bootstrap, cloud stages, EM bootstrap and PKI use mocked providers.
+  # The cluster tests
   # (envs/scaleway/tests/cluster.tftest.hcl) run from envs/scaleway itself.
   - name: test-tftest
     image: *tofu_image
@@ -56,10 +30,15 @@ steps:
       - |
         FAIL=0
         for dir in \
+          bootstrap \
+          bootstrap/tofu \
           envs/scaleway/iam \
           envs/scaleway/image \
           envs/scaleway/ci \
-          envs/scaleway; do
+          envs/scaleway \
+          modules/em-talos-bootstrap \
+          modules/em-talos-bootstrap/modules/karpenter-config \
+          stacks/pki; do
           if [ ! -d "$dir/tests" ] || ! ls "$dir"/tests/*.tftest.hcl >/dev/null 2>&1; then
             echo "--- skipping $dir (no .tftest.hcl)"
             continue
@@ -70,245 +49,41 @@ steps:
         exit "$FAIL"
     depends_on: [validate]
 
-  # ─── Build image (phase 1: start builder VM) ────────────────────────
-  # path: filter ensures we only spin up the billable Scaleway builder VM
-  # when image-relevant code actually changed (pass1 #6 / pass2 #11).
-  - name: start-builder
-    image: *tofu_image
-    secrets:
-      - scw_project_id
-      - tf_http_username
-      - tf_http_password
-      - source: scw_image_access_key
-        target: scw_access_key
-      - source: scw_image_secret_key
-        target: scw_secret_key
+  - name: test-karpenter
+    image: golang:1.26.5
     commands:
-      - cd envs/scaleway/image
-      - tofu init -input=false
-      - tofu apply -auto-approve
-        -target=scaleway_object_bucket.talos_image
-        -target=scaleway_instance_ip.builder
-        -target=scaleway_instance_server.builder
-        -var="project_id=$${SCW_PROJECT_ID}"
-        -var="scw_access_key=$${SCW_ACCESS_KEY}"
-        -var="scw_secret_key=$${SCW_SECRET_KEY}"
-    when:
-      - event: push
-        branch: main
-        path:
-          - "envs/scaleway/image/**"
-          - "modules/talos-cluster/**"
-          - "vars.mk"
+      - go version
+      - cd karpenter-provider-scaleway
+      - test -z "$(gofmt -l cmd pkg)"
+      - go test -race ./...
+      - go vet ./...
+      - CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/controller-amd64 ./cmd/controller
+      - CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o /tmp/controller-arm64 ./cmd/controller
 
-  # ─── Build image (gate: wait for S3 upload) ────────────────────────
-  - name: wait-image-upload
-    image: *tofu_image
-    secrets:
-      - scw_project_id
-      - source: scw_image_access_key
-        target: scw_access_key
-      - source: scw_image_secret_key
-        target: scw_secret_key
+  # Day-2 delivery is reconciled by Flux. Infrastructure uses make scaleway-up.
+  - name: prepare-kubeconform
+    image: golang:1.26.5
     commands:
-      - |
-        BUCKET="talos-image-$${SCW_PROJECT_ID}"
-        ENDPOINT="https://$${BUCKET}.s3.fr-par.scw.cloud/.upload-complete"
-        echo "Waiting for image upload (polling $${ENDPOINT})..."
-        for i in $$(seq 1 60); do
-          STATUS=$$(curl -s -o /dev/null -w "%{http_code}" "$$ENDPOINT" 2>/dev/null || echo "000")
-          [ "$$STATUS" = "200" ] && echo "Upload complete!" && exit 0
-          echo "  attempt $$i/60 (HTTP $$STATUS)"
-          sleep 15
-        done
-        echo "ERROR: Timeout" && exit 1
-    depends_on: [start-builder]
-    <<: *deploy_only
+      - GOBIN="$PWD/.ci-tools" go install github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
 
-  # ─── Build image (phase 2: import snapshots + create images) ───────
-  - name: build-image
-    image: *tofu_image
-    secrets:
-      - scw_project_id
-      - tf_http_username
-      - tf_http_password
-      - source: scw_image_access_key
-        target: scw_access_key
-      - source: scw_image_secret_key
-        target: scw_secret_key
+  - name: verify-gitops
+    image: alpine/k8s:1.35.4
     commands:
-      - cd envs/scaleway/image
-      - tofu init -input=false
-      - tofu apply -auto-approve
-        -var="project_id=$${SCW_PROJECT_ID}"
-        -var="scw_access_key=$${SCW_ACCESS_KEY}"
-        -var="scw_secret_key=$${SCW_SECRET_KEY}"
-    depends_on: [wait-image-upload]
-    <<: *deploy_only
+      - apk add --no-cache python3 py3-yaml bash jq make
+      - test "$(cat .ci-tools/tofu.arch)" = "$(uname -m)"
+      - export PATH="$PWD/.ci-tools:$PATH"
+      - tofu version
+      - bash scripts/verify-render.sh
+      - python3 -m unittest discover -s scripts/tests
+      - python3 scripts/flux-review_test.py
+    depends_on: [validate, prepare-kubeconform, prepare-tofu]
 
-  # ─── Update bootstrap (conditional: only if bootstrap/ changed) ───
-  - name: update-bootstrap
+  # Python template tests need tofu console. Use the pinned multi-arch image,
+  # not an unchecked download; fail if jobs unexpectedly change architecture.
+  - name: prepare-tofu
     image: *tofu_image
-    secrets: [tf_http_username, tf_http_password]
     commands:
-      - |
-        VB=http://host.containers.internal:8080
-        cd bootstrap
-        tofu init -input=false \
-          -backend-config="address=$$VB/state/bootstrap" \
-          -backend-config="lock_address=$$VB/state/bootstrap" \
-          -backend-config="unlock_address=$$VB/state/bootstrap"
-        tofu apply -auto-approve \
-          -var="source_dir=/woodpecker/src" \
-          -var="bootstrap_dir=/tmp/platform-ci"
-    when:
-      - event: push
-        branch: main
-        path: "bootstrap/**"
-    depends_on: [validate]
-
-  # ─── Deploy cluster ───────────────────────────────────────────────
-  - name: deploy-cluster
-    image: *tofu_image
-    secrets:
-      - scw_project_id
-      - tf_http_username
-      - tf_http_password
-      - source: scw_cluster_access_key
-        target: scw_access_key
-      - source: scw_cluster_secret_key
-        target: scw_secret_key
-    commands:
-      - |
-        VB=http://host.containers.internal:8080
-        cd envs/scaleway
-        tofu init -input=false \
-          -backend-config="address=$$VB/state/scaleway" \
-          -backend-config="lock_address=$$VB/state/scaleway" \
-          -backend-config="unlock_address=$$VB/state/scaleway"
-        tofu apply -auto-approve \
-          -var="project_id=$${SCW_PROJECT_ID}"
-    depends_on: [build-image]
-    <<: *deploy_only
-
-  # ─── Wait for API server ──────────────────────────────────────────
-  - name: wait-api
-    image: *tofu_image
-    secrets: [tf_http_username, tf_http_password]
-    commands:
-      - |
-        VB=http://host.containers.internal:8080
-        apk add --no-cache kubectl >/dev/null 2>&1 || true
-        cd envs/scaleway
-        tofu init -input=false \
-          -backend-config="address=$$VB/state/scaleway" \
-          -backend-config="lock_address=$$VB/state/scaleway" \
-          -backend-config="unlock_address=$$VB/state/scaleway" >/dev/null
-        echo "Waiting for API server..."
-        for i in $$(seq 1 30); do
-          tofu output -raw kubeconfig | kubectl --kubeconfig /dev/stdin get nodes >/dev/null 2>&1 && break
-          echo "  attempt $$i/30..." && sleep 10
-        done
-        echo "API server ready."
-    depends_on: [deploy-cluster]
-    <<: *deploy_only
-
-  # ─── Deploy stacks ────────────────────────────────────────────────
-  # Order: cni → pki → monitoring → identity → security → storage → flux
-  # Secrets: generated by bootstrap OpenBao sidecar, read via vault provider.
-  # In-cluster OpenBao (deployed by k8s-pki) is initialized day-2.
-
-  - name: deploy-cni
-    image: *tofu_image
-    secrets: [tf_http_username, tf_http_password]
-    commands: &deploy_stack
-      - |
-        VB=http://host.containers.internal:8080
-        vb_init() {
-          tofu init -input=false \
-            -backend-config="address=$$VB/state/$$1" \
-            -backend-config="lock_address=$$VB/state/$$1" \
-            -backend-config="unlock_address=$$VB/state/$$1"
-        }
-        cd envs/scaleway
-        vb_init scaleway >/dev/null
-        tofu output -raw kubeconfig > /tmp/kubeconfig
-        cd /woodpecker/src/stacks/$${STACK}
-        vb_init $${STACK}
-        tofu apply -auto-approve -var="kubeconfig_path=/tmp/kubeconfig"
-    environment:
-      STACK: cni
-    depends_on: [wait-api]
-    <<: *deploy_only
-
-  - name: deploy-pki
-    image: *tofu_image
-    secrets: [tf_http_username, tf_http_password]
-    commands: *deploy_stack
-    environment:
-      STACK: pki
-    depends_on: [deploy-cni]
-    <<: *deploy_only
-
-  - name: deploy-monitoring
-    image: *tofu_image
-    secrets: [tf_http_username, tf_http_password]
-    commands: *deploy_stack
-    environment:
-      STACK: monitoring
-    depends_on: [deploy-pki]
-    <<: *deploy_only
-
-  - name: deploy-identity
-    image: *tofu_image
-    secrets: [tf_http_username, tf_http_password]
-    commands: *deploy_stack
-    environment:
-      STACK: identity
-    depends_on: [deploy-monitoring]
-    <<: *deploy_only
-
-  - name: deploy-security
-    image: *tofu_image
-    secrets: [tf_http_username, tf_http_password]
-    commands: *deploy_stack
-    environment:
-      STACK: security
-    depends_on: [deploy-identity]
-    <<: *deploy_only
-
-  - name: deploy-storage
-    image: *tofu_image
-    secrets: [tf_http_username, tf_http_password]
-    commands: *deploy_stack
-    environment:
-      STACK: storage
-    depends_on: [deploy-security]
-    <<: *deploy_only
-
-  - name: deploy-flux
-    image: *tofu_image
-    secrets: [tf_http_username, tf_http_password]
-    commands:
-      - |
-        VB=http://host.containers.internal:8080
-        apk add --no-cache openssh-client >/dev/null 2>&1 || true
-        KNOWN_HOSTS=$(ssh-keyscan -p 2222 -t ed25519 host.containers.internal 2>/dev/null)
-        vb_init() {
-          tofu init -input=false \
-            -backend-config="address=$$VB/state/$$1" \
-            -backend-config="lock_address=$$VB/state/$$1" \
-            -backend-config="unlock_address=$$VB/state/$$1"
-        }
-        cd envs/scaleway
-        vb_init scaleway >/dev/null
-        tofu output -raw kubeconfig > /tmp/kubeconfig
-        cd /woodpecker/src/stacks/flux-bootstrap
-        vb_init flux-bootstrap
-        tofu apply -auto-approve \
-          -var="kubeconfig_path=/tmp/kubeconfig" \
-          -var="gitea_known_hosts=$$KNOWN_HOSTS"
-    environment:
-      STACK: flux-bootstrap
-    depends_on: [deploy-storage]
-    <<: *deploy_only
+      - mkdir -p .ci-tools
+      - cp "$(command -v tofu)" .ci-tools/tofu
+      - chmod 0755 .ci-tools/tofu
+      - uname -m > .ci-tools/tofu.arch

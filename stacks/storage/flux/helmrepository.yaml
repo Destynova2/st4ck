@@ -10,8 +10,8 @@ spec:
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
-  name: harbor
+  name: zot
   namespace: flux-system
 spec:
   interval: 1h
-  url: https://helm.goharbor.io
+  url: https://zotregistry.dev/helm-charts

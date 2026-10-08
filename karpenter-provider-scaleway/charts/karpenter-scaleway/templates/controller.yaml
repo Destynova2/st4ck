@@ -1,0 +1,99 @@
+{{- if .Values.controller.enabled }}
+{{- $repo := required "image.repository is required" .Values.image.repository }}
+{{- $tag := required "image.tag must identify a published multi-arch build" .Values.image.tag }}
+{{- $cluster := required "clusterID is required" .Values.clusterID }}
+{{- $talos := required "talosClusterName is required" .Values.talosClusterName }}
+{{- $secret := required "credentialsSecret is required" .Values.credentialsSecret }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: karpenter-scaleway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.controller.replicas }}
+  selector:
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: karpenter-scaleway
+        app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: {{ .Release.Name }}
+      priorityClassName: system-cluster-critical
+      imagePullSecrets: {{ toJson .Values.imagePullSecrets }}
+      nodeSelector: {{ toJson .Values.nodeSelector }}
+      tolerations: {{ toJson .Values.tolerations }}
+      # Keep the controller outside the capacity it may drain.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: karpenter.sh/nodepool
+                    operator: DoesNotExist
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}}
+      containers:
+        - name: controller
+          image: {{ printf "%s:%s" $repo $tag | quote }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
+          resources: {{ toJson .Values.resources }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - name: SYSTEM_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - {name: CLUSTER_ID, value: {{ $cluster | quote }}}
+            - {name: TALOS_CLUSTER_NAME, value: {{ $talos | quote }}}
+            - {name: LOG_LEVEL, value: info}
+            - {name: METRICS_PORT, value: "8080"}
+            - {name: HEALTH_PROBE_PORT, value: "8081"}
+            - name: SCW_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: {{ $secret }}, key: SCW_ACCESS_KEY}}
+            - name: SCW_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: {{ $secret }}, key: SCW_SECRET_KEY}}
+            - name: SCW_DEFAULT_PROJECT_ID
+              valueFrom: {secretKeyRef: {name: {{ $secret }}, key: SCW_DEFAULT_PROJECT_ID}}
+          ports:
+            - {name: metrics, containerPort: 8080}
+            - {name: health, containerPort: 8081}
+          readinessProbe:
+            httpGet: {path: /readyz, port: health}
+          livenessProbe:
+            initialDelaySeconds: 30
+            httpGet: {path: /healthz, port: health}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}}
+{{- end }}

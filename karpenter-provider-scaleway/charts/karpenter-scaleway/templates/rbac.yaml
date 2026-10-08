@@ -1,0 +1,113 @@
+{{- if .Values.controller.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}
+rules:
+  - apiGroups: [karpenter.sh]
+    resources: [nodepools, nodepools/status, nodeclaims, nodeclaims/status, nodeoverlays, nodeoverlays/status]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling.x-k8s.io]
+    resources: [capacitybuffers, capacitybuffers/status]
+    verbs: [get, list, watch, update, patch]
+  - apiGroups: [""]
+    resources: [pods, nodes, persistentvolumes, persistentvolumeclaims, replicationcontrollers, namespaces, podtemplates]
+    verbs: [get, list, watch]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses, csinodes, volumeattachments]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [daemonsets, deployments, replicasets, statefulsets]
+    verbs: [get, list, watch]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list, watch]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch]
+  - apiGroups: [karpenter.sh]
+    resources: [nodeclaims, nodeclaims/status, nodeclaims/finalizers]
+    verbs: [create, delete, update, patch]
+  - apiGroups: [karpenter.sh]
+    resources: [nodepools, nodepools/status, nodepools/finalizers, nodeoverlays/status]
+    verbs: [update, patch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [create, patch, delete, update]
+  - apiGroups: [""]
+    resources: [pods/eviction]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [delete]
+  - apiGroups: [karpenter.scaleway.st4ck.io]
+    resources: [scalewayemnodeclasses, scalewayvmnodeclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [karpenter.scaleway.st4ck.io]
+    resources: [scalewayemnodeclasses/status, scalewayvmnodeclasses/status]
+    verbs: [get, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: {{ .Release.Name }}}
+subjects:
+  - {kind: ServiceAccount, name: {{ .Release.Name }}, namespace: {{ .Release.Namespace }}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+  {{- if .Values.bootstrapSecrets }}
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: {{ toJson .Values.bootstrapSecrets }}
+    verbs: [get]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ .Release.Name }}}
+subjects:
+  - {kind: ServiceAccount, name: {{ .Release.Name }}, namespace: {{ .Release.Namespace }}}
+{{- range $namespace := list "kube-system" "kube-node-lease" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $.Release.Name }}
+  namespace: {{ $namespace }}
+rules:
+  {{- if eq $namespace "kube-system" }}
+  - apiGroups: [""]
+    resources: [services]
+    resourceNames: [kube-dns]
+    verbs: [get]
+  {{- else }}
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, delete]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $.Release.Name }}
+  namespace: {{ $namespace }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $.Release.Name }}}
+subjects:
+  - {kind: ServiceAccount, name: {{ $.Release.Name }}, namespace: {{ $.Release.Namespace }}}
+{{- end }}
+{{- end }}
